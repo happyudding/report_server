@@ -110,6 +110,16 @@ def _parse_int(text):
     return int(f)
 
 
+def parse_number(text):
+    """_parse_number 의 공개 별칭 — 값 표기 규칙을 밖에서도 **사본 없이** 쓰게 한다.
+
+    쓰는 곳: Honey 의 신규 Item 메타 검증(excel_edit/item_add.py). 거기서 판정이 갈리면
+    HILIM/LOLIM 에 `1_000` 같은 표기가 통과해 parquet 에 문자열로 박히고, 조회 때
+    pd.to_numeric 이 NaN 으로 떨궈 **규격이 조용히 사라진다**.
+    """
+    return _parse_number(text)
+
+
 def _as_text(value) -> str:
     return "" if value is None else str(value)
 

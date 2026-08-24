@@ -205,6 +205,22 @@ def test_bad_order(sid) -> None:
     print("  [ok] order=serial(오타) → 400")
 
 
+def test_seq_batch_cap(sid) -> None:
+    """(d-2) seq 는 ECDF 보다 **작은 항목 수 상한**을 쓴다.
+
+    seq 응답은 동일값을 접지 않아 항목당 payload 가 ECDF 의 한 자릿수 배 이상이다
+    (5 source × 25,000 die 면 항목 1개가 125,000 값). ECDF 상한(40)을 그대로 쓰면 한 요청이
+    수십 MB 가 되므로 seq 만 따로 자른다. 점을 버리는 게 아니라 요청을 나누는 것이라
+    규칙 #5(다운샘플 금지)와 무관하다 — 프런트 DIST_BATCH.SEQ_SIZE 와 짝이다."""
+    from report.routes_webreport import _DIST_BATCH_MAX, _DIST_SEQ_BATCH_MAX
+    assert _DIST_SEQ_BATCH_MAX < _DIST_BATCH_MAX, "seq 상한이 ECDF 상한보다 작아야 합니다"
+    many = [f"IT{i:02d}" for i in range(_DIST_SEQ_BATCH_MAX + 1)]
+    assert batch(sid, many, order="seq").status_code == 400, "seq 상한 초과가 400 이 아닙니다"
+    # 같은 개수라도 ECDF 는 종전 상한(40)까지 통과해야 한다 — 회귀 방지
+    assert batch(sid, many).status_code == 200, "ECDF 배치 상한이 함께 줄었습니다(회귀)"
+    print(f"  [ok] seq 배치 상한 {_DIST_SEQ_BATCH_MAX} 초과 → 400 (ECDF 는 무영향)")
+
+
 def test_bin1_filter(sid) -> None:
     """(e) bin1 = 양품 & 규격내, 순서는 보존."""
     body = batch(sid, ["IT00"], order="seq", bin1=True).get_json()
@@ -243,6 +259,7 @@ def main():
         test_ecdf_unchanged(sid)
         test_etag_split(sid)
         test_bad_order(sid)
+        test_seq_batch_cap(sid)
         test_bin1_filter(sid)
         test_matches_scatter(sid)
         settle()

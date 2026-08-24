@@ -367,11 +367,38 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | `WEB_REPORT_SCATTER_CACHE` | `16` | `/scatter` 응답 gzip 캐시 개수 |
 | `WEB_REPORT_GAP_CACHE` | `16` | Gap Chart 응답 gzip 캐시 개수 |
 | `WEB_REPORT_GAP_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 건당 크기가 `/scatter` 급이다 |
+| `WEB_REPORT_GAP_WARM_MAX` | `2` | 저장 1회에 **미리 계산**해 둘 Gap Chart 수 (`0` = 끔) |
 | `WEB_REPORT_SCATTER_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DISK_CACHE_MAX_GB` | `500` | 디스크 캐시 총량 상한 (0 이하 = 비활성) |
 | `WEB_REPORT_REWARM_ON_START` | `1` | 기동 후 재웜 스윕 사용 여부 (`0` = 끔) |
 | `WEB_REPORT_REWARM_LIMIT` | `30` | 스윕이 훑을 최근 web_report 세션 수 |
 | `WEB_REPORT_REWARM_DELAY_SEC` | `60` | 기동 후 스윕 시작까지 지연(초) |
+
+## Gap Chart — 저장 직후 프리컴퓨트 (2026-08-24)
+
+gap 캐시 키(`cache_policy.gap_key`)에는 `spec_digest` 가 들어간다. 그래서 **새로 만들거나
+수식을 고친 직후는 정의상 100% 캐시 미스**이고, 그 계산이 사용자의 첫 조회 요청 안에서
+통째로 일어나 카드가 "계산 중…" 으로 머물렀다.
+
+`POST .../web_report/gap_charts` 가 저장 응답을 보낸 뒤
+`response_cache.warm_gap_chart` 로 **부모 프로세스의 데몬 스레드** 하나를 띄워 미리 만든다.
+모달이 닫히고 갤러리가 다시 그려지는 사이에 계산이 진행되고, 뒤늦게 도착한 조회는 같은
+`keyed_lock` 에서 결과를 받는다(중복 계산이 아니라 대기 후 재사용).
+
+- ⚠️ **컴퓨트 워커(별도 프로세스)에서 계산하면 안 된다** — `_GAP_CACHE` 는 웹 프로세스 RAM 의
+  OrderedDict 라 자식 프로세스의 결과가 부모에 남지 않는다.
+- 데우는 변형은 **전체 기준(bin1=False) 하나**다. Bin1 계열 토글이 켜진 채 저장하면 빗나가지만
+  그때도 종전과 같은 인라인 계산으로 떨어질 뿐 손해가 없다.
+- 동시 실행은 1개(`_GAP_WARM_LOCK`, non-blocking) — 저장 연타로 스레드가 쌓이지 않게.
+- 실패는 조용히 무시한다(조회가 다시 계산한다).
+
+**실측 (2026-08-24, 5 source × 25,000 die · 항목 40개 · 참조 2개, tables 웜):**
+`build_gap_item` 0.31s + `json.dumps` 0.05s(raw 4.5MB) + gzip(level=1) 0.01s(1.28MB) = **약 0.37s**.
+meta 3벌(serial/xpos/ypos) 문자열 변환이 그중 약 0.16s 인데,
+**`pd.to_numeric` 선변환으로 벡터화해도 순이득이 0.06s 미만**이라 하지 않았다 —
+XPOS/YPOS(정수)만 1.9배 빨라지고 SERIAL(비수치 문자열)은 파싱이 전부 실패해 1.6배 느려진다.
+게다가 그 문자열은 hover 키·Map 좌표 매칭에 쓰여 한 글자만 달라져도 조용히 어긋난다
+(`gap_chart._series_entry` 주석에 같은 내용을 박아 뒀다).
 
 ## 불변 규칙
 - 캐시는 전부 재계산 가능한 파생물 — 언제 지워져도 무해해야 한다.

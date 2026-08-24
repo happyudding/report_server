@@ -33,6 +33,13 @@ web_report/
 │                        + numpy 평가 + 좌표 교집합. 응답은 scatter_item 과 같은 구조라
 │                        Item_detail 이 그대로 재사용한다. ⚠ **tabs/ 로 옮기지 말 것**
 │                        (perf_guard S01 → REPORT_SCHEMA_VERSION bump = 콜드 폭풍)
+├── formula.py          **신규 Item 수식 엔진** — Excel 풍 수식(IF/MIN/MAX/SUM/AVERAGE/
+│                        ABS/ROUND/SQRT/AND/OR/NOT + 비교 6종 + 사칙연산)의 토큰 파서
+│                        (재귀하강, eval 금지) + numpy 평가. 순수 모듈 — **Honey 클라
+│                        (honey_ui/formula_editor.py · excel_edit/item_add.py)가 import**.
+│                        gap_chart 파서의 확장 사본이며 드리프트는 tests/test_formula_item.py
+│                        의 동치 테스트가 막는다. ⚠ **tabs/ 로 옮기지 말 것**
+│                        (perf_guard S01 → REPORT_SCHEMA_VERSION bump = 콜드 폭풍)
 ├── dist_pack.py        Distribution **정렬 pack** 빌더/검증/ECDF 변환 (2026-07-23) —
 │                        Honey 가 정렬(np.unique)까지 끝내 올리고 서버는 덧셈(cumsum)만.
 │                        순수 모듈 — 클라 honey_main._build_webreport_dist_pack 이 import
@@ -79,7 +86,10 @@ web_report/
 ├── runtime.py          저장소 포트 주입 지점 (report_extension.init_app 이 주입)
 ├── ports.py            StoragePort/SessionRepo Protocol (DIP 경계)
 ├── rawedit.py          Raw Data 소스 내보내기/교체·삭제 헬퍼 (Excel 왕복 — 시트 삭제 시
-│                        kept_indices 로 source 물리 제거 + manifest sources 축소)
+│                        kept_indices 로 source 물리 제거 + manifest sources 축소).
+│                        **신규 Item(수식) 추가**도 같은 replace_sources 를 탄다:
+│                        `add_items`(manifest.selected_items 에 덧붙일 이름) +
+│                        `rows_preserved`(열만 추가 → 전처리 셀 패치를 지우지 않는다)
 ├── rawvalues.py        Raw Data 편집 **값** 검증 — 셀 규칙(웹 400)·Excel 프레임 자동 교정/
 │                        diff·경고 + 반영 확인 요약(build_confirm_sections=구조화/
 │                        build_confirm_message=구 평문). 순수 모듈(셀 함수는 pandas 무의존,

@@ -599,6 +599,18 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       `load(false)` 재로드를 하지 않는다 — kind 가 payload 중립이라 report 캐시가 살아 있다.
     - **Serial 순 토글**이 켜지면 카드·상세가 run chart 로 바뀐다(단 통계표는 ECDF 기준 고정) →
       아래 "Serial 순" 절.
+    - **상세의 차트 주석** (2026-08-24 추가): 키는 `cdf:comp:<uuid>`(`dcNoteSubject`) — 이름이
+      아니라 **UUID** 라 차트를 개명해도 주석이 따라온다(§5-12). 툴바(`#chartNoteBar`)와 코멘트
+      뷰(`#cdfCommentView`)의 DOM id 를 **Item_detail 과 공유**하므로 상세는 한 번에 하나만
+      열려야 한다 — `dcOpenDetail` 이 먼저 `hideItemDetail()`(미저장 주석 flush + 패널 비우기)을
+      부르는 것이 그 보장이다. 저장값을 다시 그릴 때 어느 쪽 상세가 열려 있는지는
+      `cnActiveSubject()` 가 판정한다(`_itemDetailData` 는 상세를 닫아도 남아 있어서 그것만
+      보면 합성 차트 밑에 **직전에 보던 항목의 코멘트**가 찍힌다). seq 모드에는 붙이지 않는다.
+    - ⚠️ **저장 spec 을 `distIndex`/현재 source 목록으로 filter 하지 말 것** — 전처리 항목 제외나
+      source 축소로 목록에서 빠진 pair 가 "이름만 바꿔 저장" 하는 순간 조용히 사라진다.
+      서버(`service._sanitize`)는 실재 여부를 검사하지 않고 보존하는데 클라가 버리면 그 방어가
+      무의미해진다. `dcOrderedPick(order, sel)` 이 표시 순서만 목록을 따르고 목록 밖은 뒤에
+      붙여 보존한다(모달의 `dcRenderPicked` 가 이미 쓰던 규칙과 통일).
   - **Gap Chart (사용자 수식 파생 분포 — 2026-08-24)**: 같은 "분석하기 ▾" 메뉴의 두 번째
     항목. 모달(좌우 2단 — 왼쪽 항목 목록 / 오른쪽 source 선택·수식)에서 `( ) + - * /` 로 식을
     조립하면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면 **기존 Item_detail
@@ -672,6 +684,21 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       저장값을 덮어써** 사용자가 CDF 에 그려둔 주석이 망가진다(§5-12). 저장값은 그대로
       두고 표시만 생략한다 — CDF 로 돌아가면 다시 보인다. Map 선택 좌표 마커·Compare
       before-limit 선도 같은 이유로 제외(누적% 축 전용), CDF x축 옵션 바도 비운다.
+      - ⚠️ **렌더에서 안 부르는 것만으로는 부족하다 (2026-08-24 보강)**. `_cnCharts` 는 CDF 를
+        한 번 그리면 등록되고 스스로 지워지지 않는데 seq 는 **같은 DOM 노드**(`#distCdf` /
+        합성 상세는 `#dcDetailChart`)를 덮는다. 등록이 남아 있으면 그 뒤의 저장 경로
+        (`cnFlush`·comment 입력·undo)가 seq layout 에서 shapes 를 회수해 **빈 배열**을 얻고,
+        `cnFlush` 가 그것을 `value:null` 로 보내 **서버의 주석 레코드를 지운다**. 그래서 seq 로
+        덮어 그리기 **직전에** `cnDetach(key)`(chart_notes.js)를 부른다 — dirty 면 아직 살아
+        있는 CDF layout 에서 도형을 회수한 뒤 등록만 푼다(pending 은 보존, 텍스트 도구가 쓰는
+        `gd._cnBoundKey` 도 함께 비운다). 호출 지점은 `distRenderCdf` 의 seq 분기 한 곳이라
+        재렌더 호출부(축옵션·칩 편집·항목 이동)가 전부 따라온다.
+    - **seq 배치 크기는 ECDF 보다 작다** (2026-08-24). seq 는 동일값을 접지 않으므로 항목당
+      payload 가 ECDF 의 한 자릿수 배 이상이다 — 5 source × 25,000 die 면 항목 1개가 125,000
+      값이라 ECDF 와 같은 30개 묶음은 한 요청이 수십 MB 가 된다. 프런트
+      `DIST_BATCH.SEQ_SIZE`(8) / 서버 `_DIST_SEQ_BATCH_MAX`(10)로 **짝**이며 한쪽만 바꾸면
+      400 이 난다(`dist_composite.dcEnsureItems` 도 같은 값을 쓴다). 총 데이터량은 그대로고
+      요청당 크기만 줄이는 것이라 **규칙 #5(다운샘플 금지)와 무관**하다.
     - Issue Table 미니셀은 **전체 기준 ECDF 를 유지**한다(Bin1 토글과 같은 정책 — 그 표의
       숫자가 ECDF 기준이라 그림만 다른 축이 되면 표와 어긋난다).
     - **사용자가 만든 카드 2종에도 적용된다** (2026-08-24 확장) — 갤러리가 한 모드로 보여야
@@ -685,6 +712,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
         부분수열**이고 x 는 1..m 으로 다시 매겨진다.
       - **Distribution composite**: 기존 `distribution_batch` 를 `order=seq` 로 한 번 더 받는다
         (`_dcCache`/`_dcInflight` 를 `DIST_VARIANTS` 6키로 생성 — 리터럴로 적지 말 것).
+        배치 크기는 seq 만 따로다 → 아래 "seq 배치 크기" 항.
         **상세는 차트만 seq 이고 통계표(`dcPairStats`)는 항상 ECDF 기준**이다: 그 함수가
         ECDF 의 Δp 가중으로 모집단 통계를 복원하는 구조라 seq 배열로는 만들 수 없고, 원본값으로
         다시 계산하면 같은 화면 숫자가 모드마다 달라진다(규칙 #13). 그래서 seq 상세는 ECDF·seq
@@ -863,6 +891,96 @@ Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
 - 화면 표시는 없다 — 세션 상단에 상태 배지를 두지 않는다(사용자 요청, 2026-07-23).
   현재 적용값은 Honey 의 Rawdata 허브 **현재 상태** 페이지에서 목록으로 보고 개별 해제할 수
   있다(`GET .../web_report/preprocess`).
+
+#### 신규 Item(수식) 추가 (2026-08-24) — 원본에 파생 컬럼을 박는다
+
+허브 좌측 `Options` **바로 밑** 페이지. 측정 항목끼리 계산한 파생 항목(예:
+`IF(VREF_TRIM > MIN(VDD_A, VDD_B), 0, 1)`)을 만들어 **원본 parquet 에 컬럼 하나로 추가**한다.
+반영 경로는 Excel 왕복이 쓰는 `POST .../web_report/rawdata_replace` 를 그대로 재사용하므로
+백업 1세대·`content_hash` 갱신·dedup 형제 세션 동기화·프리웜(세션 재빌드)이 전부 따라온다.
+
+- **수식 엔진**: [web_report/formula.py](../web_report/formula.py) — 순수 모듈이라 Honey 클라가
+  직접 import 한다(preprocess·rawvalues·dist_pack·temperature 와 같은 계약).
+  `IF MIN MAX SUM AVERAGE ABS ROUND SQRT AND OR NOT` + 비교 `> >= < <= = <>` + 사칙연산·괄호.
+  gap_chart 파서의 **확장 사본**이며(gap_chart 는 한 글자도 고치지 않는다 — 거기 저장된
+  토큰·에러 문구·`spec_digest` 가 운영 세션의 사용자 입력에 걸려 있다), 사본 드리프트는
+  [tests/test_formula_item.py](../tests/test_formula_item.py) 의 **동치 테스트**가 막는다.
+- **계산은 클라(Honey)에서** 한다. 서버가 parquet 전량을 디코드·계산·재인코딩하면 대형
+  세션에서 웹 프로세스가 통째로 묶인다(빠른 수정을 웹이 아니라 Honey 에 둔 것과 같은 판단).
+- **모든 source 에 각각 계산**한다. 참조 항목이 없는 source 는 **그 source 만 건너뛰고
+  원본 parquet bytes 를 그대로 되올린다**(재인코딩조차 하지 않으므로 값이 한 비트도 안 바뀐다).
+  전부 NaN 컬럼을 만들지 않는 이유: `empty_items` 제외 로직에 걸려 "왜 이 source 만 값이
+  없나"를 두 번 설명해야 한다. 건너뛴 source 는 미리보기와 확인창에 명시된다.
+- **수식을 저장하지 않는다**(사용자 확정). 추가되고 나면 일반 item 과 구별되지 않는다 —
+  잘못 만들었으면 `Rawdata 원본 수정`(Excel)에서 그 열을 지운다. 대신 **미리보기를 통과해야만**
+  [원본에 추가] 가 열리고, 수식·메타를 고치면 즉시 다시 잠긴다(보지 않은 값이 원본에 박히는
+  것을 막는다).
+
+**평가 규약 — 모든 중간값은 float64, 진리값은 1.0/0.0/NaN(3-값 논리).** 이 셋이 이 기능에서
+가장 조용히 틀리는 지점이다:
+- **비교의 NaN 은 FALSE 가 아니다.** numpy 는 NaN 비교를 False 로 주므로 마스크
+  (`isnan(l) | isnan(r)` → NaN)를 명시하지 않으면 **미측정 die 가 FALSE 로 뭉개져**
+  `IF(A > B, 0, 1)` 이 거기에 1 을 찍는다.
+- **±inf 는 마지막에 NaN 으로 정규화**한다. `encode_honeyform_parquet` 이 값을 문자열로
+  저장하므로 inf 가 `"inf"` 로 parquet 에 박히고, 조회 때 `to_numeric` 이 되살려 평균·σ·CPK 를
+  통째로 오염시킨다.
+- **`AND`/`OR` 는 `np.minimum`/`np.maximum`** 으로 구현한다(NaN 전파). `logical_and` 를 쓰면
+  NaN 이 True 로 뭉개진다. `MIN`/`MAX`/`SUM`/`AVERAGE` 도 인자들끼리 **원소별**이며 결측을
+  전파한다(`fmin` 아님) — 참조 항목 하나가 미측정인 die 를 부분 모집단으로 계산하면 조용히
+  틀린다. 그 die 는 미리보기의 **계산 실패**에 잡히고 셀은 빈칸이 된다.
+- 비교는 **비연관**이다(`A > B > C` 거부 → `AND(A>B, B>C)` 안내). Excel 의 좌결합 + TRUE 승격을
+  흉내내려면 "TRUE 는 모든 숫자보다 크다" 같은 Excel 고유 서수까지 따라가야 한다.
+- `ROUND` 의 자릿수는 **파스 타임 상수**로 강제한다(배열 자릿수는 행마다 `np.round` 를 돈다).
+
+**메타 7칸**(ITEMNAME/TSEQ/TNO/STEP/UNIT/HILIM/LOLIM):
+- 기본값은 **탭을 처음 열 때 받은 rawdata** 에서 채운다 — TSEQ/TNO 는 **전 source 최대 +1**,
+  STEP 은 첫 source 마지막 항목 승계, 나머지는 빈칸. 서버 `raw_data/columns` 응답에 필드를
+  넣지 않은 이유는 그게 `web_report/tabs/` 라 perf_guard `S01` 이 `REPORT_SCHEMA_VERSION`
+  bump 를 요구하고, 그 bump 가 전 세션 콜드 폭풍이기 때문이다. `rawdata_export` 는
+  ETag=content_hash 로 304 캐시되므로 두 번째부터는 사실상 즉시다.
+- 마지막 항목의 TSEQ/TNO 가 숫자가 아니면 `+1` 을 만들 수 없다 → **빈칸으로 두고** 직접
+  입력받는다(추측하면 기존 항목과 부딪힌다).
+- **TSEQ/TNO/STEP 은 전 source 공통 값 하나**다. source 별로 다르면
+  [yield_tab](../web_report/tabs/yield_tab.py) `tno_to_item_map`(TNO 키, TSEQ 앞선 것만 생존) ·
+  [tabs/common](../web_report/tabs/common.py) `item_meta`(`setdefault` — 첫 테이블 값) ·
+  [distribution](../web_report/tabs/distribution.py) `scatter_item`(표시 TNO 는 대표 테이블,
+  fail 판정은 source 별)이 서로 다른 기준을 잡아 **fail 귀속과 표시 TNO 가 조용히 갈린다**.
+- **TNO 는 전역 유일해야 한다.** 기존 TNO 를 재사용하면 `tno_to_item_map` 이 그 TNO 를 쓰는
+  항목 중 TSEQ 가 앞선 하나만 남겨 **기존 항목의 Fail 집계가 통째로 사라진다**(에러 없이).
+  거부 메시지에 그 항목 이름과 결과를 함께 적는다.
+- 값 표기 판정은 [rawvalues.parse_number](../web_report/rawvalues.py) 를 쓴다(사본 금지) —
+  `float()` 은 `1_000` 을 통과시키는데 메타 값은 parquet 에 **문자열 그대로** 저장되므로
+  조회 때 `to_numeric` 이 NaN 으로 떨궈 **규격이 조용히 사라진다**.
+- ITEMNAME 은 기존 항목·메타 7컬럼과 겹칠 수 없다. UI 검증에 더해 **적용 직전에도 다시**
+  본다 — pandas 의 `df[name] = ...` 는 겹치는 이름에 새 컬럼을 만들지 않고 **기존 컬럼을
+  조용히 덮어쓴다**(BIN 을 덮으면 수율·Wafer Map 이 통째로 바뀌는데 parquet 은 유효하다).
+
+**BIN·FAILTNO 는 바뀌지 않는다.** 신규 항목의 limit 위반이 die 판정을 바꾸지 않으므로 Yield
+표·수율·Wafer Map 은 불변이고, 새 항목은 CPK·Distribution·Trim·Raw Data 에만 나타난다
+(limit 을 비우면 CPK 도 없이 분포만). 미리보기와 확인창에 이 문장을 띄운다.
+
+**서버 반영** ([rawedit.replace_sources](../web_report/rawedit.py), form 필드 2개 추가):
+- `add_items` — `manifest.selected_items` 가 **비어 있지 않을 때만** 신규 이름을 덧붙인다
+  (manifest 불변 규칙의 **두 번째 예외** — CLAUDE.md §5-6). 안 하면 parquet 에는 컬럼이
+  있는데 리포트 어디에도 안 보인다(8곳이 `selected_items` 로 `item_columns` 를 거른다).
+  비어 있으면 갱신하지 않는다 — 빈 값 = 전 항목 선택이라 한 개짜리 목록을 만들면 오히려
+  나머지가 전부 사라진다. 업로드된 parquet 에 없는 이름은 400 으로 거부한다.
+- `rows_preserved="1"` — **전처리 셀 패치(`edits`)를 지우지 않는다.** Excel 왕복이 그것을
+  해제하는 근거는 "행이 지워지거나 순서가 바뀌면 `(source,row_idx)` 가 다른 die 를 가리킨다"
+  인데, 열만 붙이는 이 경로는 그 전제가 성립하지 않는다. 지우면 사용자가 빠른 수정으로 넣어
+  둔 값이 소리 없이 사라진다(CLAUDE.md §5-12).
+- 감사로그는 `raw_data(add_item, +<이름>, backup=...)` — Excel 왕복(`raw_data(excel, ...)`)과
+  구분돼야 나중에 "이 컬럼이 어디서 왔나"를 감사로그만으로 답할 수 있다.
+- **Distribution pack 은 갱신된 `selected_items` 로 다시 만든다.**
+  [service.get_distribution_batch](../web_report/service.py) 는 pack 을 그대로 믿고 없는 항목은
+  없는 채로 응답하므로, 옛 manifest 로 pack 을 만들면 갤러리에서 **그 카드만 조용히 빈다**.
+
+**UI**: [rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py) 페이지 +
+[formula_editor.py](../client/honey_ui/formula_editor.py)(칩 스트립 + `@` 자동완성 + IME 가드) +
+[excel_edit/item_add.py](../client/excel_edit/item_add.py)(왕복) +
+`excel_edit/worker.py` `AddItemWorker`. 상세는 [05](05_client_ui.md).
+회귀 고정: `tests/test_formula_item.py` · `test_new_item_roundtrip.py` ·
+`test_rawedit_add_item.py` · `test_new_item_dialog.py`.
 
 #### 빠른 수정 다이얼로그 (2026-07-28) — **현재 허브에서 진입 비활성**
 [rawdata_quick_dialog.py](../client/honey_ui/rawdata_quick_dialog.py) — Excel 없이 표·조건으로

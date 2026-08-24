@@ -18,7 +18,17 @@
   // "클릭하면 재개" 오버레이를 띄운다. 페이지는 그대로 두므로 미저장 편집은 안전하고,
   // 요청이 멎으면 접속자 집계(5분 창)에서도 자연히 빠진다. localStorage 는 검증용 훅.
   var IDLE_LIMIT_MS = Number(localStorage.idle_limit_ms) || 4 * 3600 * 1000;
-  var ACTIVITY_MIN_GAP_MS = 30000;   // timestamp 갱신 스로틀 (4h 기준에 오차 30초는 무의미)
+  // timestamp 갱신 스로틀. 4h 유휴 판정만 쓰던 때는 30초여도 무의미한 오차였지만, 이제
+  // 이 값이 관리자 화면의 초록(=실입력 60초 이내) 판정 근거로 함께 나가므로 오차를
+  // 줄인다. 최악 보고지연 = 폴링 30초 + 스로틀 5초 ≈ 35초 < 60초.
+  var ACTIVITY_MIN_GAP_MS = 5000;
+
+  // 지금 보고 있는 화면 — 서버는 요청이 멎으면 목록인지 상세인지 구분할 수 없다.
+  // SESSION_ID 전역은 core.js 톱레벨 const 라 세션 상세에서도 window 에 없다(그리고 이
+  // 파일은 랜딩·목록과도 공유된다) → URL 로 판별한다.
+  var VIEW_M = location.pathname.match(/\/view\/([^\/?#]+)/);
+  var PAGE = VIEW_M ? "view" : (/^\/pe\/?$/.test(location.pathname) ? "landing" : "index");
+  var SID = VIEW_M ? VIEW_M[1] : "";
 
   var STYLE = `
 #adminMsgMask{position:fixed;inset:0;z-index:3000;display:none;align-items:center;
@@ -200,7 +210,12 @@ html[data-theme="dark"] #idleMask .idle-card .idle-sub{color:#8b949e}
     if (document.hidden) return;
     if (idle) return;
     if (Date.now() - lastActivity > IDLE_LIMIT_MS) { enterIdle(); return; }
-    fetch(API, { headers: { "Accept": "application/json" } })
+    // 화면 종류와 마지막 입력 이후 경과초를 함께 알린다(관리자 접속현황 표시용).
+    // 서버는 이 값들이 없어도 종전대로 동작하고, 응답 형식도 그대로다.
+    var q = "?page=" + PAGE
+          + (SID ? "&sid=" + encodeURIComponent(SID) : "")
+          + "&idle=" + Math.max(0, Math.round((Date.now() - lastActivity) / 1000));
+    fetch(API + q, { headers: { "Accept": "application/json" } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         if (!data) return;

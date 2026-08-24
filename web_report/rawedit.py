@@ -25,10 +25,14 @@ from pathlib import Path
 from . import cache
 from . import edits
 from . import runtime
-from .honeyform import META_COLUMNS, validate_parquet_bytes
+from .honeyform import META_COLUMNS, parquet_item_columns, validate_parquet_bytes
 from .validation import canon
 
 _log = logging.getLogger(__name__)
+
+# 신규 수식 item 을 한 번에 몇 개까지 신고할 수 있는가 (add_items).
+# 허브 UI 는 1개씩만 보내지만, 상한이 없으면 manifest.selected_items 가 무한히 늘 수 있다.
+_MAX_ADD_ITEMS = 20
 
 
 def _save_dist_pack(dist_pack, analysis_key, content_hash, mode, upload_root) -> bool:
@@ -342,6 +346,33 @@ def remove_backups(analysis_key, upload_root) -> bool:
     return True
 
 
+def _clean_add_items(add_items, present) -> list:
+    """add_items 정규화·검증. 위반은 ValueError → 400.
+
+    ``present`` 는 업로드된 parquet 들이 실제로 가진 item 이름 집합이다. 신고한 이름이
+    거기 없으면 거부한다 — 없는 이름을 manifest.selected_items 에 넣으면 그 세션은 영영
+    "선택했는데 데이터가 없는 항목"을 들고 다니게 된다(조회 때 조용히 빈 칸이 된다).
+    """
+    if not add_items:
+        return []
+    names = []
+    for value in add_items:
+        name = str(value or "").strip()
+        if not name:
+            continue
+        if len(name) > 200:
+            raise ValueError("add_items 의 이름이 너무 깁니다 (200자 이하)")
+        if name not in names:
+            names.append(name)
+    if len(names) > _MAX_ADD_ITEMS:
+        raise ValueError(f"add_items 가 너무 많습니다 ({_MAX_ADD_ITEMS}개 이하)")
+    unknown = [n for n in names if n not in present]
+    if unknown:
+        raise ValueError(
+            f"업로드한 parquet 에 없는 item 입니다: {', '.join(unknown[:3])}")
+    return names
+
+
 def _validate_kept_indices(kept_indices, existing, uploaded):
     """kept_indices(남긴 source 의 원본 idx) 검증 — 위반은 전부 ValueError → 400.
 
@@ -369,7 +400,8 @@ def _validate_kept_indices(kept_indices, existing, uploaded):
 
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                     kept_indices=None, client_ip: str = "", user_agent: str = "",
-                    client_user: str = "", dist_pack=None) -> dict:
+                    client_user: str = "", dist_pack=None,
+                    add_items=None, rows_preserved: bool = False) -> dict:
     """Honey 가 Excel 편집 후 재인코딩한 parquet 전체로 세션 원본을 덮어쓴다.
 
     kept_indices: 남긴 source 의 원본 idx 리스트(오름차순). None 이면 전체 교체 —
@@ -383,6 +415,16 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     dist_pack: Honey 가 재인코딩한 parquet 으로 미리 만든 Distribution pack
     ({"index": json str, "chunks": {id: gzip bytes}}). 있으면 새 content_hash 로 영구
     저장해 서버의 콜드 dist 정렬(수십 초 CPU)을 없앤다 — 업로드 경로와 같은 구조다.
+
+    add_items: 이번 교체로 **새로 생긴 item 이름** (Honey 허브의 신규 수식 item). 있으면
+    manifest 의 selected_items 에 그 이름을 덧붙인다 — **manifest 불변 스냅샷 규칙의 두 번째
+    예외**다(첫 번째는 위 sources 축소). 안 하면 parquet 에는 컬럼이 있는데 리포트 어디에도
+    안 보인다: build_report_payload 를 비롯한 8곳이 selected_items 로 item_columns 를 거른다.
+    selected_items 가 **비어 있으면 갱신하지 않는다** — 그 경우 필터 자체가 없어서(전 항목
+    선택) 덧붙일 이유가 없다. analysis_key 는 어느 경우에도 재산출하지 않는다(§5-3).
+
+    rows_preserved: 이번 교체가 **행을 하나도 건드리지 않았는가**(열만 추가). True 면 전처리
+    셀 패치 해제를 건너뛴다 — 아래 drop_preprocess_edits_for_akey 참조. 기본 False(Excel 왕복).
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -394,11 +436,16 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     # (1) 각 parquet 가 유효한 honeyform 인지 검증 (실패 시 ValueError → 400).
     # 뼈대(스키마+메타 6행)만 읽는다 — 클라가 encode 시 이미 같은 규칙으로 검증했고,
     # 여기서 전량 디코드하면 수백만 셀 to_numeric 을 하고 결과를 버리게 된다.
+    present = set()
     for i, data in enumerate(sources_bytes):
         try:
             validate_parquet_bytes(data)
+            if add_items:      # 신고가 있을 때만 스키마를 한 번 더 읽는다 (footer only)
+                present.update(parquet_item_columns(data))
         except ValueError as exc:
             raise ValueError(f"source_{i}: {exc}") from exc
+
+    add_items = _clean_add_items(add_items, present)
 
     # 같은 analysis_key 원본의 read-modify-write 직렬화 — service.edit_raw_data 와 같은
     # 락 키로 동시 편집 lost update 방지 (단일 프로세스 전제, in-process 락).
@@ -431,6 +478,17 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                 manifest["sources"] = [old_sources[i] for i in kept_indices
                                        if i < len(old_sources)]
 
+        # manifest 불변 스냅샷 규칙의 **두 번째 예외** (첫 번째는 위 sources 축소).
+        # selected_items 가 비어 있으면 = 전 항목 선택이라 필터가 아예 없다
+        # (metrics.build_report_payload 의 `if selected_set:` 가드) → 갱신 자체가 불필요.
+        if add_items and (manifest.get("selected_items") or []):
+            selected = list(manifest["selected_items"])
+            known = {str(v) for v in selected}
+            fresh = [v for v in add_items if v not in known]
+            if fresh:
+                manifest = dict(manifest)
+                manifest["selected_items"] = selected + fresh
+
         content_hash = hashlib.sha256(
             canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
         ).hexdigest()
@@ -460,15 +518,23 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                                      session.get("mode"), upload_root)
         # 행 위치 기반 전처리 셀 패치는 원본이 바뀌면 엉뚱한 행을 가리킨다 — 형제까지 해제
         # (service.edit_raw_data 와 같은 헬퍼 · 같은 판단).
-        dropped = edits.drop_preprocess_edits_for_akey(report_db, analysis_key, user_agent)
+        # 단 **열만 추가한 교체(rows_preserved)는 예외**다: 행이 지워지거나 순서가 바뀌지
+        # 않았으므로 (source, row_idx) 는 그대로 유효하다. 여기서 지우면 사용자가 빠른
+        # 수정으로 넣어 둔 셀 패치가 소리 없이 사라진다(CLAUDE.md §5-12 — 다시 입력할
+        # 방법이 없고, 사라져도 에러가 아니라 빈 값으로 보여 발견조차 늦다).
+        dropped = 0 if rows_preserved else edits.drop_preprocess_edits_for_akey(
+            report_db, analysis_key, user_agent)
     try:
         removed_note = f", removed={removed_names}" if removed_names else ""
+        # 경로 이름을 나눠 둔다 — 나중에 "이 컬럼이 어디서 왔나"를 감사로그만으로 답해야 한다.
+        added_note = f", added_items={add_items}" if add_items else ""
+        origin = "add_item" if add_items else "excel"
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=(f"raw_data(excel, {len(sources_bytes)} sources"
-                            f"{removed_note}, backup={backup_name}"
+            changed_fields=(f"raw_data({origin}, {len(sources_bytes)} sources"
+                            f"{removed_note}{added_note}, backup={backup_name}"
                             + (f", quick_edits_cleared={dropped}" if dropped else "") + ")"),
             client_ip=client_ip, user_agent=user_agent,
             client_user=client_user or None)
@@ -485,4 +551,5 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                      exc_info=True)
 
     return {"ok": True, "sources": len(sources_bytes), "removed": len(removed_names),
-            "storage": storage_result["storage"], "dist_pack_saved": pack_saved}
+            "added_items": len(add_items), "storage": storage_result["storage"],
+            "dist_pack_saved": pack_saved}

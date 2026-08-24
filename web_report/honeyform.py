@@ -251,6 +251,26 @@ def validate_parquet_bytes(data: bytes) -> None:
         raise ValueError(kor_issues(issues))
 
 
+def parquet_item_columns(data: bytes) -> list:
+    """parquet 스키마에서 **item 컬럼 이름만** (전량 디코드 없이 footer 만 읽는다).
+
+    rawdata_replace 의 `add_items`(신규 수식 item) 검증 전용 — 클라가 "이 이름을 추가했다"고
+    신고한 항목이 실제로 업로드된 parquet 에 들어 있는지 본다.
+
+    ⚠ 이 판정을 validate_parquet_bytes 의 **반환값으로 넓히지 않는다** — 그 함수는
+    tests/test_rawedit_delete_source.py 가 `lambda data: None` 으로 몽키패치하는 지점이라,
+    반환 계약을 만들면 그 테스트에서 조용히 None 을 받게 된다.
+    """
+    _require_parquet_engine()
+    import pyarrow.parquet as pq
+
+    try:
+        names = [str(c) for c in pq.ParquetFile(BytesIO(data)).schema_arrow.names]
+    except Exception as exc:
+        raise ValueError(f"parquet 을 읽을 수 없습니다: {exc}") from exc
+    return names[len(META_COLUMNS):]
+
+
 def _numeric_item_block(frame: pd.DataFrame, item_labels: list) -> pd.DataFrame:
     """item 컬럼 블록을 per-column pd.to_numeric 으로 변환해 DataFrame 으로 반환.
 

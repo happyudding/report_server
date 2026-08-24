@@ -334,6 +334,75 @@ def test_color_hook_isolation():
     print("[g] 색 해석기 훅 — 주입 시 적용 / 미설정 시 종전 동일 OK")
 
 
+def test_spec_preserves_offindex_picks():
+    """(i) 저장 spec 은 **인덱스 밖 선택도 보존**한다.
+
+    전처리 항목 제외·source 축소로 distIndex 에서 빠진 pair 가 있는 정의를, 이름만 바꿔
+    다시 저장했을 때 그 pair 가 조용히 사라지면 안 된다(CLAUDE.md §5-12 — 서버는
+    `service._sanitize` 가 실재 여부를 검사하지 않고 보존하는데 클라가 버리면 무의미).
+    표시 순서는 distIndex/source 순을 따르되 없는 것은 뒤에 붙인다."""
+    comp = (_JS / "dist_composite.js").read_text(encoding="utf-8")
+    assert "function dcOrderedPick" in comp, "dcOrderedPick 이 없습니다"
+    harness = ("<script>(function(){" + SETUP + "var out={};"
+               "out.kept = dcOrderedPick(['B','A'], new Set(['A','GONE','B']));"
+               "out.empty = dcOrderedPick([], new Set(['X']));"
+               "_emit(out);})();</script>")
+    out = json.loads(run_probe(DEPS, "", harness, "offindex"))
+    assert out["kept"] == ["B", "A", "GONE"], out["kept"]
+    assert out["empty"] == ["X"], out["empty"]
+    # 저장 spec 조립이 인덱스 filter 로 되돌아가지 않았는지 고정
+    body = comp[comp.index("function dcCollectSpec"):]
+    body = body[:body.index("\n}\n")]
+    assert "dcOrderedPick" in body, "dcCollectSpec 이 dcOrderedPick 을 쓰지 않습니다"
+    assert "filter(s => _dcSelItems.has(s))" not in body, (
+        "인덱스 기준 filter 가 되살아났습니다 — 인덱스 밖 pair 가 재저장 시 사라진다")
+    print("[i] 인덱스 밖 항목/source 도 저장 spec 에 보존 OK")
+
+
+def test_detail_chart_notes():
+    """(j) 합성 상세의 차트 주석 — 키는 **UUID 기반**이고 seq 모드에는 붙이지 않는다."""
+    comp = (_JS / "dist_composite.js").read_text(encoding="utf-8")
+    assert "function dcNoteSubject" in comp, "dcNoteSubject 가 없습니다"
+    body = _fn_body_dc(comp, "dcNoteSubject")
+    assert "name" not in body, (
+        "주석 키가 이름을 쓴다 — 차트를 개명하면 그려 둔 주석이 끊긴다(§5-12)")
+    detail = _fn_body_dc(comp, "dcRenderDetail")
+    assert "chartNotesBar" in detail and "cnRenderChartComments" in detail, \
+        "상세에 주석 툴바/코멘트 뷰를 그리지 않습니다"
+    assert 'id="chartNoteBar"' in detail and 'id="cdfCommentView"' in detail, \
+        "주석 툴바/코멘트 뷰 컨테이너가 마크업에 없습니다"
+    charts = _fn_body_dc(comp, "dcRenderDetailCharts")
+    seq_part = charts[:charts.index("// ECDF **전량**")]
+    assert "chartNotesApply" not in seq_part, "seq 상세에 주석을 붙이고 있습니다(F-4)"
+    assert "cnDetach" in seq_part, "seq 상세에서 주석 등록을 풀지 않습니다"
+    assert "chartNotesApply" in charts[charts.index("// ECDF **전량**"):], \
+        "ECDF 상세에 주석 오버레이가 없습니다"
+    # 상세는 한 번에 하나만 — id 를 Item_detail 과 공유하므로 여는 쪽이 상대를 비운다
+    assert "hideItemDetail" in _fn_body_dc(comp, "dcOpenDetail"), \
+        "dcOpenDetail 이 Item_detail 을 비우지 않습니다 (DOM id 충돌)"
+    notes = (_JS / "chart_notes.js").read_text(encoding="utf-8")
+    assert "function cnActiveSubject" in notes, "cnActiveSubject 가 없습니다"
+    assert "cnActiveSubject()" in notes[notes.index("async function cnFlush"):], (
+        "cnFlush 가 _itemDetailData 로 하단 코멘트를 그린다 — 합성 상세에서 직전 항목의 "
+        "코멘트가 찍힌다")
+    print("[j] 합성 상세 차트 주석 (UUID 키 · seq 제외 · id 배타) OK")
+
+
+def _fn_body_dc(src, name):
+    """`function name(...) { ... }` 본문 추출 (중괄호 균형)."""
+    at = src.index(f"function {name}(")
+    start = src.index("{", at)
+    depth = 0
+    for i in range(start, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[start:i + 1]
+    raise AssertionError(f"{name} 본문을 찾지 못했습니다")
+
+
 def main():
     print("[Distribution composite JS 검증]")
     test_no_es_module()
@@ -342,6 +411,7 @@ def main():
     test_hooks()
     test_css_present()
     test_pair_cap()
+    test_detail_chart_notes()
     if not edge_path():
         print("[SKIP] Edge 를 찾지 못해 브라우저 검증은 건너뜁니다")
         return
@@ -350,6 +420,7 @@ def main():
     test_cards_html()
     test_ecdf_stats()
     test_color_hook_isolation()
+    test_spec_preserves_offindex_picks()
     print("[통과] Distribution composite JS 정상")
 
 

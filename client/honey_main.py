@@ -1318,12 +1318,28 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.information(self, "Rawdata 수정", "이미 Excel 편집이 진행 중입니다.")
             return
 
-        from honey_ui.rawdata_hub_dialog import ACTION_EXCEL, ACTION_QUICK, RawdataHubDialog
+        from honey_ui.rawdata_hub_dialog import (ACTION_ADD_ITEM, ACTION_EXCEL,
+                                                 ACTION_QUICK, RawdataHubDialog)
         hub = RawdataHubDialog(self, sid, SERVER_BASE_URL)
         accepted = hub.exec() == QDialog.DialogCode.Accepted
         changed = hub.changed
         if accepted and hub.action == ACTION_QUICK:
             changed = self._run_quick_edit(sid) or changed
+        if accepted and hub.action == ACTION_ADD_ITEM:
+            # 신규 수식 item 추가 — Excel 왕복과 같은 워커 필드를 쓴다. 그래야 위 중복 실행
+            # 가드와 아래 이탈 취소 가드(_excel_edit_running)가 그대로 적용된다.
+            from excel_edit.worker import AddItemWorker
+            self._excel_worker = AddItemWorker(sid, SERVER_BASE_URL, hub.add_item_spec, self)
+            w = self._excel_worker
+            w.status.connect(self._on_excel_edit_status)
+            w.confirm_request.connect(self._on_excel_edit_confirm)
+            w.done.connect(self._on_excel_edit_done)
+            w.failed.connect(self._on_excel_edit_failed)
+            name = (hub.add_item_spec or {}).get("name") or ""
+            self._append_run_log(f"신규 item 추가 시작 (session {sid}) - '{name}'")
+            w.start()
+            self._set_busy(True)
+            return
         if changed:
             # 전처리 옵션이 바뀌었으면 현재 보고 있는 리포트를 다시 그린다.
             self._append_run_log("[Rawdata] 전처리 옵션 저장 — 페이지 새로고침.")

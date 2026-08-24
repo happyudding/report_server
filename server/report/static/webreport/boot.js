@@ -195,7 +195,9 @@ function maybeStartAiPendingPoll() {
     // 셀 문구만 "미완료"로 바꾼다(다음 새로고침이 다시 폴링을 시작한다).
     if (Date.now() > deadline) { _aiPollGiveUp(); return; }
     try {
-      const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-cache" });
+      // hb=1 = 폴링이라는 표식(관리자 접속현황). AI 결과를 최대 20분 기다리는 동안
+      // 5초마다 오는 이 요청이 "사용자가 지금 뭘 하고 있나"를 덮지 않게 한다.
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/full?hb=1`, { cache: "no-cache" });
       if (res.status === 200) {
         const data = await res.json();
         const web = data.web_report || {};

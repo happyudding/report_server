@@ -52,6 +52,13 @@ _COMPUTE_BUSY_EXC = (web_report_compute.QueueWaitTimeout, BrokenProcessPool)
 # 배치로 나눠 보낸다.
 _DIST_BATCH_MAX = 40
 
+# order=seq 는 **동일값을 접지 않는다**(순서 보존이 존재 이유 — dist_seq.py). 그래서 항목당
+# payload 가 ECDF 의 한 자릿수 배 이상이다: 5 source × 25,000 die 면 항목 1개가 125,000 값이라
+# 30개 배치는 한 요청에 375만 값(raw 40MB+)이 된다. 점을 버리는 게 아니라 **요청을 나눠 받는
+# 것**이므로 규칙 #5(다운샘플 금지)와 무관하다. 프런트도 같은 값으로 배치를 자른다
+# (distribution.js DIST_BATCH.SEQ_SIZE — 한쪽만 바꾸면 400 이 난다).
+_DIST_SEQ_BATCH_MAX = 10
+
 # /distribution_batch 의 order 파라미터 화이트리스트. ""/"ecdf" = 종전 누적분포(기본),
 # "seq" = Serial 순(rawdata 누적 순) 값 배열 (web_report/dist_seq.py).
 _DIST_BATCH_ORDERS = ("", "ecdf", "seq")
@@ -226,8 +233,6 @@ def web_report_distribution_batch(session_id):
     subjects = sorted({s.strip() for s in re.split(r"[,\n]", raw) if s.strip()})
     if not subjects:
         abort(400, "subjects required")
-    if len(subjects) > _DIST_BATCH_MAX:
-        abort(400, f"too many subjects (max {_DIST_BATCH_MAX})")
     if any(len(s) > 200 for s in subjects):
         abort(400, "invalid subject")
     bin1, bin1_scope, _variant = _bin1_args()
@@ -236,6 +241,9 @@ def web_report_distribution_batch(session_id):
     order = (request.args.get("order") or "").strip().lower()
     if order not in _DIST_BATCH_ORDERS:
         abort(400, "invalid order")
+    limit = _DIST_SEQ_BATCH_MAX if order == "seq" else _DIST_BATCH_MAX
+    if len(subjects) > limit:
+        abort(400, f"too many subjects (max {limit})")
     getter = (web_report_response_cache.get_dist_seq_batch_gzip if order == "seq"
               else web_report_response_cache.get_dist_batch_gzip)
     try:
@@ -383,8 +391,13 @@ def web_report_gap_chart(session_id, chart_id):
 
     ETag 에 **수식 digest** 를 넣는 것이 핵심이다 — 캐시 키에만 넣고 여기서 빠뜨리면
     수식을 고쳐도 브라우저가 304 로 옛 응답을 계속 쓴다(둘 다 같은
-    `gap_chart.spec_digest` 값을 쓴다)."""
+    `gap_chart.spec_digest` 값을 쓴다).
+
+    같은 이유로 `GAP_SCHEMA_VERSION` 도 함께 넣는다 — 응답 구조를 바꿔 이 상수를 올리면
+    서버는 재계산하는데 ETag 가 그대로면 브라우저가 304 로 옛 **구조**를 계속 쓴다.
+    캐시 키(cache_policy.gap_key)와 ETag 는 축이 하나라도 어긋나면 안 된다."""
     from web_report import gap_chart as _gap
+    from web_report.cache_policy import GAP_SCHEMA_VERSION
 
     session = _require_web_report_session(session_id)
     chart_id = (chart_id or "").strip()
@@ -396,7 +409,7 @@ def web_report_gap_chart(session_id, chart_id):
     digest = _gap.spec_digest(spec)
     bin1, bin1_scope, variant = _bin1_args()
     etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
-            f'-{variant}{_prep_tag(session_id)}-gap{digest[:12]}"')
+            f'-{variant}{_prep_tag(session_id)}-gap{digest[:12]}v{GAP_SCHEMA_VERSION}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
@@ -411,6 +424,8 @@ def web_report_gap_chart(session_id, chart_id):
         return jsonify({"error": str(exc), "index": exc.index}), 400
     except KeyError:
         abort(404, "gap chart or session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"gap_chart: {exc!r}")
     except Exception:
         _log.exception("web_report gap_chart failed for session %s chart %s",
                        session_id, chart_id)
@@ -902,7 +917,12 @@ def web_report_rawdata_replace(session_id):
 
     선택 필드 dist_pack_index + dist_pack_chunk_<n> — 클라가 재인코딩한 parquet 으로 미리
     만든 Distribution pack. 첨부되면 새 content_hash 로 영구 저장해 서버 콜드 dist 정렬을
-    없앤다 (업로드 라우트와 동일 규약)."""
+    없앤다 (업로드 라우트와 동일 규약).
+
+    선택 필드 add_items(JSON 배열) + rows_preserved("1") — 허브의 **신규 Item(수식) 추가**
+    경로가 보낸다. add_items 는 이번 교체로 새로 생긴 item 이름(manifest.selected_items 에
+    덧붙일 대상), rows_preserved 는 "행을 하나도 안 건드렸다"는 신고다(전처리 셀 패치를
+    지우지 않는 근거). 둘 다 rawedit.replace_sources 가 검증한다."""
     if request.headers.get("X-Honey-Agent") != "1":
         abort(403, "X-Honey-Agent header required")
     session = _require_web_report_session(session_id)
@@ -919,12 +939,24 @@ def web_report_rawdata_replace(session_id):
             kept_indices = [int(i) for i in parsed]
         except (ValueError, TypeError) as exc:
             return jsonify({"error": f"source_indices 형식 오류: {exc}"}), 400
+    add_items = None
+    raw_add = request.form.get("add_items")
+    if raw_add:
+        try:
+            parsed = json.loads(raw_add)
+            if not isinstance(parsed, list):
+                raise TypeError("list 가 아닙니다")
+            add_items = [str(v) for v in parsed]
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": f"add_items 형식 오류: {exc}"}), 400
+    rows_preserved = request.form.get("rows_preserved") == "1"
     ip, ua = _client_meta()
     try:
         result = web_report_rawedit.replace_sources(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             sources_bytes=sources, kept_indices=kept_indices, client_ip=ip, user_agent=ua,
-            client_user=_current_user() or "", dist_pack=dist_pack)
+            client_user=_current_user() or "", dist_pack=dist_pack,
+            add_items=add_items, rows_preserved=rows_preserved)
     except FileNotFoundError as exc:
         return artifact_missing(session_id, str(exc))
     except KeyError:
@@ -1278,6 +1310,15 @@ def web_report_gap_charts(session_id):
     except Exception:
         _log.exception("web_report gap_charts failed for session %s", session_id)
         abort(500, "gap_charts failed")
+    # 방금 저장/수정한 차트를 백그라운드에서 미리 계산해 둔다 — gap 캐시 키에 spec_digest 가
+    # 들어가 저장 직후는 항상 캐시 미스이고, 그 계산이 사용자의 첫 조회 요청 안에서 통째로
+    # 일어나 카드가 "계산 중…" 으로 머물기 때문. 실패해도 조회가 종전대로 계산한다.
+    charts = result.get("gap_charts") or {}
+    saved = [str(op.get("key") or "") for op in ops
+             if isinstance(op, dict) and op.get("value") is not None]
+    web_report_response_cache.warm_gap_chart(
+        session_id, [c for c in saved if c in charts], charts.get,
+        session=session, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
     return jsonify(result)
 
 

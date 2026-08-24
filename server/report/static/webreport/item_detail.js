@@ -58,7 +58,9 @@ function openItemDetail(subject, navList, opts = null) {
   // (2026-08-20 신고 — AI Comment 과거사례 안 @링크). 대기 중임을 토스트로 알린다.
   if (!window.Plotly && window.__plotlyReady) {
     showToast("차트 모듈을 불러오는 중입니다 — 잠시 후 자동으로 열립니다.");
-    window.__plotlyReady.then(() => openItemDetail(subject, navList));
+    // opts 를 반드시 함께 넘긴다 — 빠뜨리면 Gap Chart 카드를 로드 전에 클릭했을 때
+    // 재시도가 /scatter/<차트 이름> 을 때려 404 "상세 로드 실패" 가 된다.
+    window.__plotlyReady.then(() => openItemDetail(subject, navList, opts));
     return;
   }
   // 미저장 차트 주석(원/화살표 등)은 항목 이동 전에 flush — purge 전이라 도형 회수 가능.
@@ -88,8 +90,11 @@ function openItemDetail(subject, navList, opts = null) {
   // Bin1 계열 토글이 켜져 있으면 상세도 같은 기준의 분포/통계를 받는다(?bin1=1[&bin1_scope=rt]).
   // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
   const scatterVariantQ = distVariantQuery(distGalleryVariant()).replace(/^&/, "?");
-  const scatterUrl = (opts && opts.url)
-    ? opts.url + scatterVariantQ
+  // opts.urlOf(subject) 가 있으면 subject 마다 URL 을 다시 정한다 — Gap Chart 처럼 차트끼리
+  // prev/next 로 이동하는 경우 고정 opts.url 을 쓰면 다음 차트가 이전 차트 데이터를 받는다.
+  const optUrl = opts && (typeof opts.urlOf === "function" ? opts.urlOf(subject) : opts.url);
+  const scatterUrl = optUrl
+    ? optUrl + scatterVariantQ
     : `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
       + scatterVariantQ;
   // 콜드(서버 tables 미적재) 세션은 202 가 온다 — 백그라운드 웜업이 끝날 때까지
@@ -364,7 +369,11 @@ function itemDetailNav(delta) {
   if (p < 0) p = 0;
   if (p >= _itemDetailNav.length) p = _itemDetailNav.length - 1;
   const next = _itemDetailNav[p];
-  if (next && next !== _itemDetailSubject) openItemDetail(next, _itemDetailNav);
+  // opts 는 **subject 별 URL 해석기(urlOf)가 있을 때만** 이어받는다. 고정 url 짜리 opts 를
+  // 그대로 넘기면 다음 항목이 이전 항목의 URL 로 조회돼 조용히 같은 데이터를 그린다.
+  const opts = (_itemDetailOpts && typeof _itemDetailOpts.urlOf === "function")
+    ? _itemDetailOpts : null;
+  if (next && next !== _itemDetailSubject) openItemDetail(next, _itemDetailNav, opts);
 }
 
 // 상세 패널 Plotly 차트 해제 — scattergl(WebGL 컨텍스트)은 innerHTML 교체만으로 회수되지
@@ -760,7 +769,13 @@ function distRenderCdf(data) {
   _idetGapChipHits = [];   // 이번 렌더에서 다시 모은다(Serial 순 분기로 빠져도 stale 금지)
   // Serial 순 모드는 같은 자리에 축이 다른 차트를 그린다 — 분기는 이 한 곳뿐이라
   // 재렌더 호출부(축옵션·칩 편집·항목 이동)가 전부 자동으로 따라온다.
-  if (distSeqOnly) { distRenderSeq(data, cdfDiv); return; }
+  if (distSeqOnly) {
+    // 주석 등록 해제 — 같은 노드에 축이 다른 차트를 덮으므로, 등록이 남으면 이후 저장이
+    // seq layout 에서 빈 도형을 회수해 저장돼 있던 CDF 주석을 지운다(chart_notes.cnDetach).
+    if (window.cnDetach) cnDetach(`cdf:${window.cnSubjectOf ? cnSubjectOf(data) : data.subject}`);
+    distRenderSeq(data, cdfDiv);
+    return;
+  }
   // 재렌더(제외/강조 편집) 시 이전 plot 을 해제 — scattergl 의 WebGL 컨텍스트 누적 방지
   // (SVG 에도 무해). newPlot 이 이어서 새로 초기화한다.
   if (cdfDiv.data) { try { Plotly.purge(cdfDiv); } catch (e) { /* no-op */ } }
@@ -860,7 +875,10 @@ function distRenderCdf(data) {
   // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
   syncIdetAxisInputs("cdf", cdfDiv);
   // 차트 주석 오버레이 — 렌더 시점의 shapes 개수를 base 로 기억해야 하므로 항상 마지막에.
-  if (window.chartNotesApply) chartNotesApply("cdf", data.subject, cdfDiv);
+  // subject 는 반드시 cnSubjectOf — Gap Chart 는 `gap:<uuid>` 키를 쓴다. 여기만 data.subject
+  // 로 두면 도형은 차트 이름 키, 코멘트는 uuid 키로 갈려 ↶취소·전체지우기가 안 먹고
+  // 이름을 바꾸는 순간 도형이 끊긴다.
+  if (window.chartNotesApply) chartNotesApply("cdf", window.cnSubjectOf ? cnSubjectOf(data) : data.subject, cdfDiv);
 }
 // ── Serial 순(rawdata 누적 순) 상세 차트 — CDF 자리에 그리는 run chart ─────────
 // x = 각 source 의 측정 순서(1..n) · y = 측정값. 데이터는 **/scatter 응답 그대로**다
@@ -1006,7 +1024,7 @@ function distRenderHist(data) {
   // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
   syncIdetAxisInputs("hist", hDiv);
   // 차트 주석 오버레이 (chart_notes.js) — base shapes 기억을 위해 렌더 직후 호출.
-  if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
+  if (window.chartNotesApply) chartNotesApply("hist", window.cnSubjectOf ? cnSubjectOf(data) : data.subject, hDiv);
 }
 function distRenderDetailCharts(data) {
   distRenderCdf(data);    // #distCdf (제외 편집 반영)

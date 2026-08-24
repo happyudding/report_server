@@ -17,12 +17,16 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
+import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from . import cache, cache_policy, preprocess, service
+from . import cache, cache_policy, gap_chart, preprocess, service
 from .validation import canon
+
+_log = logging.getLogger(__name__)
 
 # /full: 키 (akey, chash, "session:edits_rev", extras_digest) -> gzip bytes.
 # comment/override 편집은 세션 편집 rev 증가로, annotations/is_important 등 값싼
@@ -64,6 +68,9 @@ _GAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_GAP_CACHE", "16") or 16))
 _GAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_GAP_CACHE_MB", "256")
                                   or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 _GAP_CACHE: OrderedDict = OrderedDict()
+# 저장 1회에 프리컴퓨트할 차트 수 상한 — 한 번에 여러 개를 저장해도 웹 프로세스를 오래
+# 점유하지 않게. 넘치는 것은 종전처럼 조회 시점에 계산된다.
+_GAP_WARM_MAX = max(0, int(os.getenv("WEB_REPORT_GAP_WARM_MAX", "2") or 0))
 
 cache.register_akey_cache(_FULL_CACHE)
 cache.register_akey_cache(_SCATTER_CACHE)
@@ -279,3 +286,51 @@ def get_gap_chart_gzip(session_id: str, chart_id: str, spec_digest: str, *, sess
         cache._bytes_capped_put(_GAP_CACHE, cache_key, blob,
                                 _GAP_CACHE_MAX, _GAP_CACHE_MAX_BYTES)
     return blob
+
+
+# 저장 직후 프리컴퓨트에 쓰는 스레드 — 한 번에 하나만 돌린다(저장 연타로 스레드가 쌓이거나
+# 웹 워커 스레드를 굶기지 않도록).
+_GAP_WARM_LOCK = threading.Lock()
+
+
+def warm_gap_chart(session_id: str, chart_ids, spec_of, *, session: dict,
+                   report_db, upload_root: Path) -> None:
+    """Gap Chart 응답을 백그라운드에서 미리 만들어 `_GAP_CACHE` 에 넣는다 (best-effort).
+
+    Gap 캐시 키에는 `spec_digest` 가 들어가므로 **새로 만들거나 수식을 고친 직후에는
+    100% 캐시 미스**다. 그 계산(5 source × 25,000 die 기준 실측 0.31s + 직렬화·gzip
+    0.06s)이 사용자의 첫 조회 요청 안에서 통째로 일어나 카드가 "계산 중…" 으로 머문다.
+    저장 응답을 보낸 직후에 시작해 두면 모달이 닫히고 갤러리가 다시 그려지는 사이에
+    상당 부분이 진행되고, 뒤늦게 도착한 조회는 같은 `keyed_lock` 에서 결과를 받는다
+    (중복 계산이 아니라 대기 후 재사용 — 그래서 낭비가 아니다).
+
+    ⚠️ **반드시 이 프로세스(부모)의 스레드에서 돌아야 한다.** `_GAP_CACHE` 는 웹 프로세스
+    RAM 의 OrderedDict 라, compute 워커(별도 프로세스)에서 계산하면 그 결과가 부모 캐시에
+    남지 않아 아무 효과가 없다.
+
+    변형은 **전체 기준(bin1=False) 하나만** 데운다 — Bin1 계열 토글이 켜진 채로 저장하면
+    빗나가지만, 그때도 종전과 같은 인라인 계산으로 떨어질 뿐 손해는 없다.
+    """
+    ids = [str(i) for i in (chart_ids or []) if i]
+    if not ids:
+        return
+
+    def _run():
+        if not _GAP_WARM_LOCK.acquire(blocking=False):
+            return          # 이미 다른 저장분을 데우는 중 — 조용히 양보(조회가 알아서 만든다)
+        try:
+            for cid in ids[:_GAP_WARM_MAX]:
+                try:
+                    spec = spec_of(cid)
+                    if not spec:
+                        continue
+                    get_gap_chart_gzip(session_id, cid, gap_chart.spec_digest(spec),
+                                       session=session, report_db=report_db,
+                                       upload_root=upload_root)
+                except Exception:   # 프리컴퓨트 실패는 사용자에게 영향이 없다(조회가 재시도)
+                    _log.debug("gap warm failed: session=%s chart=%s", session_id, cid,
+                               exc_info=True)
+        finally:
+            _GAP_WARM_LOCK.release()
+
+    threading.Thread(target=_run, name="gap-warm", daemon=True).start()

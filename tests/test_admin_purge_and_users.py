@@ -11,6 +11,8 @@
   (e) 접속 사용자 계측 — HoneyUser UA 는 계정으로, 신원 없으면 ip:<addr> 로 묶임.
       admin/healthz/static 요청은 집계 제외, 윈도우 밖은 조회 시 prune
   (f) GET api/runtime 이 active_users 를 실제로 직렬화해 돌려준다
+  (h) 하트비트 — 브라우저가 자동으로 보내는 폴링은 '접속 유지'로만 세고 마지막 행동·
+      타임라인을 덮지 않는다. 화면 종류·마지막 입력 시각은 힌트로 받되 이상하면 버린다
 
 실행:
     python tests/test_admin_purge_and_users.py
@@ -222,12 +224,98 @@ def test_active_users():
     check(me["requests"] == 2, f"(e) 요청 수 누적 ({me})")
     check(me["session_id"] == "SID1", f"(e) 마지막으로 본 세션 기록 ({me})")
 
+    check(me["input_ago"] is not None and me["input_ago"] < 5,
+          f"(e) 실사용 요청은 곧 행동 — input_ago 가 잡힌다 ({me})")
+
     metrics._active_users["stale"] = {"uid": "x", "ip": "1.1.1.1", "honey": False,
                                       "first": time.time() - 999, "last": time.time() - 999,
                                       "count": 1, "route": "r", "session_id": None}
     check(metrics.active_users(window_sec=60)["count"] == 2, "(e) 윈도우 밖 사용자 제외")
     check("stale" not in metrics._active_users, "(e) 조회 시 오래된 항목 prune")
     metrics._active_users.clear()
+
+
+# ── (h) 하트비트 — 접속 유지와 실제 행동을 가른다 ────────────────────────────
+
+def _hb_app():
+    """my_messages(폴링) · session_full(실사용) 둘만 있는 최소 앱."""
+    app = Flask(__name__)
+
+    @app.get("/pe/report/api/my_messages", endpoint="report.my_messages")
+    def msgs():
+        return "ok"
+
+    @app.get("/pe/report/session/<session_id>/full", endpoint="report.session_full")
+    def full(session_id):
+        return "ok"
+
+    # init_app 은 프로세스당 1회만 먹는다(_started 가드 — 샘플러 스레드 중복 기동 방지).
+    # 위 테스트가 이미 썼으므로 여기서는 훅만 직접 단다.
+    app.before_request(metrics._on_request_start)
+    app.after_request(metrics._on_response)
+    app.teardown_request(metrics._on_request_teardown)
+    return app
+
+
+def test_heartbeat_passive_and_hints():
+    metrics._active_users.clear()
+    cl = _hb_app().test_client()
+    honey = {"User-Agent": "Mozilla/5.0 HoneyUser/HONG.GILDONG"}
+
+    cl.get("/pe/report/session/SID1/full", headers=honey)
+    rec = metrics._active_users["hong.gildong"]
+    act_ts, act_route = rec["last_input"], rec["route"]
+    check(len(rec["recent"]) == 1, "(h) 실사용 요청은 타임라인에 남는다")
+
+    # 폴링만 온다 — 생존(last)은 갱신되지만 '무엇을 하고 있나'는 그대로여야 한다.
+    time.sleep(0.01)
+    cl.get("/pe/report/api/my_messages?page=index&idle=300", headers=honey)
+    check(rec["last"] > act_ts, "(h) 폴링도 접속 유지 신호로는 인정된다")
+    check(rec["route"] == act_route, "(h) 폴링이 마지막 행동을 덮지 않는다")
+    check(rec["last_input"] == act_ts, "(h) 폴링은 행동 시각을 밀어 올리지 않는다")
+    check(len(rec["recent"]) == 1, "(h) 폴링은 타임라인 링버퍼를 채우지 않는다")
+    check(rec["page"] == "index", "(h) 보고 있는 화면은 힌트로 받는다")
+
+    # 겸용 라우트의 폴링 표식(boot.js AI 대기) — 엔드포인트가 같아도 hb=1 이면 폴링이다.
+    cl.get("/pe/report/session/SID1/full?hb=1", headers=honey)
+    check(rec["last_input"] == act_ts, "(h) hb=1 은 실사용으로 세지 않는다")
+
+    # idle 힌트는 '마지막 입력 이후 경과초' — 화면의 초록/노랑이 이 값으로 갈린다.
+    cl.get("/pe/report/api/my_messages?page=view&sid=SID9&idle=0", headers=honey)
+    check(rec["last_input"] > act_ts, "(h) 입력이 있었으면 행동 시각이 올라간다")
+    check(rec["session_id"] == "SID9", "(h) view 하트비트가 보는 세션을 알려준다")
+    row = [u for u in metrics.active_users()["users"] if u["key"] == "hong.gildong"][0]
+    check(row["input_ago"] is not None and row["input_ago"] < 5 and row["page"] == "view",
+          f"(h) 조회 응답에 input_ago·page 가 실린다 ({row})")
+
+    # 세션 상세를 떠나도 유예 안에는 유지 — 목록·상세 두 탭을 열어 둔 사람의 표시가
+    # 30초마다 깜빡이지 않게 하기 위한 것.
+    cl.get("/pe/report/api/my_messages?page=index&idle=0", headers=honey)
+    check(rec["session_id"] == "SID9", "(h) 유예 안에는 보는 세션을 지우지 않는다")
+    rec["sid_hint_ts"] = time.time() - metrics._SID_HINT_GRACE_SEC - 1
+    cl.get("/pe/report/api/my_messages?page=index&idle=0", headers=honey)
+    check(rec["session_id"] is None, "(h) 유예가 지나면 보는 세션을 지운다")
+
+    # 값은 전부 클라가 보낸 것 — 이상하면 조용히 버리고 기존 값을 지킨다.
+    rec["page"] = "index"
+    cl.get("/pe/report/api/my_messages?page=../etc&sid=a/b&idle=-5", headers=honey)
+    check(rec["page"] == "index" and rec["session_id"] is None,
+          "(h) 알 수 없는 page·경로 문자 sid 는 버린다")
+    metrics._active_users.clear()
+
+
+def test_active_users_legacy_record():
+    """옛 레코드(신규 키 없음) — 재시작 직후·다른 모듈이 만든 행에서도 터지지 않는다."""
+    metrics._active_users.clear()
+    metrics._active_users["old"] = {"uid": "old", "ip": "10.0.0.1", "honey": False,
+                                    "first": time.time(), "last": time.time(),
+                                    "count": 1, "route": "report.index", "session_id": None}
+    try:
+        row = metrics.active_users()["users"][0]
+        check(row["input_ago"] is None and row["page"] == "",
+              f"(h) 힌트가 없으면 None/빈값 — 화면이 종전 기준으로 폴백한다 ({row})")
+    finally:
+        metrics._active_users.clear()
 
 
 # ── (f) api/runtime 계약 ─────────────────────────────────────────────────────
@@ -266,6 +354,8 @@ if __name__ == "__main__":
     test_routes()
     test_purge_all_trashed()
     test_active_users()
+    test_heartbeat_passive_and_hints()
+    test_active_users_legacy_record()
     test_api_runtime_users()
     print()
     if _failures:

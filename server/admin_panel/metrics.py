@@ -14,6 +14,7 @@ REPORT_METRICS_ENABLED=0 이면 init_app 이 no-op (kill-switch).
 import json
 import logging
 import os
+import re
 import threading
 import time
 from collections import OrderedDict, deque
@@ -110,13 +111,38 @@ _VIEWERS_MAX = 500          # 상한 — 초과 시 가장 오래된 것부터 �
 VIEWER_WINDOW_SEC = 300     # "최근 N초 안에 요청이 있었으면 열람 중"
 _viewers: OrderedDict = OrderedDict()   # session_id -> 마지막 요청 ts (_lock 공유)
 
+# 폴링성(passive) 요청 — 사람이 아무것도 안 해도 브라우저가 알아서 보내는 것들이다.
+# 이것들을 '행동'으로 세면 두 가지가 망가진다: ① 마지막 경로가 폴링으로 덮여 화면의
+# 활동 라벨이 전부 뭉뚱그려지고, ② 켜두기만 해도 영원히 '활동 중'으로 보인다.
+# 그렇다고 집계에서 아예 빼면(=_skip_user_track) 접속자 목록에서 사라진다 — 이 폴링이
+# 유일한 생존 신호이기 때문. 그래서 '생존은 갱신, 행동은 불변'으로 나눈다.
+_PASSIVE_ENDPOINTS = frozenset((
+    "report.my_messages",                  # 관리자 공지 확인 (30초 상시)
+    "report.web_report_build_status"))     # 콜드 빌드 대기 (2초)
+# 겸용 엔드포인트(실사용과 폴링이 같은 라우트를 쓰는 경우)는 호출부가 ?hb=1 로 알린다.
+# 지금 쓰는 곳: boot.js 의 AI 코멘트 대기 폴링(session_full 재사용, 5초 × 최대 20분).
+_HB_PARAM = "hb"
+# 하트비트가 알려주는 '지금 보고 있는 화면'. 값 3종 외에는 버린다(표시 전용·위조 가능).
+_HINT_PAGES = frozenset(("index", "view", "landing"))
+_HINT_SID_RE = re.compile(r"^[A-Za-z0-9._\-]{1,64}$")
+# view 탭이 알려준 세션을 index 하트비트가 지우기까지의 유예. 하트비트 3회(90초)를
+# 기다리는 이유는 index 와 view 를 동시에 열어 둔 사람의 '보는 세션'이 30초마다
+# 붙었다 지워졌다 깜빡이지 않게 하기 위해서다.
+_SID_HINT_GRACE_SEC = 90
+
 # 실시간 접속 사용자 — _viewers 는 "어떤 세션이 열려 있나"라서 사람 수를 모른다. 여기서는
 # 요청 신원(auth_identity.current_user — Honey UA / SSO 헤더 / 웹 로그인)을 키로 최근 활동을
 # 모은다. 신원이 없는 일반 브라우저는 ip:<addr> 로 묶어 "누군지는 몰라도 접속 중"은 보이게 한다.
 # 오버헤드는 요청당 UA 정규식 1회 + dict 갱신 1회 (기존 teardown 훅 안에서 처리).
 ACTIVE_USER_WINDOW_SEC = max(30, int(os.getenv("REPORT_ACTIVE_USER_WINDOW_SEC", "300")))
 _ACTIVE_USERS_MAX = 300
-_active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id, ver, agent, recent)
+_active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id, ver, agent, recent, last_input, page, sid_hint_ts)
+# last(마지막 요청=접속 유지)와 last_input(마지막 실제 행동)은 다른 값이다. 브라우저가
+# 30초마다 보내는 폴링이 last 를 계속 밀어 올리므로, 자리를 비운 사람도 last 기준으로는
+# 항상 '방금 활동'으로 보인다. last_input 은 실사용 요청과 클라이언트가 알려준 마지막
+# 입력(마우스·키보드) 시각만 반영한다 — 화면의 초록/노랑이 이 값으로 갈린다.
+# 신규 필드(last_input/page/sid_hint_ts)는 항상 .get() 으로 읽는다: 재시작 직후 레코드와
+# 다른 모듈·테스트가 직접 만들어 넣은 레코드에는 이 키들이 없다.
 
 # 사용자별 최근 요청 이력 — "지금 하는 일"이 마지막 요청 1건뿐이라 무엇을 하다 막혔는지
 # 흐름을 볼 수 없었다. 사람당 최근 N건만 메모리에 둔다(전역 상한은 _ACTIVE_USERS_MAX 가
@@ -276,6 +302,8 @@ def _on_request_teardown(exc=None):
     ident = user_sid = None
     status = None
     slow = False
+    passive = False
+    hint_page = hint_sid = hint_idle = None
     if not _skip_user_track(route):
         ident = _identity_for_track()
         if ident is not None:
@@ -286,6 +314,9 @@ def _on_request_teardown(exc=None):
             # 응답 코드는 활동 타임라인에서 "실패한 요청"을 가려내는 유일한 단서다.
             # 락 밖에서 뽑는다(g 접근은 요청 컨텍스트 작업이라 임계구역에 넣지 않는다).
             status = g.get("_mx_status")
+            # 폴링 판별·하트비트 힌트도 요청 컨텍스트 작업이라 락 밖에서 끝낸다.
+            passive = _is_passive(route)
+            hint_page, hint_sid, hint_idle = _heartbeat_hints()
     with _lock:
         _inflight -= 1
         # 진행 중 등록 해제. stuck 으로 이미 신고된 요청이면 그 표식도 함께 지운다 —
@@ -311,7 +342,6 @@ def _on_request_teardown(exc=None):
             rec["count"] += 1
             rec["ip"] = ip
             rec["honey"] = honey
-            rec["route"] = route
             # 버전·접속 경로는 **빈 값으로 덮지 않는다** — 같은 사람이 Honey 앱과 내장
             # 브라우저를 섞어 쓰면 브라우저 요청에는 버전 토큰이 없을 수 있는데, 그때
             # 덮어쓰면 화면의 버전이 깜빡이며 사라진다.
@@ -321,10 +351,31 @@ def _on_request_teardown(exc=None):
             # 오가는 것이 정상이라, 마지막 요청 하나로 덮으면 화면 배지가 계속 바뀐다.
             if agent and agent not in rec["agents"]:
                 rec["agents"].append(agent)
-            if user_sid:
-                rec["session_id"] = user_sid
-            rec["recent"].append((now, route, user_sid or "",
-                                  round(ms, 1) if ms is not None else None, status))
+            # 여기부터가 '행동' — 폴링은 위의 생존 신호까지만 갱신하고 아래는 건드리지
+            # 않는다. 타임라인(recent)도 마찬가지다: 30초·2초 폴링이 20칸 링버퍼를 채우면
+            # 진짜 행동이 몇 분 만에 밀려나 무엇을 하다 막혔는지 볼 수 없게 된다.
+            if not passive:
+                rec["route"] = route
+                if user_sid:
+                    rec["session_id"] = user_sid
+                # 요청이 곧 행동이다 — 하트비트가 없는 Honey 앱도 이 경로로 초록이 된다.
+                rec["last_input"] = now
+                rec["recent"].append((now, route, user_sid or "",
+                                      round(ms, 1) if ms is not None else None, status))
+            if hint_page:
+                rec["page"] = hint_page
+                if hint_page == "view" and hint_sid:
+                    rec["session_id"] = hint_sid
+                    rec["sid_hint_ts"] = now
+                elif (hint_page != "view"
+                      and now - rec.get("sid_hint_ts", 0) > _SID_HINT_GRACE_SEC):
+                    # 세션 상세를 떠났다 — 안 지우면 목록으로 돌아가도 '보는 세션'이 남는다.
+                    rec["session_id"] = None
+            if hint_idle is not None:
+                li = now - hint_idle
+                # max 로 합친다 — 실사용 요청으로 이미 올려둔 값을 하트비트가 뒤로 끌지 않게.
+                if li > rec.get("last_input", 0):
+                    rec["last_input"] = li
             _active_users.move_to_end(key)
             while len(_active_users) > _ACTIVE_USERS_MAX:
                 _active_users.popitem(last=False)
@@ -387,6 +438,44 @@ def _skip_user_track(route):
     이것들을 빼야 "지금 몇 명이 쓰고 있나"가 실사용자 수에 가까워진다."""
     return (not route or route == "healthz" or route.endswith("static")
             or route.startswith("admin_panel.") or route.startswith(_PUBLIC_API_PREFIX))
+
+
+def _is_passive(route):
+    """폴링성 요청인가 — 사람의 행동이 아니라 브라우저가 자동으로 보낸 것인가.
+
+    엔드포인트 이름으로 먼저 거른다(구버전 클라도 자동으로 걸린다). ?hb=1 은 실사용과
+    라우트를 공유하는 폴링용 보조 표식이다."""
+    if route in _PASSIVE_ENDPOINTS:
+        return True
+    try:
+        return request.args.get(_HB_PARAM) == "1"
+    except Exception:
+        return False
+
+
+def _heartbeat_hints():
+    """하트비트가 실어 보낸 (page, sid, idle_sec). 없거나 이상하면 (None, None, None).
+
+    서버는 어느 페이지를 보고 있는지 알 수 없다 — 세션 목록도 세션 상세도 요청이 멎으면
+    똑같이 조용하기 때문이다. 그래서 이미 돌고 있는 관리자 공지 폴링(my_messages)에
+    화면 종류와 '마지막 입력 이후 경과초'를 얹어 받는다. 표시 전용이며 위조 가능하므로
+    접근제어·감사에는 쓰지 않는다."""
+    try:
+        if request.endpoint != "report.my_messages":
+            return (None, None, None)
+        a = request.args
+        page = a.get("page") or ""
+        if page not in _HINT_PAGES:
+            page = None
+        sid = a.get("sid") or ""
+        if not _HINT_SID_RE.match(sid):
+            sid = None
+        idle = a.get("idle")
+        if idle is not None:
+            idle = max(0.0, min(float(idle), 86400.0))
+        return (page, sid, idle)
+    except Exception:
+        return (None, None, None)
 
 
 def _identity_for_track():
@@ -812,6 +901,7 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
                 "route": v.get("route") or "", "session_id": v.get("session_id"),
                 "merged": was_merged,
                 "ver": v.get("ver") or "", "agents": _agent_set(v),
+                "last_input": v.get("last_input"), "page": v.get("page") or "",
             }
             continue
         # 합치기 — 요청 수는 더하고, 마지막 활동/보는 세션은 더 최근 쪽을 남긴다.
@@ -827,9 +917,18 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
             cur["ver"] = v["ver"]
         if v["ip"] not in cur["ips"]:
             cur["ips"].append(v["ip"])
+        # 마지막 행동 시각은 어느 쪽에서 왔든 더 최근을 남긴다 (last 최신 여부와 무관 —
+        # Honey 앱 요청이 브라우저 폴링보다 오래됐어도 그게 진짜 행동일 수 있다).
+        if v.get("last_input") and v["last_input"] > (cur.get("last_input") or 0):
+            cur["last_input"] = v["last_input"]
         if v["last"] > cur["last"]:
             cur["last"] = v["last"]
-            cur["route"] = v.get("route") or ""
+            # route/page 는 **빈 값으로 덮지 않는다** — 폴링만 하고 있는 행이 더 최근이라고
+            # 해서 그 사람이 마지막으로 한 일을 지우면 안 된다(ver/agents 와 같은 규칙).
+            if v.get("route"):
+                cur["route"] = v["route"]
+            if v.get("page"):
+                cur["page"] = v["page"]
             cur["ip"] = v["ip"]
             if v.get("session_id"):
                 cur["session_id"] = v["session_id"]
@@ -838,12 +937,17 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
 
     out = []
     for rec in sorted(merged.values(), key=lambda r: r["last"], reverse=True):
+        li = rec.get("last_input")
         out.append({"key": rec["key"], "user": rec["user"], "ip": rec["ip"],
                     "ips": rec["ips"], "honey": rec["honey"], "merged": rec["merged"],
                     "requests": rec["requests"],
                     "ago": round(now - rec["last"], 1),
+                    # 마지막 실제 행동 이후 경과초. 화면의 초록/노랑 기준이며, 하트비트가
+                    # 없는 옛 클라에서는 None 이라 화면이 종전 ago 기준으로 되돌아간다.
+                    "input_ago": round(now - li, 1) if li else None,
                     "since": round(now - rec["first"], 1),
-                    "route": rec["route"], "session_id": rec["session_id"],
+                    "route": rec["route"], "page": rec.get("page") or "",
+                    "session_id": rec["session_id"],
                     "ver": rec["ver"], "agents": rec["agents"]})
     return {"count": len(out), "window_sec": window_sec,
             "named": sum(1 for r in out if r["user"]),

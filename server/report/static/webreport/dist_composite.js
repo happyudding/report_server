@@ -71,6 +71,12 @@ DIST_VARIANTS.forEach(k => { _dcCache[k] = {}; _dcInflight[k] = new Set(); });
 
 function dcCacheFor(variant) { return _dcCache[distVariantKey(variant)] || _dcCache.all; }
 
+// 실패한 항목 — `${variantKey}\x1f${item}` → 사유. 기록해 두지 않으면 셀이 렌더 완료로
+// 표시되지 않아 IntersectionObserver 가 볼 때마다 같은 배치를 다시 요청하고, 서버가 계속
+// 실패하는 동안 토스트가 반복된다(gap 카드·일반 배치 배지와 같은 억제 장치).
+const _dcFailed = {};
+function dcFailKey(variant, item) { return distVariantKey(variant) + "\x1f" + item; }
+
 // 이 항목의 ECDF 를 고정 캐시에 확보한다. 이미 공용 캐시에 있으면 참조만 옮긴다.
 function dcEnsureItems(items, variant) {
   const key = distVariantKey(variant);
@@ -80,7 +86,7 @@ function dcEnsureItems(items, variant) {
   (items || []).forEach(it => {
     if (store[it]) return;
     if (shared[it]) { store[it] = shared[it]; filled = true; return; }
-    if (inflight.has(it) || !distHasData(it)) return;
+    if (inflight.has(it) || !distHasData(it) || _dcFailed[dcFailKey(key, it)]) return;
     want.push(it);
   });
   // ⚠ 옮겨 담기만 하고 끝나도 **재렌더를 예약해야 한다.** 호출자(dcRenderCompositeCell)는
@@ -89,8 +95,10 @@ function dcEnsureItems(items, variant) {
   // 남는다. 일반 카드 배치가 먼저 도착해 공용 캐시를 채워 두는 흔한 순서에서 매번 발생했다.
   if (filled) dcRefresh();
   if (!want.length) return;
-  for (let i = 0; i < want.length; i += DC_FETCH_CHUNK) {
-    const chunk = want.slice(i, i + DC_FETCH_CHUNK);
+  // seq 변형은 서버 상한이 따로다(_DIST_SEQ_BATCH_MAX) — 30개로 묶으면 400 이 난다.
+  const chunkSize = distVariantIsSeq(key) ? DIST_BATCH.SEQ_SIZE : DC_FETCH_CHUNK;
+  for (let i = 0; i < want.length; i += chunkSize) {
+    const chunk = want.slice(i, i + chunkSize);
     chunk.forEach(s => inflight.add(s));
     const url = `/pe/report/session/${SESSION_ID}/web_report/distribution_batch`
       + `?subjects=${encodeURIComponent(chunk.join(","))}${distVariantQuery(key)}`;
@@ -101,14 +109,28 @@ function dcEnsureItems(items, variant) {
         const built = distVariantIsSeq(key) ? buildDistSeqFromCompact(j)
                                             : buildDistDataFromCompact(j);
         Object.keys(built).forEach(s => {
+          delete _dcFailed[dcFailKey(key, s)];
           store[s] = built[s];
           distCachePut(key, s, built[s]);   // 공용 캐시와 공유(일반 카드가 재사용)
         });
         dcRefresh();
       })
-      .catch(e => showToast("합성 차트 데이터 로드 실패: " + e.message))
+      .catch(e => {
+        chunk.forEach(s => { _dcFailed[dcFailKey(key, s)] = e.message || "로드 실패"; });
+        showToast("합성 차트 데이터 로드 실패: " + e.message);
+        dcRefresh();
+      })
       .then(() => { chunk.forEach(s => inflight.delete(s)); });
   }
+}
+
+// 재시도 — 이 차트가 참조하는 항목의 실패 기록만 지우고 다시 그린다(요청은 렌더가 낸다).
+function dcRetry(id) {
+  const comp = dcGet(id);
+  if (!comp) return;
+  const variant = distGalleryDataVariant();
+  dcItemsOf(comp).forEach(it => { delete _dcFailed[dcFailKey(variant, it)]; });
+  dcRefresh();
 }
 
 // 데이터 도착 후 재렌더 — 보이는 합성 카드만 다시 큐에 넣는다(일반 카드 흐름과 동일).
@@ -185,6 +207,14 @@ function dcRenderCompositeCell(cell) {
   const variant = distGalleryDataVariant();
   const store = dcCacheFor(variant);
   const items = dcItemsOf(comp);
+  const failed = items.filter(it => _dcFailed[dcFailKey(variant, it)]);
+  if (failed.length) {   // 자동 재요청하지 않는다 — 사용자가 누를 때만
+    plot.innerHTML = `<div class="placeholder gc-cell-empty">데이터 로드 실패` +
+      `(${esc(_dcFailed[dcFailKey(variant, failed[0])])})` +
+      `<br><button type="button" class="btn-sm" data-dc-act="retry" data-comp-id="${esc(cell.dataset.compId)}">다시 시도</button></div>`;
+    cell.dataset.rendered = "1";
+    return;
+  }
   const missing = items.filter(it => !store[it] && distHasData(it));
   if (missing.length) { dcEnsureItems(items, variant); return; }   // 도착 후 dcRefresh 가 재큐잉
 
@@ -453,13 +483,25 @@ function dcRenderSummary() {
   if (save) save.disabled = !(n > 0 && n <= DC_MAX_PAIRS);
 }
 
+// 선택 집합을 기준 목록 순서로 정렬하되, 기준 목록에 없는 것은 뒤에 붙여 보존한다.
+function dcOrderedPick(order, sel) {
+  const out = order.filter(v => sel.has(v));
+  sel.forEach(v => { if (out.indexOf(v) < 0) out.push(v); });
+  return out;
+}
+
 // 폼 → 저장 spec. 검증 실패는 문자열 메시지를 throw 한다(호출부가 토스트).
 function dcCollectSpec() {
   const name = String((document.getElementById("dcName") || {}).value || "").trim();
   if (!name) throw new Error("차트 이름을 입력하세요");
   if (name.length > DC_NAME_MAX) throw new Error(`차트 이름이 너무 깁니다 (${DC_NAME_MAX}자 이하)`);
-  const sources = dcSourceNames().filter(s => _dcSelSources.has(s));
-  const items = distIndex.map(r => r.subject).filter(s => _dcSelItems.has(s));
+  // 선택 집합 전체를 저장한다 — 표시 순서만 distIndex(TEST SEQ)/source 순을 따르고,
+  // 인덱스에 없는 것도 뒤에 붙여 보존한다(dcRenderPicked 와 같은 규칙).
+  // ⚠ 인덱스 기준으로 filter 하면, 전처리 제외나 source 축소로 목록에서 빠진 항목이
+  //    "이름만 바꿔 저장" 하는 순간 조용히 사라진다. 서버는 실재 여부를 검사하지 않고
+  //    사용자 입력을 보존하는데(service._sanitize) 클라가 버리면 그 방어가 무의미해진다.
+  const sources = dcOrderedPick(dcSourceNames(), _dcSelSources);
+  const items = dcOrderedPick(distIndex.map(r => r.subject), _dcSelItems);
   const pairs = [];
   sources.forEach(s => items.forEach(it => pairs.push({ source: s, item: it })));
   if (!pairs.length) throw new Error("source 와 항목을 각각 1개 이상 고르세요");
@@ -514,6 +556,13 @@ function dcSaveFromModal() {
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();
       if (typeof restoreDistSearch === "function") restoreDistSearch(q);
+      // 상세를 열어 둔 채 ✎수정한 경우 — 갱신하지 않으면 눈앞의 상세만 옛 이름·옛 pair·
+      // 옛 차트로 남는다(갱신되는 갤러리는 그 뒤에 가려 안 보인다).
+      if (_dcDetailId === id) {
+        dcRenderDetail();
+        const comp = dcGet(id);
+        if (comp) dcEnsureItems(dcItemsOf(comp), distGalleryVariant());
+      }
       showToast("합성 차트를 저장했습니다");
     })
     .catch(e => { showToast("저장 실패: " + e.message); if (btn) btn.disabled = false; });
@@ -548,10 +597,17 @@ let _dcDetailId = null;
 let _dcDetailReturnId = null;
 let _dcLegendFocus = new Set();        // 강조 pair (로컬 — distSourceFilter 와 분리)
 
+// 차트 주석 저장 키의 subject — **UUID 기반 불변 키**(이름을 바꿔도 주석이 따라온다).
+// 서버 _CHART_KEY_RE 는 `cdf:<200자 이내>` 를 허용하므로 별도 변경이 필요 없다.
+function dcNoteSubject(id) { return "comp:" + String(id || ""); }
+
 function dcOpenDetail(id) {
   const dp = document.getElementById("panel-dist-composite-detail");
   const comp = dcGet(id);
   if (!dp || !comp) return;
+  // 주석 툴바·코멘트 뷰의 DOM id 를 Item_detail 과 공유하므로 상세는 한 번에 하나만 열린다.
+  // hideItemDetail 은 미저장 주석을 flush 한 뒤 그 패널을 비운다(= id 중복 원천 차단).
+  if (typeof hideItemDetail === "function") hideItemDetail();
   if (!window.Plotly && window.__plotlyReady) {
     showToast("차트 모듈을 불러오는 중입니다 — 잠시 후 자동으로 열립니다.");
     window.__plotlyReady.then(() => dcOpenDetail(id));
@@ -572,6 +628,7 @@ function dcOpenDetail(id) {
 
 function dcCloseDetail() {
   const dp = document.getElementById("panel-dist-composite-detail");
+  dcFlushNotes();
   dcPurgeDetailChart();
   if (dp) { dp.classList.remove("active"); dp.innerHTML = ""; }
   const back = document.getElementById(_dcDetailReturnId || "panel-distribution");
@@ -585,6 +642,7 @@ function dcCloseDetail() {
 function hideDistCompositeDetail() {
   const dp = document.getElementById("panel-dist-composite-detail");
   if (dp && dp.classList.contains("active")) {
+    dcFlushNotes();
     dp.classList.remove("active");
     dcPurgeDetailChart();
     dp.innerHTML = "";
@@ -593,8 +651,19 @@ function hideDistCompositeDetail() {
   _dcDetailReturnId = null;
 }
 function dcPurgeDetailChart() {
+  // purge 는 gd.layout 을 지운다 — 그 전에 등록을 풀어야 미저장 도형을 회수할 수 있다.
+  // cnDetach 가 dirty 일 때만 회수하므로 재렌더마다 저장 요청이 나가지는 않는다.
+  if (_dcDetailId && window.cnDetach) cnDetach(`cdf:${dcNoteSubject(_dcDetailId)}`);
   const el = document.getElementById("dcDetailChart");
   if (el && el.data) { try { Plotly.purge(el); } catch (e) { /* no-op */ } }
+}
+
+// 상세를 떠날 때 미저장 주석을 저장한다(Item_detail 의 closeItemDetail 과 같은 규칙).
+// 실패해도 pending 은 key 별로 남아 다음 autoSave/beforeunload 가 재시도한다.
+function dcFlushNotes() {
+  if (typeof _cnDirty !== "undefined" && _cnDirty.size) {
+    cnFlush().catch(e => showToast("차트 Comment 자동저장 실패: " + e.message));
+  }
 }
 
 function dcRenderDetail() {
@@ -616,17 +685,26 @@ function dcRenderDetail() {
         <span class="idet-stat">pair ${(comp.pairs || []).length}개</span></span>
       <span class="dc-detail-acts">${acts}</span>
     </div>
+    <div id="chartNoteBar"></div>
     <div class="idet-body">
       <div class="idet-charts">
         <div class="idet-chart-block">
           <div class="idet-chart-title">${esc(distSeqOnly ? "Serial 순 (측정 순서 · 합성)" : "누적분포 CDF (합성)")}</div>
           <div id="dcDetailChart" class="dist-chart"></div>
+          <div class="idet-chart-comment" id="cdfCommentView"></div>
         </div>
       </div>
       <aside class="dist-legend-side idet-legend-side" id="dcDetailLegend"></aside>
     </div>
     <div class="dc-stats" id="dcDetailStats"></div>
   </div>`;
+  // 차트 주석 — 툴바·코멘트 뷰의 DOM id 는 Item_detail 과 공유한다(한 번에 한 상세만 열려
+  // 있도록 dcOpenDetail 이 보장한다). 저장 키의 subject 는 **이름이 아니라 UUID**다
+  // (dcNoteSubject) — 이름으로 잡으면 차트를 개명하는 순간 그려 둔 주석이 끊긴다(§5-12).
+  if (window.chartNotesBar) {
+    chartNotesBar({ subject: comp.name || "", note_subject: dcNoteSubject(_dcDetailId) });
+  }
+  if (window.cnRenderChartComments) cnRenderChartComments(dcNoteSubject(_dcDetailId));
   dcRenderDetailCharts();
 }
 
@@ -707,6 +785,9 @@ function dcRenderDetailCharts() {
         gridcolor: IDET_GRID_MAJOR, zeroline: false },
       shapes: distSeqSpecShapes(lo, hi), annotations: distSeqSpecAnnos(lo, hi, false),
       margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
+    // Serial 순 차트에는 주석을 붙이지 않는다(축 의미가 달라 저장 좌표가 어긋난다).
+    // 등록을 남기면 이후 저장이 이 layout 에서 빈 도형을 회수해 저장된 주석을 지운다.
+    if (window.cnDetach) cnDetach(`cdf:${dcNoteSubject(_dcDetailId)}`);
     return;
   }
   // ECDF **전량** (표시용 다운샘플 없음 — 상세는 원본 그대로, 규칙 §5).
@@ -734,6 +815,8 @@ function dcRenderDetailCharts() {
     shapes: distSpecShapes(lo, hi, true).concat(cm ? cm.shapes : []),
     annotations: distSpecAnnos(lo, hi, false),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
+  // 저장/미저장 주석 오버레이 — base shapes 개수를 기억해야 하므로 렌더 직후 마지막에.
+  if (window.chartNotesApply) chartNotesApply("cdf", dcNoteSubject(_dcDetailId), div);
 }
 
 // ── pair 별 통계 (ECDF 복원) ─────────────────────────────────────────────────
@@ -810,6 +893,7 @@ function dcPanelClick(e) {
     }
     if (kind === "edit") { dcOpenModal(act.dataset.compId); return true; }
     if (kind === "del") { dcDelete(act.dataset.compId); return true; }
+    if (kind === "retry") { dcRetry(act.dataset.compId); return true; }
     return true;
   }
   const card = e.target.closest(".distg-comp");

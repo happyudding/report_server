@@ -243,6 +243,11 @@ function distBadgeProgress(label, loadedBytes) {
 // 종전대로 /scatter/<subject> 를 쓴다. 표시용 다운샘플·세로 채움은 클라 그대로다(규칙 #6).
 const DIST_BATCH = {
   SIZE: 30,          // 한 요청 항목 수 (서버 상한 40 — 여유를 둔다)
+  // Serial 순(order=seq)은 동일값을 접지 않아 항목당 payload 가 ECDF 의 한 자릿수 배 이상이다
+  // (5 source × 25,000 die 면 항목 1개가 125,000 값). 같은 30개로 묶으면 한 요청이 수십 MB 가
+  // 되므로 seq 만 잘게 나눈다 — 받는 총량은 같고 요청당 크기만 준다(규칙 #5 무관).
+  // 서버 상한은 routes_webreport._DIST_SEQ_BATCH_MAX(10) — 넘기면 400 이다.
+  SEQ_SIZE: 8,
   MAX_INFLIGHT: 2,   // 동시 요청 수 — 스크롤을 빨리 내려도 요청이 쌓이지 않게
   DEBOUNCE_MS: 50,   // 관측 이벤트가 몰려 들어오므로 모아서 한 번에 보낸다
   CACHE_MAX: 300,    // 보유 항목 상한(LRU) — 오래 스크롤해도 힙이 무한히 자라지 않게
@@ -389,7 +394,8 @@ function distFlushBatch() {
   const key = DIST_VARIANTS.find(k => _distPending[k].size);
   if (!key) return;
   const pending = _distPending[key];
-  const subjects = Array.from(pending).slice(0, DIST_BATCH.SIZE);
+  const size = distVariantIsSeq(key) ? DIST_BATCH.SEQ_SIZE : DIST_BATCH.SIZE;
+  const subjects = Array.from(pending).slice(0, size);
   subjects.forEach(s => { pending.delete(s); _distHave[key].add(s); });
 
   _distInflight++;
@@ -426,7 +432,8 @@ function distFlushBatch() {
 let _distPlotlyHooked = false;
 function ensureDistData() {
   distDataReady = true;
-  _distBatchFailed = false;   // 재시도 진입점이기도 하다 — 실패 안내를 걷는다  refreshDistConsumers();
+  _distBatchFailed = false;   // 재시도 진입점이기도 하다 — 실패 안내를 걷는다
+  refreshDistConsumers();     // 배지의 재시도가 실제로 다시 요청하게 하는 것이 이 한 줄이다
   // plotly.min.js 는 async 로드다(첫 화면을 막지 않기 위함). 분포 데이터가 plotly 보다
   // 먼저 도착하면 미니셀 렌더가 `typeof Plotly === "undefined"` 가드에 걸려 조용히
   // 비어버리므로, 도착 시점에 한 번 더 재큐잉한다. (이미 그려진 셀은 no-op)
@@ -463,7 +470,8 @@ function refreshDistConsumers() {
 // ?bin1=1 배치로 받아 distBin1Cache 에 쌓는다(전체 기준 캐시와 분리는 그대로).
 function ensureDistBin1Data() {
   distBin1Ready = true;
-  _distBatchFailed = false;   // 재시도 진입점 — 실패 안내를 걷는다  refreshDistGallery();
+  _distBatchFailed = false;   // 재시도 진입점 — 실패 안내를 걷는다
+  refreshDistGallery();       // seq/rtbin1 과 동작을 맞춘다(안 부르면 배지만 걷히고 끝난다)
   return Promise.resolve();
 }
 // Bin1(RT만) — RT 소스만 양품 필터, CT/HT 는 전체. 위와 같은 배치 로더의 rtbin1 변형.

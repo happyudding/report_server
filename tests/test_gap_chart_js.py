@@ -184,9 +184,13 @@ def test_opts_unconditional():
     assert re.search(r"_itemDetailOpts = opts;", idet), "_itemDetailOpts 무조건 대입이 없습니다"
     assert not re.search(r"if\s*\(\s*opts\s*\)\s*_itemDetailOpts", idet), \
         "조건부 대입이 있습니다 (R-3 회귀)"
-    # URL 은 opts.url 이 있을 때만 갈아끼운다
-    assert "(opts && opts.url)" in idet, "opts.url 분기가 없습니다"
-    print("[정적] openItemDetail opts 무조건 대입 + URL 분기 OK (R-3)")
+    # URL 은 opts 가 URL 을 줄 때만 갈아끼운다(고정 url 또는 subject 별 urlOf).
+    assert re.search(r"typeof opts\.urlOf === \"function\" \? opts\.urlOf\(subject\) : opts\.url",
+                     idet), "opts URL 분기(urlOf/url)가 없습니다"
+    # prev/next 로 옮길 때 고정 url 짜리 opts 를 이어받으면 다음 항목이 이전 URL 로 조회된다.
+    assert re.search(r"typeof _itemDetailOpts\.urlOf === \"function\"\s*\)?\s*\n?\s*\?", idet), \
+        "itemDetailNav 가 urlOf 없는 opts 를 걸러내지 않습니다 (R-3 파생)"
+    print("[정적] openItemDetail opts 무조건 대입 + URL 분기(urlOf 포함) OK (R-3)")
 
 
 def test_menu_order():

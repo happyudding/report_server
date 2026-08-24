@@ -389,17 +389,27 @@ def _build_dist_pack(parquet_list, titles, manifest, emit=None):
         return None
 
 
-def _upload_sources(base, session_id, parquet_list, kept_indices=None, dist_pack=None):
+def _upload_sources(base, session_id, parquet_list, kept_indices=None, dist_pack=None,
+                    add_items=None, rows_preserved=False):
     """parquet 전체 업로드. kept_indices 가 있으면(= 시트 삭제) 남긴 원본 idx 를 동봉한다.
 
     dist_pack 이 있으면 업로드 라우트와 같은 필드명(dist_pack_index + dist_pack_chunk_<n>)
-    으로 함께 보낸다 — 서버가 영구 저장해 반영 후 첫 조회의 dist 정렬이 사라진다."""
+    으로 함께 보낸다 — 서버가 영구 저장해 반영 후 첫 조회의 dist 정렬이 사라진다.
+
+    add_items / rows_preserved 는 **신규 Item(수식) 추가**(item_add.py) 전용이다. Excel 왕복은
+    넘기지 않으므로 그 경로의 요청 본문은 종전과 한 글자도 다르지 않다.
+      add_items: 이번 교체로 새로 생긴 item 이름 — 서버가 manifest.selected_items 에 더한다.
+      rows_preserved: 행을 하나도 안 건드렸다는 신고 — 서버가 전처리 셀 패치를 지우지 않는다."""
     url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_replace"
     files = {
         f"webreport_{idx}": (f"source_{idx}.parquet", data, "application/vnd.apache.parquet")
         for idx, data in enumerate(parquet_list)
     }
     data = {"source_indices": json.dumps(kept_indices)} if kept_indices else {}
+    if add_items:
+        data["add_items"] = json.dumps(list(add_items))
+    if rows_preserved:
+        data["rows_preserved"] = "1"
     if dist_pack and dist_pack.get("index") and dist_pack.get("chunks"):
         data["dist_pack_index"] = dist_pack["index"]
         for chunk_id, blob in sorted(dist_pack["chunks"].items()):

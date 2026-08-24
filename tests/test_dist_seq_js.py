@@ -89,6 +89,8 @@ DEPS_ALL = ["core.js", "map_select.js", "distribution.js", "item_detail.js",
             "dist_composite.js", "gap_chart.js"]
 # Note 붙여넣기 폴백 검사용 — chart_notes.js 는 core+distribution+item_detail 위에서 돈다.
 DEPS_NOTE = ["core.js", "distribution.js", "item_detail.js", "chart_notes.js"]
+# 합성 상세의 차트 주석 검사용 — 위 둘의 합집합.
+DEPS_ALL_NOTE = DEPS_ALL + ["chart_notes.js"]
 
 # ⚠ SESSION_ID 는 core.js 에서 const, MODE 는 let 이라 재선언하면 하네스가 통째로 죽는다.
 SETUP = (
@@ -164,6 +166,59 @@ def test_static_no_chart_notes():
     assert 'mode: "markers"' not in cell or True   # 미니셀 점은 canvas 로 그린다
     assert "distPaintPoints" in cell, "미니셀 점은 canvas 오버레이로 그려야 합니다"
     print("[정적] seq 차트: chart_notes 미부착(F-4) · markers 전용 OK")
+
+
+def test_static_note_detach():
+    """(c-2) **F-4 의 상태 레벨 짝** — seq 로 덮어 그리기 전에 주석 등록을 풀어야 한다.
+
+    렌더에서 chartNotesApply 를 안 부르는 것만으로는 부족하다. `_cnCharts` 는 CDF 를 한 번
+    그리면 등록되고 스스로 지워지지 않는데, seq 는 **같은 DOM 노드**(#distCdf)를 덮으므로
+    등록이 남아 있으면 이후 `cnSyncFromChart` 가 seq layout 에서 빈 shapes 를 회수하고,
+    그대로 `cnFlush` 되면 `value:null` 이 나가 **저장된 주석이 서버에서 지워진다**
+    (탭 전환·항목 이동·autoSave 가 전부 그 경로다 — CLAUDE.md §5-12)."""
+    notes = (_JS / "chart_notes.js").read_text(encoding="utf-8")
+    assert "function cnDetach" in notes, "chart_notes.js: cnDetach 가 없습니다"
+    body = _fn_body(notes, "cnDetach")
+    assert "delete _cnCharts[key]" in body, "cnDetach 가 등록을 지우지 않습니다"
+    assert "_cnDirty.has(key)" in body and "cnSyncFromChart(key)" in body, (
+        "cnDetach 가 등록을 풀기 전에 도형을 회수하지 않습니다 — 드래그 직후 seq 로 "
+        "토글하면 그 편집이 사라진다")
+    assert "_cnBoundKey = null" in body, (
+        "cnDetach 가 gd._cnBoundKey 를 비우지 않습니다 — 텍스트/화살표 도구의 DOM click 이 "
+        "살아남아 seq 좌표를 cdf 키에 넣는다")
+
+    idet = (_JS / "item_detail.js").read_text(encoding="utf-8")
+    cdf = _fn_body(idet, "distRenderCdf")
+    seq_branch = cdf[:cdf.find("distRenderSeq(")]
+    assert "cnDetach" in seq_branch, (
+        "distRenderCdf 의 seq 분기가 distRenderSeq 호출 **전에** cnDetach 를 부르지 않습니다 "
+        "(purge 후에는 layout 이 없어 도형을 회수할 수 없다)")
+    print("[정적] seq 전환 시 주석 등록 해제(cnDetach) OK")
+
+
+def test_static_seq_batch_size():
+    """(c-3) seq 배치는 ECDF 보다 작게 나눈다 — 프런트/서버 상한이 함께 있어야 한다.
+
+    seq 는 동일값을 접지 않아 항목당 payload 가 ECDF 의 한 자릿수 배 이상이다
+    (5 source × 25,000 die = 항목 1개가 125,000 값). 30개로 묶으면 한 요청이 수십 MB 다.
+    점을 버리는 게 아니라 요청을 나누는 것이라 규칙 #5(다운샘플 금지)와 무관하다."""
+    dist = (_JS / "distribution.js").read_text(encoding="utf-8")
+    assert re.search(r"SEQ_SIZE:\s*(\d+)", dist), "DIST_BATCH.SEQ_SIZE 가 없습니다"
+    seq_size = int(re.search(r"SEQ_SIZE:\s*(\d+)", dist).group(1))
+    size = int(re.search(r"SIZE:\s*(\d+)", dist).group(1))
+    assert seq_size < size, f"SEQ_SIZE({seq_size}) 가 SIZE({size}) 보다 작아야 합니다"
+    flush = _fn_body(dist, "distFlushBatch")
+    assert "SEQ_SIZE" in flush and "distVariantIsSeq" in flush, \
+        "distFlushBatch 가 seq 변형에 SEQ_SIZE 를 쓰지 않습니다"
+
+    routes = (_ROOT / "server" / "report" / "routes_webreport.py").read_text(encoding="utf-8")
+    srv = int(re.search(r"_DIST_SEQ_BATCH_MAX\s*=\s*(\d+)", routes).group(1))
+    assert seq_size <= srv, (
+        f"프런트 SEQ_SIZE({seq_size}) 가 서버 상한({srv}) 을 넘습니다 — 400 이 난다")
+    comp = (_JS / "dist_composite.js").read_text(encoding="utf-8")
+    assert "SEQ_SIZE" in _fn_body(comp, "dcEnsureItems"), \
+        "composite 도 seq 배치를 나눠야 합니다(안 그러면 합성 카드만 400)"
+    print(f"[정적] seq 배치 상한 프런트 {seq_size} ≤ 서버 {srv} OK")
 
 
 # ── 브라우저 검사 ────────────────────────────────────────────────────────────
@@ -511,6 +566,49 @@ def test_composite_detail_stats():
     print("  [browser] composite 상세: 차트만 seq · 통계표는 ECDF 기준 유지 OK")
 
 
+def test_composite_detail_notes():
+    """(o-2) composite 상세 차트 주석 — ECDF 는 `cdf:comp:<uuid>` 로 등록, seq 는 해제.
+
+    등록 키가 이름이면 개명 시 주석이 끊기고, seq 에 등록이 남으면 이후 저장이 seq layout
+    에서 빈 도형을 회수해 저장된 주석을 지운다(§5-12)."""
+    js = f"""<script>
+      {SETUP}
+      MODE = 'edit';
+      window.Plotly = {{
+        newPlot: function(div, traces, layout) {{
+          div.data = traces; div.layout = layout; div.on = function() {{}};
+        }},
+        purge: function(div) {{ delete div.data; delete div.layout; }},
+        relayout: function() {{}}
+      }};
+      DATA.dist_composites = {{c1: {{name:'합성', pairs:[{{source:'WF1',item:'IT00'}}],
+        limit:{{mode:'manual', lo:-1, hi:1}}, colors:{{}}}}}};
+      _dcDetailId = 'c1';
+      _dcCache['all']['IT00'] = {{lower_limit:-1, upper_limit:1, units:'V',
+        bySource: {{WF1: {{xs:[1,3,5], ys:[33,66,100]}}}}}};
+      _dcCache['seq']['IT00'] = {{lower_limit:-1, upper_limit:1, units:'V', seq:true,
+        bySource: {{WF1: {{vs:[5,1,3]}}}}}};
+      distSeqOnly = false;
+      dcRenderDetailCharts();
+      var afterEcdf = Object.keys(_cnCharts);
+      distSeqOnly = true;
+      dcRenderDetailCharts();
+      var afterSeq = Object.keys(_cnCharts);
+      distSeqOnly = false; _dcDetailId = null;
+      _dcCache['all'] = {{}}; _dcCache['seq'] = {{}};
+      _emit({{subject: dcNoteSubject('c1'), afterEcdf: afterEcdf, afterSeq: afterSeq}});
+    </script>"""
+    body = ('<div id="dcDetailChart"></div><div id="dcDetailLegend"></div>'
+            '<div id="dcDetailStats"></div>')
+    got = json.loads(run_probe(DEPS_ALL_NOTE, body, js, "dcnotes"))
+    assert got["subject"] == "comp:c1", got["subject"]
+    assert "cdf:comp:c1" in got["afterEcdf"], (
+        f"ECDF 상세에서 주석이 등록되지 않았다: {got['afterEcdf']}")
+    assert "cdf:comp:c1" not in got["afterSeq"], (
+        f"seq 상세에서 주석 등록이 남았다 — 저장 시 주석이 지워진다: {got['afterSeq']}")
+    print("  [browser] composite 상세 주석: ECDF 등록 · seq 해제 OK")
+
+
 def test_dc_cache_and_url():
     """(p) `_dcCache` 가 변형 6키 · composite 배치 URL 에 order=seq."""
     js = f"""<script>
@@ -559,6 +657,8 @@ def main():
     test_static_wiring()
     test_static_variant_split()
     test_static_no_chart_notes()
+    test_static_note_detach()
+    test_static_seq_batch_size()
     if not edge_path():
         print("[SKIP] Edge 를 찾지 못해 브라우저 검사는 건너뜁니다")
         return
@@ -569,6 +669,7 @@ def main():
     test_gallery_cell()
     test_gap_and_composite_cards()
     test_composite_detail_stats()
+    test_composite_detail_notes()
     test_dc_cache_and_url()
     test_note_paste_fallback()
     print("[통과] Serial 순 프런트 계약 정상")

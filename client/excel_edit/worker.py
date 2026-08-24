@@ -78,3 +78,60 @@ class ExcelEditWorker(QThread):
                 pythoncom.CoUninitialize()
             except Exception:
                 pass
+
+
+class AddItemWorker(QThread):
+    """item_add.add_item 을 백그라운드 스레드에서 돌리는 QThread 래퍼.
+
+    ExcelEditWorker 와 **같은 시그널 4종**을 쓴다 — honey_main 이 상태바·로그·확인창·
+    브라우저 새로고침 배선을 그대로 재사용할 수 있어야 하기 때문이다(그쪽 배선에는 중복
+    실행 가드와 이탈 취소 가드가 붙어 있다).
+
+    Excel COM 을 쓰지 않으므로 CoInitialize 는 하지 않는다.
+    """
+
+    status = pyqtSignal(str, str)         # (state, message)
+    confirm_request = pyqtSignal(object)  # 반영 확인 payload (구조화 dict)
+    done = pyqtSignal(bool, str)          # (changed, message)
+    failed = pyqtSignal(str)
+
+    def __init__(self, session_id, server_base, spec, parent=None):
+        super().__init__(parent)
+        self._session_id = session_id
+        self._server_base = server_base
+        self._spec = dict(spec or {})
+        self._cancelled = False
+        self._confirm_event = None
+        self._confirm_result = False
+
+    def cancel(self):
+        """취소 요청 — 확인 대기 중이면 깨워서 거부로 끝낸다 (ExcelEditWorker 와 동일)."""
+        self._cancelled = True
+        if self._confirm_event is not None:
+            self._confirm_event.set()
+
+    def answer_confirm(self, accepted):
+        self._confirm_result = bool(accepted)
+        if self._confirm_event is not None:
+            self._confirm_event.set()
+
+    def _confirm(self, payload):
+        self._confirm_event = threading.Event()
+        self._confirm_result = False
+        self.confirm_request.emit(payload)
+        while not self._confirm_event.wait(0.2):
+            if self._cancelled:
+                return False
+        return False if self._cancelled else self._confirm_result
+
+    def run(self):
+        from . import item_add
+
+        try:
+            result = item_add.add_item(
+                self._session_id, self._server_base, self._spec,
+                status_cb=lambda m: self.status.emit("run", m),
+                confirm_cb=self._confirm)
+            self.done.emit(bool(result.get("changed")), str(result.get("message") or ""))
+        except Exception as exc:
+            self.failed.emit(str(exc))

@@ -349,9 +349,16 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      가로 방향 보간은 계속 금지). 조밀한 데이터(stepY≤0.3%)는 캡이 no-op 라 기존과 동일.
      상세 CDF(`distRenderCdf`)는 원본 전량 렌더 별도 경로로 채움·다운샘플 대상 외.
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
-   편집으로 재저장하지 않는다. **유일한 예외**: Excel 왕복 편집에서 시트를 지워 source 가
-   줄면 `sources` 목록을 축소해 재저장한다(안 하면 idx↔parquet 대응이 어긋남 —
-   [docs/11](docs/11_web_report_tabs.md)). 캐시 키는 항상
+   편집으로 재저장하지 않는다. **예외는 둘뿐**이며 둘 다
+   [rawedit.replace_sources](web_report/rawedit.py) 안에 있다:
+   ① Excel 왕복 편집에서 시트를 지워 source 가 줄면 `sources` 목록을 축소해 재저장한다
+   (안 하면 idx↔parquet 대응이 어긋남 — [docs/11](docs/11_web_report_tabs.md)).
+   ② **신규 Item(수식) 추가**로 컬럼이 생기면 그 이름을 `selected_items` 에 덧붙인다
+   (2026-08-24). 안 하면 parquet 에는 컬럼이 있는데 리포트 어디에도 안 보인다 —
+   [metrics.py](web_report/metrics.py) 등 8곳이 `selected_items` 로 `item_columns` 를
+   거르기 때문이며, 에러가 아니라 "빈 화면"으로 나타난다. `selected_items` 가 **비어 있으면
+   갱신하지 않는다**(빈 값 = 전 항목 선택이라 필터 자체가 없다 — 한 개짜리 목록을 만들면
+   오히려 나머지 항목이 전부 사라진다). 두 경우 모두 `analysis_key` 는 재산출하지 않는다. 캐시 키는 항상
    [cache_policy.py](web_report/cache_policy.py) 빌더로 만든다(즉석 조립 금지 —
    [docs/12](docs/12_web_report_cache.md)). raw parquet 을 바꾸는 편집은 `content_hash` 를
    **같은 analysis_key 의 전 세션**에 반영한다(dedup 형제의 stale 캐시 방지).
@@ -454,6 +461,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     - Distribution composite 키 — item_key = **생성 UUID(불변)**, pairKey =
       `<source>` + U+001F + `<item>`(색 맵의 키). 이름을 바꿔도 키는 그대로다 — 이름·표시명을
       키로 쓰면 개명 한 번에 사용자가 만든 차트가 통째로 사라진다.
+      차트 주석 키도 같은 규칙으로 `cdf:comp:<uuid>`(`dcNoteSubject`) 다.
+      ⚠️ 저장 spec 은 `distIndex`/현재 source 목록으로 **filter 하지 말 것** — 전처리 제외나
+      source 축소로 목록에서 빠진 pair 가 "이름만 바꿔 저장" 하는 순간 조용히 사라진다
+      (`dcOrderedPick` 이 선택 집합 전체를 보존한다).
     - Gap Chart 키 — item_key = **생성 UUID(불변)**, 수식은 **평문이 아니라 토큰 배열**이
       정본이다(`{"t":"item","source"?,"item"}` / `num` / `op` / `lp` / `rp`). item 이름에
       공백·괄호·연산자가 전부 합법이라 평문 재파싱이 원리적으로 불가능하고, source 명·item 명

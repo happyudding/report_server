@@ -166,20 +166,38 @@ function gcChipMarkers(hit, chart) {
   return mapSelMarkerTraces(hits);
 }
 
+// 실패한 차트 — `${variantKey}\x1f${id}` → 사유. 이 기록이 없으면 IntersectionObserver
+// 재관측·툴바 토글·맵 칩 선택마다 같은 요청이 다시 나가 서버가 계속 503/500 을 내는 동안
+// 토스트가 카드 수만큼 반복된다(일반 배치의 _distBatchFailed 배지와 같은 억제 장치).
+const _gcFailed = {};
+function gcFailKey(variant, id) { return distVariantKey(variant) + "\x1f" + id; }
+
 function gcEnsureChart(id, variant) {
   const key = distVariantKey(variant);
   const store = _gcCache[key], inflight = _gcInflight[key];
-  if (store[id] || inflight.has(id)) return;
+  if (store[id] || inflight.has(id) || _gcFailed[gcFailKey(key, id)]) return;
   inflight.add(id);
   const q = distVariantQuery(key).replace(/^&/, "?");
   const url = `/pe/report/session/${SESSION_ID}/web_report/gap_chart/${encodeURIComponent(id)}${q}`;
   fetchJson202(url, { shouldStop: () => !gcGet(id) })
     .then(data => {
+      delete _gcFailed[gcFailKey(key, id)];
       store[id] = { data: data, series: gcBuildSeries(data) };
       gcRefresh();
     })
-    .catch(e => showToast("Gap Chart 계산 실패: " + e.message))
+    .catch(e => {
+      // 카드 안에 사유 + 재시도 버튼으로 남긴다(토스트는 그 카드 1회분).
+      _gcFailed[gcFailKey(key, id)] = e.message || "계산 실패";
+      showToast("Gap Chart 계산 실패: " + e.message);
+      gcRefresh();
+    })
     .then(() => { inflight.delete(id); });
+}
+
+// 재시도 — 실패 기록만 지우고 다시 그리면 gcRenderGapCell 이 요청을 새로 낸다.
+function gcRetry(id) {
+  delete _gcFailed[gcFailKey(distGalleryVariant(), id)];
+  gcRefresh();
 }
 
 // 데이터 도착 후 재렌더 — 보이는 gap 카드만 다시 큐에 넣는다(합성 카드 흐름과 동일).
@@ -195,7 +213,10 @@ function gcRefresh() {
 
 // 수식을 고치면 그 차트의 계산 결과만 버린다(다른 차트·일반 카드는 건드리지 않는다).
 function gcDropCache(id) {
-  ["all", "bin1", "rtbin1"].forEach(k => { delete _gcCache[k][id]; });
+  ["all", "bin1", "rtbin1"].forEach(k => {
+    delete _gcCache[k][id];
+    delete _gcFailed[k + "\x1f" + id];   // 수식을 고쳤으면 옛 실패 기록도 함께 버린다
+  });
 }
 
 function gcLimitOf(chart) {
@@ -215,8 +236,12 @@ function gcCardsHtml() {
     const c = gcAll()[id];
     const { lo, hi } = gcLimitOf(c);
     const lim = distLimInnerHtml(lo, hi, "");
-    const cached = (_gcCache.all[id] || {}).data;
-    const dies = cached ? `die ${cached.matched_dies}개` : "계산 중…";
+    // 헤더도 **지금 보고 있는 변형**의 캐시를 봐야 한다 — all 로 고정하면 Bin1 계열
+    // 토글에서는 채워지는 store 가 달라 die 수가 영원히 "계산 중…" 으로 남는다.
+    const variant = distGalleryVariant();
+    const cached = (gcCacheFor(variant)[id] || {}).data;
+    const dies = cached ? `die ${cached.matched_dies}개`
+      : (_gcFailed[gcFailKey(variant, id)] ? "계산 실패" : "계산 중…");
     const acts = editing
       ? `<span class="distg-comp-acts">` +
         `<button type="button" class="distg-comp-btn" data-gc-act="edit" data-gap-id="${esc(id)}" title="수정">✎</button>` +
@@ -247,6 +272,13 @@ function gcRenderGapCell(cell) {
   const plot = cell.querySelector(".distg-plot");
   if (!chart || !plot || typeof Plotly === "undefined") return;
   const variant = distGalleryVariant();
+  const failed = _gcFailed[gcFailKey(variant, id)];
+  if (failed) {   // 자동 재요청하지 않는다 — 사용자가 누를 때만(요청 폭주·토스트 반복 차단)
+    plot.innerHTML = `<div class="placeholder gc-cell-empty">계산 실패 (${esc(failed)})` +
+      `<br><button type="button" class="btn-sm" data-gc-act="retry" data-gap-id="${esc(id)}">다시 시도</button></div>`;
+    cell.dataset.rendered = "1";
+    return;
+  }
   const hit = gcCacheFor(variant)[id];
   if (!hit) { gcEnsureChart(id, variant); return; }   // 도착 후 gcRefresh 가 재큐잉
 
@@ -665,12 +697,28 @@ function gcNewId() {
 
 // ── 상세 — **기존 Item_detail 을 그대로 재사용** ──────────────────────────────
 // 서버 응답이 /scatter 와 같은 구조라 화면 코드가 필요 없다. URL 만 갈아끼운다.
+function gcGapUrl(id) {
+  return `/pe/report/session/${SESSION_ID}/web_report/gap_chart/${encodeURIComponent(id)}`;
+}
+
 function gcOpenDetail(id) {
   const chart = gcGet(id);
   if (!chart) return;
   const name = chart.name || "Gap";
-  openItemDetail(name, [name],
-                 { url: `/pe/report/session/${SESSION_ID}/web_report/gap_chart/${encodeURIComponent(id)}` });
+  // 이 세션의 Gap Chart 끼리 prev/next(Alt+↑/↓) 이동 — nav 는 이름, URL 은 이름→id 로 되짚는다.
+  // 이름이 겹치면 먼저 만든 쪽으로 열린다(이름은 표시용이고 저장 키는 UUID 라 데이터는 안전).
+  const all = gcAll();
+  const ids = gcSortedIds();
+  const byName = new Map();
+  ids.forEach(i => {
+    const nm = (all[i] || {}).name || "Gap";
+    if (!byName.has(nm)) byName.set(nm, i);
+  });
+  const nav = Array.from(byName.keys());
+  openItemDetail(name, nav.length > 1 ? nav : [name], {
+    url: gcGapUrl(id),
+    urlOf: nm => gcGapUrl(byName.has(nm) ? byName.get(nm) : id),
+  });
 }
 
 // ── 패널 위임 (distBindPanel 이 .distg-card 분기보다 **앞에서** 호출한다) ─────
@@ -681,6 +729,7 @@ function gcPanelClick(e) {
     if (typeof dcCloseMenu === "function") dcCloseMenu();
     if (kind === "edit") { gcOpenModal(act.dataset.gapId); return true; }
     if (kind === "del") { gcDelete(act.dataset.gapId); return true; }
+    if (kind === "retry") { gcRetry(act.dataset.gapId); return true; }
     return true;
   }
   const card = e.target.closest(".distg-gap");
@@ -692,7 +741,8 @@ function gcPanelClick(e) {
 document.addEventListener("click", e => {
   const modal = e.target.closest("#gcModal");
   if (!modal) return;
-  if (e.target === modal) { gcCloseModal(); return; }        // 오버레이 클릭
+  // ⚠ 배경(오버레이) 클릭으로는 닫지 않는다 — 조립한 수식 토큰이 통째로 날아간다
+  //    (dist_composite 모달이 같은 이유로 이미 막아 둔 규칙). 닫기는 취소 버튼과 Esc 뿐이다.
   if (e.target.closest("#gcCancel")) { gcCloseModal(); return; }
   if (e.target.closest("#gcSave")) { gcSaveFromModal(); return; }
   if (e.target.closest("#gcDelete")) { if (_gcEditId) gcDelete(_gcEditId); return; }

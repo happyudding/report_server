@@ -61,6 +61,7 @@ from PyQt6.QtWidgets import (
 # 허브가 돌려주는 사용자 선택 — honey_main 이 이 값으로 다음 동작을 정한다.
 ACTION_EXCEL = "excel"
 ACTION_QUICK = "quick"
+ACTION_ADD_ITEM = "add_item"
 
 _TIMEOUT = (10, 60)
 _ROW_BTN_W = 170
@@ -251,6 +252,59 @@ class _ItemListWidget(QWidget):
             lw.addItem(it)
 
 
+
+class _NewItemLoadWorker(QThread):
+    """신규 Item 페이지용 rawdata 로드 — 항목 목록과 메타 기본값의 원천.
+
+    Excel 왕복·빠른 수정과 **같은 zip·같은 ETag 캐시**(excel_session._fetch_export_zip)를
+    쓴다. 원본이 안 바뀐 세션은 두 번째부터 서버가 304 만 응답하므로, 이 페이지를 여는
+    비용은 첫 회 한 번뿐이다.
+    """
+
+    progress = pyqtSignal(str)
+    done = pyqtSignal(object, str)      # (tables, error)
+
+    def __init__(self, base, session_id, parent=None):
+        super().__init__(parent)
+        self.base, self.session_id = base, session_id
+
+    def run(self):
+        try:
+            from excel_edit import item_add
+
+            tables, _manifest, _names = item_add.fetch_tables(
+                self.base, self.session_id, status_cb=self.progress.emit)
+            self.done.emit(tables, "")
+        except Exception as exc:                     # noqa: BLE001 (UI 로 그대로 전달)
+            self.done.emit(None, str(exc))
+
+
+class _NewItemPreviewWorker(QThread):
+    """수식 미리보기 계산 — die 가 수십만이면 UI 스레드를 막는다."""
+
+    done = pyqtSignal(object, str)      # (summary, error)
+
+    def __init__(self, tables, tokens, parent=None):
+        super().__init__(parent)
+        self.tables, self.tokens = tables, tokens
+
+    def run(self):
+        try:
+            from excel_edit import item_add
+
+            self.done.emit(item_add.preview(self.tables, self.tokens), "")
+        except Exception as exc:                     # noqa: BLE001 (UI 로 그대로 전달)
+            self.done.emit(None, str(exc))
+
+
+def _fmt_num(value):
+    """미리보기 표의 숫자 — 정수는 정수로, 소수는 6자리까지."""
+    if value is None:
+        return "-"
+    number = float(value)
+    return str(int(number)) if number.is_integer() else f"{number:.6g}"
+
+
 class RawdataHubDialog(QDialog):
     """Rawdata 진입 허브. exec() 후 self.action 으로 다음 동작을 정한다
     (ACTION_EXCEL=Excel 왕복 / ACTION_QUICK=빠른 수정 다이얼로그)."""
@@ -262,6 +316,11 @@ class RawdataHubDialog(QDialog):
         self.action = ""
         self.changed = False          # 전처리 옵션을 저장했는가 (호출부가 새로고침 판단)
         self.excel_indices = None     # Excel 왕복에 넘길 source idx (None = 전체)
+        self.add_item_spec = None     # 신규 수식 item 정의 (ACTION_ADD_ITEM 일 때만)
+        self._ni_tables = None        # 신규 item 페이지가 받아 둔 rawdata (지연 로드)
+        self._ni_loader = None
+        self._ni_preview = None
+        self._ni_previewed = False    # 미리보기를 한 번이라도 성공했는가
         self._items = []
         self._sources = []            # source 이름 (원본 idx 순서)
         self._spec = {}
@@ -273,7 +332,10 @@ class RawdataHubDialog(QDialog):
         self._loader = None
 
         self.setWindowTitle("Rawdata")
-        self.resize(860, 600)
+        # 신규 Item(수식) 페이지가 수식 칸·자동완성·통계 7열 표를 한 화면에 펴야 해서
+        # 종전 860 으로는 좁다(2026-08-24, +≈20%). 다른 페이지는 전부 stretch 기반이라
+        # 넓어지기만 하고, 좌측 네비 폭은 고정이므로 늘어난 폭은 전부 본문이 쓴다.
+        self.resize(1040, 600)
 
         self.pages = QStackedWidget()
         self.nav_buttons = []
@@ -288,12 +350,25 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "Options", self._build_options_page(),
                        "Bin1 only · Outlier 제거 — 조건을 짜지 않고 켜고 끄는 옵션")
 
-        # ── 페이지 2: Item Select ────────────────────────────────────────────
+        # ── 페이지 2: 신규 Item(수식) 추가 ───────────────────────────────────
+        # 원본을 실제로 바꾸는 두 번째 버튼이라 Excel 과 같은 주황으로 구분한다.
+        # (_add_page 가 버튼을 돌려주므로 nav_buttons[-1] 을 쓰지 않는다 — 아래 Excel 페이지의
+        #  스타일 지정과 순서로 얽히지 않게.)
+        btn_new_item = self._add_page(
+            nav, "신규 Item(수식) 추가", self._build_new_item_page(),
+            "수식으로 새 측정 item 을 만들어 원본 rawdata 에 추가합니다 (되돌릴 수 없음)")
+        btn_new_item.setStyleSheet(_NAV_BTN_QSS + """
+            QPushButton { color: #c2410c; }
+            QPushButton:checked { background: #ffedd5; border-color: #f97316; }
+        """)
+        btn_new_item.clicked.connect(self._ensure_new_item_loaded)
+
+        # ── 페이지 3: Item Select ────────────────────────────────────────────
         self.item_list = _ItemListWidget()
         self._add_page(nav, "Item Select", self.item_list,
                        "선택한 항목만 남기고 저장 (원본은 그대로, 언제든 되돌릴 수 있음)")
 
-        # ── 페이지 3: Yield 계산 (소스별 수율 분모) ──────────────────────────
+        # ── 페이지 4: Yield 계산 (소스별 수율 분모) ──────────────────────────
         self._add_page(nav, "Yield 계산", self._build_yield_page(),
                        "소스별 수율 분모 — 자동 / Gross Die / Test data 개수")
 
@@ -305,7 +380,7 @@ class RawdataHubDialog(QDialog):
         #   self._add_page(nav, "빠른 수정", quick_page,
         #                  "Excel 없이 표·조건으로 고칩니다 (원본 불변, 되돌릴 수 있음)")
 
-        # ── 페이지 4: Rawdata 원본 수정 (Excel) ──────────────────────────────
+        # ── 페이지 5: Rawdata 원본 수정 (Excel) ──────────────────────────────
         excel_page = QWidget()
         excel_layout = QVBoxLayout(excel_page)
         excel_layout.addWidget(QLabel(
@@ -478,6 +553,271 @@ class RawdataHubDialog(QDialog):
         layout.addStretch(1)
         layout.addWidget(QLabel("추가한 옵션은 [현재 상태] 에서 확인·해제할 수 있습니다."))
         return page
+
+    # ── 신규 Item(수식) 추가 페이지 ──────────────────────────────────────────
+    #
+    # 다른 페이지와 성격이 정반대다: 여기서 [원본에 추가] 를 누르면 **원본 parquet 에 컬럼이
+    # 박히고 되돌릴 수 없다**(전처리 옵션은 전부 조회 시점 필터라 저장을 비우면 원상복구된다).
+    # 그래서 하단 공용 [저장] 을 쓰지 않고 자체 버튼을 두며, 미리보기를 한 번 통과해야만
+    # 그 버튼이 열린다.
+    def _build_new_item_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(8)
+
+        warn = QLabel("⚠ 수식으로 새 item 을 만들어 <b>원본 rawdata 에 추가</b>합니다. "
+                      "되돌릴 수 없습니다.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #c2410c;")
+        layout.addWidget(warn)
+
+        self.ni_name = QLineEdit()
+        self.ni_name.setPlaceholderText("예: VREF_MARGIN")
+        self.ni_tseq = QLineEdit()
+        self.ni_tno = QLineEdit()
+        self.ni_step = QComboBox()
+        self.ni_step.setEditable(True)
+        self.ni_unit = QLineEdit()
+        self.ni_hilim = QLineEdit()
+        self.ni_lolim = QLineEdit()
+        for widget in (self.ni_tseq, self.ni_tno):
+            widget.setFixedWidth(90)
+        for widget in (self.ni_unit, self.ni_hilim, self.ni_lolim):
+            widget.setFixedWidth(130)
+        for widget in (self.ni_hilim, self.ni_lolim):
+            widget.setPlaceholderText("비우면 규격 없음")
+
+        meta = QGridLayout()
+        meta.setHorizontalSpacing(10)
+        meta.addWidget(QLabel("ITEMNAME"), 0, 0)
+        meta.addWidget(self.ni_name, 0, 1)
+        meta.addWidget(QLabel("TSEQ"), 0, 2)
+        meta.addWidget(self.ni_tseq, 0, 3)
+        meta.addWidget(QLabel("TNO"), 0, 4)
+        meta.addWidget(self.ni_tno, 0, 5)
+        meta.addWidget(QLabel("STEP"), 1, 0)
+        meta.addWidget(self.ni_step, 1, 1)
+        meta.addWidget(QLabel("UNIT"), 1, 2)
+        meta.addWidget(self.ni_unit, 1, 3)
+        meta.addWidget(QLabel("HILIM"), 1, 4)
+        meta.addWidget(self.ni_hilim, 1, 5)
+        meta.addWidget(QLabel("LOLIM"), 2, 4)
+        meta.addWidget(self.ni_lolim, 2, 5)
+        meta.setColumnStretch(1, 1)
+        layout.addLayout(meta)
+
+        from honey_ui.formula_editor import FormulaEditor
+
+        layout.addWidget(QLabel("수식"))
+        self.ni_expr = FormulaEditor()
+        self.ni_expr.changed.connect(self._on_new_item_changed)
+        layout.addWidget(self.ni_expr)
+
+        self.ni_status = QLabel("")
+        self.ni_status.setWordWrap(True)
+        layout.addWidget(self.ni_status)
+
+        row = QHBoxLayout()
+        self.ni_btn_preview = QPushButton("미리보기")
+        self.ni_btn_preview.clicked.connect(self._preview_new_item)
+        row.addWidget(self.ni_btn_preview)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.ni_table = QTableWidget(0, 8)
+        self.ni_table.setHorizontalHeaderLabels(
+            ["Source", "die", "유효", "평균", "최소", "최대", "실패", "샘플"])
+        self.ni_table.verticalHeader().setVisible(False)
+        self.ni_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.ni_table.horizontalHeader().setSectionResizeMode(
+            7, QHeaderView.ResizeMode.Stretch)
+        self.ni_table.setMinimumHeight(140)
+        layout.addWidget(self.ni_table, 1)
+
+        self.ni_skip = QLabel("")
+        self.ni_skip.setWordWrap(True)
+        self.ni_skip.setStyleSheet("color: #c2410c;")
+        layout.addWidget(self.ni_skip)
+
+        self.btn_add_item = QPushButton("원본에 추가 (되돌릴 수 없음)")
+        self.btn_add_item.setStyleSheet(_DANGER_BTN_QSS)
+        self.btn_add_item.setMinimumHeight(36)
+        self.btn_add_item.setEnabled(False)
+        self.btn_add_item.clicked.connect(self._start_add_item)
+        layout.addWidget(self.btn_add_item)
+        # rawdata 를 받기 전에는 입력 자체를 막는다 — 항목 목록도 메타 기본값도 없는 상태에서
+        # 무언가를 입력하게 두면 "왜 자동완성이 안 뜨나"를 설명해야 한다.
+        self._set_new_item_enabled(False)
+        return page
+
+    def _ensure_new_item_loaded(self):
+        """이 페이지를 **처음 열 때만** rawdata 를 받는다.
+
+        메타 기본값(TSEQ/TNO 최대+1, STEP 승계)은 서버 raw_data/columns 응답에 없다 —
+        거기에 필드를 넣으려면 web_report/tabs 를 건드려야 하고, 그러면 perf_guard 가
+        REPORT_SCHEMA_VERSION bump 를 요구해 전 세션 콜드 폭풍이 된다. 어차피 미리보기·계산에
+        데이터가 필요하므로 여기서 받아 기본값을 채운다(Excel 왕복과 같은 ETag 캐시라
+        원본이 안 바뀐 세션은 두 번째부터 서버가 304 만 응답한다).
+        """
+        if self._ni_tables is not None or self._ni_loader is not None:
+            return
+        self.ni_status.setText("rawdata 읽는 중...")
+        self._set_new_item_enabled(False)
+        self._ni_loader = _NewItemLoadWorker(self.base, self.session_id, self)
+        self._ni_loader.progress.connect(self.ni_status.setText)
+        self._ni_loader.done.connect(self._on_new_item_loaded)
+        self._ni_loader.start()
+
+    def _set_new_item_enabled(self, enabled):
+        for widget in (self.ni_name, self.ni_tseq, self.ni_tno, self.ni_step,
+                       self.ni_unit, self.ni_hilim, self.ni_lolim,
+                       self.ni_expr, self.ni_btn_preview):
+            widget.setEnabled(enabled)
+        if not enabled:
+            self.btn_add_item.setEnabled(False)
+
+    def _on_new_item_loaded(self, tables, error):
+        self._ni_loader = None
+        if error or tables is None:
+            self.ni_status.setText(f"rawdata 를 가져오지 못했습니다: {error}")
+            return
+        from excel_edit import item_add
+
+        self._ni_tables = tables
+        defaults = item_add.default_meta(tables)
+        self.ni_tseq.setText(defaults["tseq"])
+        self.ni_tno.setText(defaults["tno"])
+        self.ni_step.clear()
+        self.ni_step.addItems(defaults["step_choices"])
+        self.ni_step.setCurrentText(defaults["step"])
+        items = item_add.existing_items(tables)
+        self.ni_expr.set_items(items)
+        self._set_new_item_enabled(True)
+        hint = ""
+        if not defaults["tseq"] or not defaults["tno"]:
+            # 마지막 항목의 TSEQ/TNO 가 숫자가 아니면 +1 을 만들 수 없다 - 추측하지 않는다.
+            hint = " (TSEQ/TNO 를 자동으로 정할 수 없어 비워 뒀습니다 - 직접 넣어 주세요)"
+        self.ni_status.setText(f"source {len(tables)}개 · 항목 {len(items)}개{hint}")
+
+    def _new_item_meta(self):
+        return {
+            "name": self.ni_name.text(), "tseq": self.ni_tseq.text(),
+            "tno": self.ni_tno.text(), "step": self.ni_step.currentText(),
+            "unit": self.ni_unit.text(), "hilim": self.ni_hilim.text(),
+            "lolim": self.ni_lolim.text(),
+        }
+
+    def _on_new_item_changed(self):
+        """수식이 바뀌면 상태줄을 다시 쓰고 미리보기를 무효화한다.
+
+        미리보기를 통과한 뒤 수식을 고치고 그대로 [원본에 추가] 를 누르면 **보지 않은 값**이
+        원본에 박힌다 - 그래서 변경 즉시 버튼을 다시 잠근다.
+        """
+        from web_report import formula
+
+        self._ni_previewed = False
+        self.btn_add_item.setEnabled(False)
+        tokens, error, index = self.ni_expr.validate()
+        if error:
+            self.ni_status.setText(f"⚠ {error}")
+            self.ni_expr.mark_error(index)
+        elif tokens:
+            self.ni_status.setText(f"✓ 참조 {len(formula.item_refs(tokens))}개 · "
+                                   f"{formula.render_formula(tokens)}")
+        else:
+            self.ni_status.setText("")
+
+    def _preview_new_item(self):
+        if self._ni_tables is None:
+            self._ensure_new_item_loaded()
+            return
+        from excel_edit import item_add
+
+        tokens, error, index = self.ni_expr.validate()
+        if error or not tokens:
+            self.ni_status.setText("⚠ " + (error or "수식을 입력하세요."))
+            self.ni_expr.mark_error(index)
+            return
+        issues = item_add.validate_meta(self._new_item_meta(), self._ni_tables)
+        if issues:
+            QMessageBox.warning(self, "신규 Item 추가", "\n".join("· " + i for i in issues))
+            return
+        self.ni_status.setText("계산 중...")
+        self.ni_btn_preview.setEnabled(False)
+        self._ni_preview = _NewItemPreviewWorker(self._ni_tables, tokens, self)
+        self._ni_preview.done.connect(self._on_new_item_preview)
+        self._ni_preview.start()
+
+    def _on_new_item_preview(self, summary, error):
+        self._ni_preview = None
+        self.ni_btn_preview.setEnabled(True)
+        if error or summary is None:
+            self.ni_status.setText(f"⚠ 계산 실패: {error}")
+            return
+        rows = summary["rows"]
+        self.ni_table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            if row.get("skipped"):
+                cells = [row["source"], "-", "-", "-", "-", "-", "-", row["why"] + " ⚠"]
+            else:
+                cells = [
+                    row["source"], f"{row['n']:,}", f"{row['ok']:,}",
+                    _fmt_num(row["mean"]), _fmt_num(row["min"]), _fmt_num(row["max"]),
+                    f"{row['fail']:,}",
+                    ", ".join(_fmt_num(v) for v in row["sample"]),
+                ]
+            for c, text in enumerate(cells):
+                self.ni_table.setItem(r, c, QTableWidgetItem(text))
+        self.ni_table.resizeColumnsToContents()
+
+        skipped = [s["source"] for s in summary["skipped"]]
+        if skipped:
+            self.ni_skip.setText(
+                "⚠ " + ", ".join(skipped) + " 은 참조 항목이 없어 이 item 이 만들어지지 "
+                "않습니다 (그 source 만 건너뜁니다).")
+        else:
+            self.ni_skip.setText("")
+
+        applied = len(rows) - len(skipped)
+        if not applied:
+            self.ni_status.setText("⚠ 참조한 항목이 있는 source 가 없습니다 - 추가할 수 없습니다.")
+            self.btn_add_item.setEnabled(False)
+            return
+        self._ni_previewed = True
+        self.btn_add_item.setEnabled(True)
+        fail_note = (f" · 계산 실패 {summary['total_nonfinite']:,}개(빈값)"
+                     if summary["total_nonfinite"] else "")
+        self.ni_status.setText(
+            f"✓ source {applied}개에 값 {summary['total_finite']:,}개{fail_note}"
+            " - BIN·FAILTNO 는 바뀌지 않습니다(수율·Wafer Map 불변).")
+
+    def _start_add_item(self):
+        """[원본에 추가] - 검증을 한 번 더 돌리고 허브를 닫아 워커에 넘긴다.
+
+        실제 다운로드·계산·업로드는 honey_main 의 AddItemWorker 가 한다(Excel 왕복과 같은
+        구조). 그래야 그쪽의 중복 실행 가드·이탈 취소 가드·브라우저 새로고침 배선을
+        그대로 쓴다.
+        """
+        from excel_edit import item_add
+
+        if not self._ni_previewed:
+            QMessageBox.information(self, "신규 Item 추가", "먼저 [미리보기] 로 확인하세요.")
+            return
+        tokens, error, index = self.ni_expr.validate()
+        if error or not tokens:
+            self.ni_expr.mark_error(index)
+            QMessageBox.warning(self, "신규 Item 추가", error or "수식을 입력하세요.")
+            return
+        issues = item_add.validate_meta(self._new_item_meta(), self._ni_tables or [])
+        if issues:
+            QMessageBox.warning(self, "신규 Item 추가", "\n".join("· " + i for i in issues))
+            return
+        spec = self._new_item_meta()
+        spec["name"] = spec["name"].strip()
+        spec["tokens"] = tokens
+        self.add_item_spec = spec
+        self.action = ACTION_ADD_ITEM
+        self.accept()
 
     def _build_yield_page(self):
         """소스별 수율 **분모** 선택 + 실시간 수율.

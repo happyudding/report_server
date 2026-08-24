@@ -95,6 +95,21 @@ function cnBindChart(key, gd) {
   }
 }
 
+// 등록 해제 — 같은 DOM 노드에 축이 다른 차트(Serial 순 run chart)를 덮어 그리기 직전에 부른다.
+// 등록이 남아 있으면 cnSyncFromChart 가 그 노드의 layout(=다른 축)에서 사용자 도형을 회수하려다
+// 빈 배열을 얻고, 그 상태로 cnFlush 되면 value:null 이 되어 **저장돼 있던 주석이 지워진다**.
+// pending/dirty 는 남긴다 — cnFlush 는 _cnCharts 에 없는 key 를 sync 없이 그대로 저장한다.
+function cnDetach(key) {
+  const info = _cnCharts[key];
+  if (!info) return;
+  // 아직 원래 차트의 layout 이 살아 있는 지금 회수해 둔다(드래그 직후 미동기 방지).
+  if (_cnDirty.has(key)) cnSyncFromChart(key);
+  delete _cnCharts[key];
+  // 텍스트/화살표 도구의 DOM click 은 purge 와 무관하게 살아남아 gd._cnBoundKey 를 읽는다 —
+  // 비우지 않으면 덮어 그린 차트의 좌표가 이 key 로 들어간다.
+  try { if (info.gd) info.gd._cnBoundKey = null; } catch (e) { /* no-op */ }
+}
+
 // 현재 바인딩된 chartKey — purge 재바인딩 후에도 최신 key 로 동작하도록 DOM click 은
 // 이 값을 통해 간접 참조한다(핸들러를 다시 달지 않기 위함).
 function cnBindPlotEvents(key, gd) {
@@ -227,6 +242,25 @@ function cnReapply(key) {
 // 차트 주석 키의 subject — Gap Chart 는 `gap:<uuid>` 를 쓴다(서버 _CHART_KEY_RE 가 이미
 // gap: 접두를 허용한다). 차트 이름이 동명의 실제 항목과 겹쳐도 주석이 섞이지 않는다.
 function cnSubjectOf(d) { return (d && d.note_subject) || (d && d.subject) || ""; }
+
+// 지금 열려 있는 상세 화면의 주석 subject. 툴바·코멘트 뷰의 DOM id 는 항목 상세와 합성
+// 상세가 **공유**하고(한 번에 하나만 열린다 — 서로 열 때 상대 패널을 비운다), 저장 후
+// 하단 코멘트를 다시 그릴 때 어느 쪽 기준인지 여기서 한 번에 정한다.
+// `_itemDetailData` 는 상세를 닫아도 남아 있어서, 이 판정 없이 그것만 보면 합성 상세를
+// 열어 둔 채 저장했을 때 **직전에 보던 항목의 코멘트**가 합성 차트 밑에 찍힌다.
+function cnActiveSubject() {
+  const idet = document.getElementById("panel-item-detail");
+  if (idet && idet.classList.contains("active")) {
+    return (typeof _itemDetailData !== "undefined" && _itemDetailData)
+      ? cnSubjectOf(_itemDetailData) : "";
+  }
+  const dc = document.getElementById("panel-dist-composite-detail");
+  if (dc && dc.classList.contains("active")
+      && typeof dcNoteSubject === "function" && typeof _dcDetailId !== "undefined") {
+    return _dcDetailId ? dcNoteSubject(_dcDetailId) : "";
+  }
+  return "";
+}
 
 function chartNotesBar(data) {
   const bar = document.getElementById("chartNoteBar");
@@ -411,7 +445,8 @@ async function cnFlush(opts) {
     _cnPending = {};
   }
   cnUpdateBarState();
-  if (_itemDetailData) cnRenderChartComments(cnSubjectOf(_itemDetailData));   // 저장값을 차트 하단에 반영
+  const active = cnActiveSubject();
+  if (active) cnRenderChartComments(active);   // 저장값을 차트 하단에 반영(열려 있는 상세 기준)
   return j;
 }
 
@@ -444,7 +479,9 @@ async function cnPasteToNote(subject) {
   // 차트 DOM 노드는 어느 모드든 같은 #distCdf 이므로 없으면 그것으로 폴백한다(캡처 결과는
   // 화면 그대로). **_cnCharts 에 등록하지는 않는다** — 등록하면 드래그가 주석을 seq 좌표로
   // 되돌려 써서 기존 주석이 망가진다.
-  const info = _cnCharts[key] || { gd: document.getElementById("distCdf") };
+  // 합성 상세는 차트 노드가 #dcDetailChart 다(같은 툴바를 공유한다) — 열려 있는 쪽을 쓴다.
+  const info = _cnCharts[key]
+    || { gd: document.getElementById("distCdf") || document.getElementById("dcDetailChart") };
   if (!info || !info.gd) { showToast("차트가 아직 준비되지 않았습니다."); return; }
   if (MODE !== "edit") { showToast("편집 권한이 있어야 Note 에 붙여넣을 수 있습니다."); return; }
   try {

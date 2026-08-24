@@ -112,7 +112,14 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 single-flight 락으로 콜드 미스 동시 진입의 중복 계산을 막는다. 캐시 키 규약은
 [12](12_web_report_cache.md).
 
-## 원본 교체 흐름 (Honey Excel 왕복 — `rawedit.py`)
+## 원본 교체 흐름 (Honey Excel 왕복 · 신규 Item 추가 — `rawedit.py`)
+
+> `POST .../web_report/rawdata_replace` 는 **두 경로가 공유**한다: Excel 왕복(아래)과
+> 허브의 **신규 Item(수식) 추가**([11](11_web_report_tabs.md)). 후자는 form 필드 2개를 더 보낸다 —
+> `add_items`(JSON 배열, 이번 교체로 새로 생긴 item 이름 → 서버가 `manifest.selected_items`
+> 에 덧붙인다) 와 `rows_preserved="1"`(열만 추가했다는 신고 → 서버가 전처리 셀 패치를
+> 지우지 않는다). 백업·`content_hash`·형제 세션 동기화·캐시 무효화·프리웜은 두 경로가
+> 똑같이 탄다.
 업로드된 parquet 원본을 사후에 고치는 경로. `GET .../web_report/rawdata_export` 로
 zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 = 시트 1장**으로 Excel
 에 펼치고, 저장·닫으면 재인코딩해 `POST .../web_report/rawdata_replace` 로 전량 교체한다

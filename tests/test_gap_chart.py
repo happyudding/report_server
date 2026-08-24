@@ -383,6 +383,54 @@ def test_etag_and_digest(sid) -> None:
     print("  [ok] ETag 304 → 수식 수정 → 200 + 값 변화")
 
 
+def test_etag_has_schema_version(sid) -> None:
+    """(j-2) ETag 에 `GAP_SCHEMA_VERSION` 이 들어간다.
+
+    캐시 키(cache_policy.gap_key)에는 이미 들어 있다. ETag 에서 빠지면 응답 **구조**를 바꿔
+    이 상수를 올렸을 때 서버는 재계산하는데 브라우저는 같은 ETag 로 304 를 받아 옛 구조를
+    계속 쓴다(수식 digest 를 한쪽에만 넣었을 때와 같은 기전, 축만 다르다)."""
+    from web_report.cache_policy import GAP_SCHEMA_VERSION
+    cid = str(uuid.uuid4())
+    post_gap(sid, [{"key": cid, "value": spec(name="V", sources=["WF1"], tokens=[I("IT00")])}])
+    etag = get_gap(sid, cid).headers.get("ETag") or ""
+    assert f"v{GAP_SCHEMA_VERSION}" in etag, \
+        f"ETag 에 GAP_SCHEMA_VERSION 이 없다: {etag!r}"
+    post_gap(sid, [{"key": cid, "value": None}])
+    print(f"  [ok] ETag 에 스키마 버전 축 포함 (v{GAP_SCHEMA_VERSION})")
+
+
+def test_save_warms_cache(sid) -> None:
+    """(j-3) 저장 직후 백그라운드 프리컴퓨트 — 첫 조회가 캐시 히트여야 한다.
+
+    gap 캐시 키에 spec_digest 가 들어가 **새로 만들거나 수식을 고친 직후는 100% 미스**다.
+    그 계산이 사용자의 첫 조회 안에서 통째로 일어나면 카드가 '계산 중…' 으로 머물기 때문에,
+    저장 응답을 보낸 직후 부모 프로세스 스레드가 미리 만들어 둔다.
+    ⚠ 컴퓨트 워커(별도 프로세스)에서 계산하면 `_GAP_CACHE`(웹 프로세스 RAM)에 안 남는다."""
+    from web_report import cache_policy, gap_chart as _gap, preprocess, response_cache
+    from web_report import cache as _cache
+    cid = str(uuid.uuid4())
+    body = spec(name="W", sources=["WF1"], tokens=[I("IT00")])
+    post_gap(sid, [{"key": cid, "value": body}])
+    session = report_db.get_session(sid)
+    key = cache_policy.gap_key(
+        session, cid, _gap.spec_digest(response_gap_spec(sid, cid)),
+        prep_digest=preprocess.session_digest(report_db, sid))
+    for _ in range(100):          # 백그라운드 스레드 완료 대기 (실측 수십 ms)
+        if _cache.cache_get(response_cache._GAP_CACHE, key) is not None:
+            break
+        time.sleep(0.05)
+    assert _cache.cache_get(response_cache._GAP_CACHE, key) is not None, \
+        "저장 후에도 gap 캐시가 비어 있다 — 프리컴퓨트가 동작하지 않는다"
+    post_gap(sid, [{"key": cid, "value": None}])
+    print("  [ok] 저장 직후 프리컴퓨트로 캐시 적재")
+
+
+def response_gap_spec(sid, cid):
+    """서버가 저장한 정규화본(sanitize 결과) — digest 는 이 값 기준이어야 한다."""
+    from web_report import service as _svc
+    return _svc.get_gap_charts(sid, report_db=report_db)[cid]
+
+
 def test_missing_chart(sid) -> None:
     """(k) 없는 chart_id → 404."""
     assert get_gap(sid, str(uuid.uuid4())).status_code == 404
@@ -432,6 +480,8 @@ def main():
         test_explicit_coord_join(sid)
         test_divide_by_zero(sid)
         test_etag_and_digest(sid)
+        test_etag_has_schema_version(sid)
+        test_save_warms_cache(sid)
         test_missing_chart(sid)
         test_scatter_contract(sid)
         settle()
