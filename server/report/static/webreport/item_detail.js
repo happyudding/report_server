@@ -817,7 +817,10 @@ function distRenderCdf(data) {
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let cdfShapes = distSpecShapes(lo, hi, true).concat(beforeLimitShapes(data.subject));
   if (data.is_gap) _idetGapChipHits = gapChipHits;   // 아래 chip 값 표가 같은 값을 쓴다
-  const cdfCm = data.is_gap ? mapSelMarkerTraces(gapChipHits) : chipMarkersFor(data.subject);
+  // useGl 을 넘겨 곡선과 같은 레이어에 그린다 — 안 넘기면 SVG 마커가 gl 캔버스 아래로
+  // 깔려 보이지 않는다(mapSelMarkerTraces 주석).
+  const cdfCm = data.is_gap ? mapSelMarkerTraces(gapChipHits, useGl)
+                            : chipMarkersFor(data.subject, useGl);
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   const cdfLr = distLimitRange(lo, hi, cdfMin, cdfMax);

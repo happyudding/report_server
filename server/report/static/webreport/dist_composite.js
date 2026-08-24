@@ -655,7 +655,8 @@ function dcRenderDetailCharts() {
     traces.push(t);
   });
   // Map Analysis 선택 좌표 — 갤러리 카드와 같은 마커(상세는 canvas 가 없어 trace 만).
-  const cm = chipMarkersForPairs(pairs);
+  // useGl 을 넘겨야 곡선과 같은 레이어에 올라간다(안 넘기면 gl 캔버스에 가려 안 보인다).
+  const cm = chipMarkersForPairs(pairs, useGl);
   if (cm) traces.push(...cm.traces);
   const xtitle = `측정값${units ? " [" + units + "]" : ""}`;
   Plotly.newPlot(div, traces, { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",

@@ -28,12 +28,22 @@ window.honeyMapSelSnapshot = honeyMapSelSnapshot;
 // **단일 진실**이라, 어느 차트(일반 Distribution / composite / Gap Chart)에서든 같은
 // 모양으로 찍힌다. 크로스헤어는 "chip 도 1개, 이 차트에 찍힌 점도 1개" 일 때만 —
 // 점이 여러 개인데 선을 그으면 어느 점의 선인지 알 수 없다.
-function mapSelMarkerTraces(hits) {
+//
+// ⚠ `useGl` 은 **주변 곡선의 렌더 방식과 반드시 맞춰야 한다.** Plotly 는 scattergl 을
+// 별도 WebGL 캔버스에 그리고 그 캔버스를 SVG 위에 얹으므로, gl 곡선 옆에 SVG(scatter)
+// 마커를 두면 trace 순서와 무관하게 **데이터 점 아래로 깔려 안 보인다**. chip 마커는
+// 정의상 곡선 위(같은 좌표)에 놓이므로 100% 가려진다 — Item detail 에서 마커가 안 보이던
+// 원인이 이것이다(갤러리 카드는 점을 canvas 로 직접 그리며 마커도 같이 다시 그려서 보였다).
+function mapSelMarkerTraces(hits, useGl) {
   if (!hits || !hits.length) return null;
-  const traces = hits.map(h => ({
-    type: "scatter", mode: "markers", x: [h.value], y: [h.cum],
-    marker: { color: h.color, size: 7, line: { width: 1, color: "#fff" } },
-    cliponaxis: false, hoverinfo: "skip", showlegend: false }));
+  const traces = hits.map(h => {
+    const t = {
+      type: useGl ? "scattergl" : "scatter", mode: "markers", x: [h.value], y: [h.cum],
+      marker: { color: h.color, size: 7, line: { width: 1, color: "#fff" } },
+      hoverinfo: "skip", showlegend: false };
+    if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
+    return t;
+  });
   const shapes = [];
   if (mapSelChips.length === 1 && hits.length === 1) {
     const h = hits[0];
@@ -48,7 +58,7 @@ function mapSelMarkerTraces(hits) {
 // 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색).
 // 해당 항목 값 없는 chip 은 건너뜀. 값·누적% 는 **서버가 준 것**(chip_percentiles)을 쓴다 —
 // 같은 chip 이 어느 화면에 나오든 같은 좌표에 찍혀야 하기 때문(CLAUDE.md 규칙 13).
-function chipMarkersFor(subject) {
+function chipMarkersFor(subject, useGl) {
   if (!mapSelChips.length) return null;
   const hits = [];
   mapSelChips.forEach(c => {
@@ -56,13 +66,13 @@ function chipMarkersFor(subject) {
     if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
     hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
   });
-  return mapSelMarkerTraces(hits);
+  return mapSelMarkerTraces(hits, useGl);
 }
 
 // Distribution composite 용 — pair(source×item) 목록 전체에 대한 마커를 **한 번에** 모은다.
 // pair 마다 따로 만들면 크로스헤어 판정(점 1개)이 pair 수만큼 걸려 선이 여러 벌 생긴다.
 // chip 은 특정 source 의 die 이므로 그 source 의 pair 에만 찍는다.
-function chipMarkersForPairs(pairs) {
+function chipMarkersForPairs(pairs, useGl) {
   if (!mapSelChips.length) return null;
   const hits = [];
   (pairs || []).forEach(p => {
@@ -73,7 +83,7 @@ function chipMarkersForPairs(pairs) {
       hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
     });
   });
-  return mapSelMarkerTraces(hits);
+  return mapSelMarkerTraces(hits, useGl);
 }
 
 // 선택 변경 후 Distribution 소비처(보이는 갤러리 카드 + 열려있는 Item_detail) 재렌더.
