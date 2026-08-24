@@ -24,6 +24,11 @@ web_report/
 ├── honeyform.py        7-meta honeyform 검증/파싱, parquet 인코딩·디코딩 (스키마 상수)
 ├── dist_blob.py        Distribution ECDF compact 공용 빌더 — 서버 폴백 계산과 (구) 클라
 │                        dist blob 프리컴퓨트가 공유. 순수 모듈 — 클라에서 import 됨
+├── dist_seq.py         **Serial 순**(rawdata 누적 순) 값 배열 빌더 — Distribution "Serial 순"
+│                        토글 전용 배치 응답(`?order=seq`, 포맷 seq-columnar-v1). ECDF 는
+│                        np.unique 로 동일값을 접어 순서를 버리므로 그 payload 로는 못 그린다.
+│                        pack 지름길 없음(pack 은 정렬 산출물). ⚠ **tabs/ 로 옮기지 말 것**
+│                        (perf_guard S01 → REPORT_SCHEMA_VERSION bump = 콜드 폭풍)
 ├── gap_chart.py        **Gap Chart** — 사용자 수식(토큰 배열) 파서(재귀하강, eval 금지)
 │                        + numpy 평가 + 좌표 교집합. 응답은 scatter_item 과 같은 구조라
 │                        Item_detail 이 그대로 재사용한다. ⚠ **tabs/ 로 옮기지 말 것**
@@ -92,6 +97,9 @@ web_report/
 │                        다이얼로그가 같은 코드를 돌려 값 일치를 구조적으로 보장
 ├── temperature.py      Temperature 모드(PMIC·SECURITY RT/CT/HT) — .lt/.pds limit 파서 + 업로드 전
 │                        rawdata 정리(RT pass 좌표 필터 + RT limit 재판정 + bin 매칭).
+│                        좌표가 없는 rawdata 는 `serial_match=True` 로 부르면 그 pair 만
+│                        SERIAL 순서 짝짓기(적은 쪽 기준) — 판정은 `has_coords` 한 곳,
+│                        확인창은 클라(honey_main `_temp_coord_check`)가 띄운다.
 │                        순수 모듈 — Honey 클라 honey_main._clean_temperature_frames 가 import
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── comment_format.py   Issue comment 서식 토큰(*[..]=굵게 / *r[..]=색) strip — 색·굵기는

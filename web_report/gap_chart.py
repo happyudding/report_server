@@ -428,6 +428,9 @@ def build_gap_item(tables, spec, *, chart_id="", bin1=False, bin1_sources=None) 
         "gap_id": str(chart_id or ""),
         "gap_mode": mode,
         "formula": render_formula(tokens),
+        # 서식(item 파란 기울임 / source 빨간 기울임) 그대로 그리려면 프런트가 토큰이
+        # 필요하다 — 평문 formula 는 되돌려 읽을 수 없다(모듈 docstring).
+        "tokens": tokens,
         "matched_dies": int(sum(matched.values())),
         "matched_by_source": matched,
         "dropped_nonfinite": dropped,

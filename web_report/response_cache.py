@@ -48,6 +48,14 @@ _DIST_BATCH_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_BATCH_CACHE_
                                          or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 _DIST_BATCH_CACHE: OrderedDict = OrderedDict()
 
+# /distribution_batch?order=seq (Serial 순): 키 (…, subjects_digest, "seq", ver[, "bin1"]) -> gzip.
+# ECDF 배치와 **별도 캐시**다 — 같은 항목 집합이라도 축 의미가 다른 응답이라 섞이면 안 되고,
+# seq 는 pack 지름길이 없어(순서 보존) 건당 계산이 비싸 히트율을 따로 지키는 편이 낫다.
+_DIST_SEQ_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_SEQ_CACHE", "32") or 32))
+_DIST_SEQ_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_SEQ_CACHE_MB", "256")
+                                       or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+_DIST_SEQ_CACHE: OrderedDict = OrderedDict()
+
 # Gap Chart: 키 (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) -> gzip bytes.
 # 한 응답을 갤러리 카드와 Item_detail 상세가 **공유**한다(카드가 ECDF 를 프런트에서 만든다)
 # → 카드를 본 뒤 클릭하면 상세는 클라 캐시 히트다. 건당 크기가 scatter 급이라 바이트 상한이
@@ -60,6 +68,7 @@ _GAP_CACHE: OrderedDict = OrderedDict()
 cache.register_akey_cache(_FULL_CACHE)
 cache.register_akey_cache(_SCATTER_CACHE)
 cache.register_akey_cache(_DIST_BATCH_CACHE)
+cache.register_akey_cache(_DIST_SEQ_CACHE)
 cache.register_akey_cache(_GAP_CACHE)
 
 
@@ -71,7 +80,8 @@ def _stats() -> dict:
     with cache.CACHE_LOCK:
         return {name: {"n": len(c), "bytes": sum(len(v) for v in c.values())}
                 for name, c in (("full", _FULL_CACHE), ("scatter", _SCATTER_CACHE),
-                                ("dist_batch", _DIST_BATCH_CACHE), ("gap", _GAP_CACHE))}
+                                ("dist_batch", _DIST_BATCH_CACHE),
+                                ("dist_seq", _DIST_SEQ_CACHE), ("gap", _GAP_CACHE))}
 
 
 cache.register_stats_provider(_stats)
@@ -171,6 +181,40 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
         blob = _gzip_json(result)
         cache._bytes_capped_put(_DIST_BATCH_CACHE, cache_key, blob,
                                 _DIST_BATCH_CACHE_MAX, _DIST_BATCH_CACHE_MAX_BYTES)
+    return etag, blob
+
+
+def get_dist_seq_batch_gzip(session_id: str, subjects, *, session: dict,
+                            report_db, upload_root: Path, bin1: bool = False,
+                            bin1_scope: str = "") -> tuple[str, bytes]:
+    """/distribution_batch?order=seq 응답 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
+
+    `get_dist_batch_gzip` 과 같은 골격이고 키 빌더(dist_seq_batch_key)와 계산 함수만 다르다.
+    subjects 는 라우트가 정렬·중복제거한 리스트여야 한다(같은 집합 → 같은 키).
+    """
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    digest = hashlib.sha256("\n".join(subjects).encode("utf-8")).hexdigest()[:32]
+    scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
+    cache_key = cache_policy.dist_seq_batch_key(   # 키 규약: cache_policy
+        session, digest, bin1=bin1, bin1_scope=scope,
+        prep_digest=preprocess.session_digest(report_db, session_id))
+    etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
+
+    blob = cache.cache_get(_DIST_SEQ_CACHE, cache_key)
+    if blob is not None:
+        return etag, blob
+    with cache.keyed_lock_ctx(("dist_seq",) + cache_key):
+        blob = cache.cache_get(_DIST_SEQ_CACHE, cache_key)
+        if blob is not None:
+            return etag, blob
+        result = service.get_distribution_seq_batch(
+            session_id, subjects, report_db=report_db, upload_root=upload_root,
+            bin1=bin1, bin1_scope=scope)
+        blob = _gzip_json(result)
+        cache._bytes_capped_put(_DIST_SEQ_CACHE, cache_key, blob,
+                                _DIST_SEQ_CACHE_MAX, _DIST_SEQ_CACHE_MAX_BYTES)
     return etag, blob
 
 

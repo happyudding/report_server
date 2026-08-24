@@ -202,6 +202,39 @@ def test_menu_order():
     print("[정적] 메뉴 순서 composite → Gap Chart OK")
 
 
+def test_modal_width():
+    """모달 폭은 **`.modal-box.gc-modal-box`(특이도 0,2,0)** 로 써야 한다.
+
+    이 블록은 스타일시트에서 `.modal-box`(width:360px) **앞에** 있어 한 클래스로 쓰면
+    같은 특이도라 그쪽이 이겨 폭이 360px 로 되돌아간다(2026-08-24 실제로 밟아 사용자가
+    "창이 너무 작다"고 신고했다 — dc-modal-box 와 같은 함정)."""
+    view = _VIEW.read_text(encoding="utf-8")
+    assert ".modal-box.gc-modal-box {" in view,         ".gc-modal-box 는 .modal-box 와 함께 써 특이도를 올려야 합니다 (폭 360px 회귀)"
+    box = re.search(r"\.modal-box\.gc-modal-box \{([^}]*)\}", view)
+    assert box, ".modal-box.gc-modal-box 규칙이 없습니다"
+    css = box.group(1)
+    assert "1600px" in css, "Distribution composite 와 같은 가로 폭(1600px)이 아닙니다"
+    assert "overflow: hidden" in css, "모달이 자체 스크롤을 내면 안쪽 목록 스크롤이 안 생깁니다"
+    assert "flex-direction: column" in css, "세로 flex 가 아니면 목록이 남는 공간을 못 받습니다"
+    print("[정적] 모달 폭 1600px + 특이도 + 내부 스크롤 OK")
+
+
+def test_formula_bar():
+    """Item_detail 에 수식 줄이 붙는다 — 만들 때와 같은 서식(읽기 전용)."""
+    gap = (_JS / "gap_chart.js").read_text(encoding="utf-8")
+    idet = (_JS / "item_detail.js").read_text(encoding="utf-8")
+    view = _VIEW.read_text(encoding="utf-8")
+    assert "function gcTokenParts" in gap, "토큰 서식 공용 함수가 없습니다"
+    assert "function gcExprHtml" in gap, "읽기 전용 수식 렌더가 없습니다"
+    assert "function gcFormulaBarHtml" in gap, "Item_detail 수식 줄 생성기가 없습니다"
+    assert 'typeof gcFormulaBarHtml === "function"' in idet, "item_detail.js 훅이 없습니다"
+    # 수식 줄은 헤더(.idet-head) 바로 아래 = cdfEditBar 앞
+    assert idet.index("gcFormulaBarHtml") < idet.index('id="cdfEditBar"'),         "수식 줄이 CDF 편집바보다 뒤에 있습니다"
+    assert ".idet-formula {" in view and ".idet-formula .gc-tok:hover" in view,         "수식 줄 CSS(또는 hover 해제)가 없습니다"
+    assert 'html[data-theme="dark"] .idet-formula' in view, "다크 테마 규칙이 없습니다"
+    print("[정적] Item_detail 수식 줄 + 서식 공용화 OK")
+
+
 def test_css_present():
     view = _VIEW.read_text(encoding="utf-8")
     for cls in (".distg-gap ", ".gc-modal-box", ".gc-cols", ".gc-expr", ".gc-tok-item",
@@ -314,6 +347,30 @@ def test_cards_html():
     print("  [browser] 카드 HTML (골격 + 편집모드 게이트 양방향) OK")
 
 
+def test_formula_bar_render():
+    """gcFormulaBarHtml — 토큰 서식 렌더 + tokens 없을 때 평문 폴백."""
+    js = f"""<script>
+      {SETUP}
+      var withTok = gcFormulaBarHtml({{is_gap:true, gap_mode:'explicit', matched_dies:12,
+        dropped_nonfinite:2, missing:[],
+        tokens:[{{t:'item',source:'WF1',item:'IT00'}}, {{t:'op',v:'-'}},
+                {{t:'item',source:'WF2',item:'IT00'}}], formula:'x'}});
+      var fallback = gcFormulaBarHtml({{is_gap:true, gap_mode:'per_source',
+        matched_dies:3, tokens:[], formula:'IT00 - IT01'}});
+      var notGap = gcFormulaBarHtml({{is_gap:false, tokens:[{{t:'item',item:'A'}}]}});
+      _emit({{withTok: withTok, fallback: fallback, notGap: notGap}});
+    </script>"""
+    got = json.loads(run_probe(DEPS, "", js, "fbar"))
+    w = got["withTok"]
+    assert "gc-tok-src" in w and "gc-tok-item" in w, w[:200]
+    assert "data-gc-tok" not in w, "상세의 수식 칩에 클릭 삭제 속성이 붙었습니다"
+    assert "die 12개" in w and "계산 불가 2개" in w, w[:300]
+    assert "좌표가 같은 die" in w, w[:300]
+    assert "IT00 - IT01" in got["fallback"], got["fallback"][:200]
+    assert got["notGap"] == "", got["notGap"]
+    print("  [browser] Item_detail 수식 줄 렌더 + 평문 폴백 OK")
+
+
 def test_input_keys():
     """(j) 입력창에 글자가 있으면 `-` 키가 연산자를 커밋하지 않는다 + 빈 입력 Backspace pop."""
     body = ('<div id="gcModal"><input id="gcTokenInput"><div id="gcExpr"></div>'
@@ -384,6 +441,8 @@ def main():
     test_hooks()
     test_opts_unconditional()
     test_menu_order()
+    test_modal_width()
+    test_formula_bar()
     test_css_present()
     if not edge_path():
         print("[SKIP] msedge.exe 를 찾지 못해 브라우저 검사는 건너뜁니다")
@@ -393,6 +452,7 @@ def main():
     test_mode_and_validate()
     test_token_html()
     test_cards_html()
+    test_formula_bar_render()
     test_input_keys()
     test_detail_url_no_leak()
     print("[통과] Gap Chart JS 정상")

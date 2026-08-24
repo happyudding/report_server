@@ -98,6 +98,25 @@ def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
             + _bin1_suffix(bin1, bin1_scope))
 
 
+# Serial 순(rawdata 누적 순) 배치 응답 스키마 세대. 응답 구조(items[].sources[].v)를 바꾸면
+# 올린다 — 이 키에는 edits_rev 가 없어 이 값 말고는 재계산을 강제할 수단이 없다.
+# **전역 REPORT_SCHEMA_VERSION 과 무관한 전용 세대**다(전역 bump 는 콜드 폭풍).
+DIST_SEQ_SCHEMA_VERSION = 1
+
+
+def dist_seq_batch_key(session, subjects_digest: str, *, bin1: bool = False,
+                       prep_digest: str = "", bin1_scope: str = "") -> tuple:
+    """항목 배치 **Serial 순** 값 배열(GET .../distribution_batch?order=seq) gzip 캐시 키.
+
+    dist_batch_key 와 같은 재료에 "seq" 표식과 전용 스키마 세대를 더한 별도 키다 —
+    같은 항목 집합의 ECDF 응답과 **절대 섞이면 안 되므로**(축 의미가 다르다) 키를
+    공유하지 않는다. ETag 도 이 키에서 파생되므로 두 변형이 서로의 304 로 오염되지 않는다.
+    """
+    return (_base(session, prep_digest)
+            + (_mode(session), str(subjects_digest), "seq", DIST_SEQ_SCHEMA_VERSION)
+            + _bin1_suffix(bin1, bin1_scope))
+
+
 def dist_chunk_key(analysis_key, content_hash, mode, chunk_id: int,
                    prep_digest: str = "") -> tuple:
     """dist pack chunk **디코드 결과** 캐시 키.
@@ -500,7 +519,8 @@ def scatter_key(session, subject: str, *, bin1: bool = False, prep_digest: str =
 
 # Gap Chart 응답 구조를 바꿀 때만 올린다 (build_gap_item 의 반환 키/형태).
 # 전역 REPORT_SCHEMA_VERSION 과 무관 — gap 은 report payload 에 실리지 않는다.
-GAP_SCHEMA_VERSION = 1
+#   v2: 응답에 tokens 추가 (Item_detail 헤더에 수식을 원래 서식으로 표시)
+GAP_SCHEMA_VERSION = 2
 
 
 def gap_key(session, chart_id: str, spec_digest: str, *, bin1: bool = False,

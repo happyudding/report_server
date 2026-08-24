@@ -338,17 +338,54 @@ function gcRenderItemList(q) {
     || `<div class="placeholder">${term ? "일치하는 항목이 없습니다" : "항목 없음"}</div>`);
 }
 
-function gcTokenHtml(tok, i) {
-  const del = ` data-gc-tok="${i}" title="클릭하면 이 토큰을 지웁니다"`;
+// 토큰 1개의 클래스+내용. 모달(클릭 삭제)과 Item_detail(읽기 전용)이 공유한다 —
+// 같은 서식으로 보여야 "만들 때 본 식"과 "상세에서 보는 식"이 같은 것으로 읽힌다.
+function gcTokenParts(tok) {
   if (tok.t === "item") {
     const inner = tok.source
       ? `<i class="gc-tok-src">${esc(tok.source)}</i><i class="gc-tok-us">_</i><i class="gc-tok-item">${esc(tok.item)}</i>`
       : `<i class="gc-tok-item">${esc(tok.item)}</i>`;
-    return `<span class="gc-tok gc-tok-ref"${del}>${inner}</span>`;
+    return { cls: "gc-tok gc-tok-ref", html: inner };
   }
-  if (tok.t === "num") return `<span class="gc-tok gc-tok-num"${del}>${esc(gcNumText(tok.v))}</span>`;
-  if (tok.t === "op") return `<span class="gc-tok gc-tok-op"${del}>${esc(GC_OP_TEXT[tok.v] || tok.v)}</span>`;
-  return `<span class="gc-tok gc-tok-paren"${del}>${tok.t === "lp" ? "(" : ")"}</span>`;
+  if (tok.t === "num") return { cls: "gc-tok gc-tok-num", html: esc(gcNumText(tok.v)) };
+  if (tok.t === "op") return { cls: "gc-tok gc-tok-op", html: esc(GC_OP_TEXT[tok.v] || tok.v) };
+  return { cls: "gc-tok gc-tok-paren", html: tok.t === "lp" ? "(" : ")" };
+}
+
+function gcTokenHtml(tok, i) {
+  const p = gcTokenParts(tok);
+  return `<span class="${p.cls}" data-gc-tok="${i}" title="클릭하면 이 토큰을 지웁니다">` +
+    `${p.html}</span>`;
+}
+
+// 읽기 전용 수식 렌더 — Item_detail 헤더가 쓴다(클릭 삭제 속성 없음).
+function gcExprHtml(tokens) {
+  return (tokens || []).map(t => {
+    const p = gcTokenParts(t);
+    return `<span class="${p.cls}">${p.html}</span>`;
+  }).join("");
+}
+
+// Item_detail 상단 수식 줄 — item_detail.js 가 gap 응답일 때만 부른다.
+// 서버 응답의 tokens 를 쓰고, 없으면(구 캐시) 평문 formula 로 폴백한다.
+function gcFormulaBarHtml(data) {
+  if (!data || !data.is_gap) return "";
+  const expr = (data.tokens && data.tokens.length)
+    ? gcExprHtml(data.tokens)
+    : esc(data.formula || "");
+  if (!expr) return "";
+  const mode = data.gap_mode === "explicit"
+    ? "source 명시 · 좌표가 같은 die 끼리"
+    : "항목만 참조 · source 별로 각각";
+  const dies = (data.matched_dies == null) ? "" : ` · die ${data.matched_dies}개`;
+  const warn = (data.missing && data.missing.length)
+    ? `<span class="idet-formula-warn">⚠ ${esc(data.missing.join(" · "))}</span>` : "";
+  const dropped = data.dropped_nonfinite
+    ? ` · 계산 불가 ${data.dropped_nonfinite}개 제외` : "";
+  return `<div class="idet-formula">` +
+    `<span class="idet-formula-label">수식</span>` +
+    `<span class="idet-formula-expr">${expr}</span>${warn}` +
+    `<span class="idet-formula-meta">${esc(mode + dies + dropped)}</span></div>`;
 }
 
 function gcRenderExpr() {

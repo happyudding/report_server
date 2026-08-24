@@ -251,6 +251,7 @@ let _dcEditId = null;                  // null = 신규
 let _dcSelSources = new Set();
 let _dcSelItems = new Set();           // 갤러리 검색(distSelected)과 분리 — 오염 금지
 let _dcSearchTimer = null;
+let _dcListOpen = true;                // TestItem 목록 펼침 여부 (검색 입력 밖을 클릭하면 접힘)
 
 function dcSourceNames() {
   return (((DATA && DATA.web_report && DATA.web_report.sources) || []).map(s => s.name || s))
@@ -287,6 +288,7 @@ function dcOpenModal(id) {
   if (hiI) hiI.value = (mode === "manual" && lim.hi != null) ? lim.hi : "";
   modal.dataset.limitItem = (mode === "item" && lim.item) ? lim.item : "";
 
+  _dcListOpen = true;                 // 열 때는 전체 목록이 보이는 상태로 시작
   dcRenderSources();
   dcRenderItemList("");
   dcRenderSummary();
@@ -308,23 +310,42 @@ function dcRenderSources() {
     || `<div class="placeholder">source 없음</div>`;
 }
 
-// 항목 검색 — 갤러리 검색과 **같은** distSuggestions(부분일치)를 쓴다. 검색어가 없으면
-// 이미 고른 항목만 보여 선택 상태를 잃지 않게 한다(모달은 드롭다운이 아니라 상시 목록).
+// 항목 검색 — 검색어가 있으면 갤러리 검색과 **같은** distSuggestions(부분일치), 없으면
+// **전체 항목**을 보여준다(2026-08-24 요청). 종전에는 검색어를 지우면 이미 고른 항목만
+// 남아 목록이 사라진 것처럼 보였다.
+function dcVisibleRows(q) {
+  const term = String(q || "").trim();
+  return term ? distSuggestions(term, 0) : distIndex.slice();
+}
+// 목록 머리 — 개수·전체선택 버튼. 접힌 상태면 "펼치기" 안내로 바뀐다.
+// 목록 본문과 분리한 이유는 체크할 때마다 선택 개수만 갱신하면 되기 때문이다
+// (전체 목록은 수천 행이라 매 체크마다 재렌더하면 눈에 띄게 버벅인다).
+function dcRenderItemHead(q) {
+  const head = document.getElementById("dcItemHead");
+  if (!head) return;
+  head.classList.toggle("is-collapsed", !_dcListOpen);
+  if (!_dcListOpen) {
+    head.innerHTML = `<span class="dist-sug-cnt">항목 목록 접힘 — 선택 <b>${_dcSelItems.size}</b>개 ` +
+      `<span class="dist-sug-more">(클릭하면 펼칩니다)</span></span>`;
+    return;
+  }
+  const term = String(q || "").trim();
+  const n = dcVisibleRows(term).length;
+  head.innerHTML =
+    `<span class="dist-sug-cnt">${term ? "일치" : "전체"} <b>${n}</b>개` +
+    (n > DC_LIST_MAX ? ` <span class="dist-sug-more">(상위 ${DC_LIST_MAX}개 표시)</span>` : "") +
+    ` · 선택 <b>${_dcSelItems.size}</b>개</span>` +
+    `<button type="button" class="btn-sm" data-dc-sug-all="1">전체 선택</button>` +
+    `<button type="button" class="btn-sm" data-dc-sug-all="0">전체 해제</button>`;
+}
 function dcRenderItemList(q) {
   const host = document.getElementById("dcItemList");
-  const head = document.getElementById("dcItemHead");
   if (!host) return;
+  dcRenderItemHead(q);
+  host.style.display = _dcListOpen ? "" : "none";
+  if (!_dcListOpen) { host.innerHTML = ""; return; }   // 접히면 DOM 도 비운다(수천 행 유지 비용)
   const term = String(q || "").trim();
-  const rows = term ? distSuggestions(term, 0)
-                    : distIndex.filter(r => _dcSelItems.has(r.subject));
-  if (head) {
-    head.innerHTML = term
-      ? `<span class="dist-sug-cnt">일치 <b>${rows.length}</b>개` +
-        (rows.length > DC_LIST_MAX ? ` <span class="dist-sug-more">(상위 ${DC_LIST_MAX}개 표시)</span>` : "") + `</span>` +
-        `<button type="button" class="btn-sm" data-dc-sug-all="1">전체 선택</button>` +
-        `<button type="button" class="btn-sm" data-dc-sug-all="0">전체 해제</button>`
-      : `<span class="dist-sug-cnt">검색어를 입력해 항목을 고르세요 (선택 <b>${_dcSelItems.size}</b>개)</span>`;
-  }
+  const rows = dcVisibleRows(term);
   const show = rows.length > DC_LIST_MAX ? rows.slice(0, DC_LIST_MAX) : rows;
   host.innerHTML = show.map(r =>
     `<label class="dist-sug-item">` +
@@ -332,7 +353,14 @@ function dcRenderItemList(q) {
     `${_dcSelItems.has(r.subject) ? " checked" : ""}>` +
     `<span class="sug-tno">${esc(r.test_num || "")}</span>` +
     `<span class="sug-name">${esc(r.subject)}</span></label>`).join("")
-    || `<div class="placeholder">${term ? "일치하는 항목이 없습니다" : "선택된 항목이 없습니다"}</div>`;
+    || `<div class="placeholder">${term ? "일치하는 항목이 없습니다" : "표시할 항목이 없습니다"}</div>`;
+}
+// 목록 펼침/접힘 — 상태가 바뀔 때만 다시 그린다.
+function dcSetListOpen(on) {
+  const next = !!on;
+  if (_dcListOpen === next) return;
+  _dcListOpen = next;
+  dcRenderItemList((document.getElementById("dcItemSearch") || {}).value || "");
 }
 
 // 선택된 항목 목록(오른쪽 칼럼) — 고정폭 그리드 + 자체 스크롤이라 50개를 골라도
@@ -360,6 +388,7 @@ function dcRenderSummary() {
   const host = document.getElementById("dcSelSummary");
   const nSrc = _dcSelSources.size, nItem = _dcSelItems.size, n = nSrc * nItem;
   dcRenderPicked();
+  dcRenderItemHead((document.getElementById("dcItemSearch") || {}).value || "");
   if (host) {
     const warn = n > DC_MAX_PAIRS
       ? `<span class="dc-warn">조합이 ${DC_MAX_PAIRS}개를 넘습니다 — 항목이나 source 를 줄이세요</span>`
@@ -733,7 +762,13 @@ document.addEventListener("click", e => {
   // 모달
   const modal = e.target.closest("#dcModal");
   if (!modal) return;
-  if (e.target.id === "dcCancel" || e.target.id === "dcModal") { dcCloseModal(); return; }
+  // TestItem 목록 펼침/접힘 — 검색 입력·머리·목록 안을 클릭하면 펼치고, 모달의 다른
+  // 영역을 클릭하면 접는다(2026-08-24 요청). 접혀도 선택은 오른쪽 칼럼에 남는다.
+  dcSetListOpen(!!(e.target.closest("#dcItemSearch") || e.target.closest("#dcItemHead")
+                   || e.target.closest("#dcItemList")));
+  // ⚠ 배경(오버레이) 클릭으로는 닫지 않는다 — 입력한 이름·선택이 통째로 날아간다.
+  //    닫기는 취소 버튼과 Esc 뿐이다.
+  if (e.target.id === "dcCancel") { dcCloseModal(); return; }
   if (e.target.id === "dcSave") { dcSaveFromModal(); return; }
   if (e.target.id === "dcDelete") { if (_dcEditId) dcDelete(_dcEditId); return; }
   const srcAll = e.target.closest("[data-dc-src-all]");
@@ -747,7 +782,8 @@ document.addEventListener("click", e => {
   if (sugAll) {
     const on = sugAll.dataset.dcSugAll === "1";
     const q = (document.getElementById("dcItemSearch") || {}).value || "";
-    distSuggestions(q, 0).forEach(r => {
+    // 검색어가 없으면 전체 항목이 대상이다(목록에 보이는 것과 같은 집합).
+    dcVisibleRows(q).forEach(r => {
       if (on) _dcSelItems.add(r.subject); else _dcSelItems.delete(r.subject);
     });
     dcRenderItemList(q); dcRenderSummary();
@@ -789,7 +825,12 @@ document.addEventListener("input", e => {
   if (e.target.id !== "dcItemSearch") return;
   const q = e.target.value;
   clearTimeout(_dcSearchTimer);
-  _dcSearchTimer = setTimeout(() => dcRenderItemList(q), 250);   // 갤러리 검색과 같은 debounce
+  // 타이핑하면 접혀 있어도 펼친다(갤러리 검색과 같은 250ms debounce).
+  _dcSearchTimer = setTimeout(() => { _dcListOpen = true; dcRenderItemList(q); }, 250);
+});
+// 키보드 탭 이동으로 검색창에 들어와도 목록이 열리게 한다(클릭 경로는 위 click 위임).
+document.addEventListener("focusin", e => {
+  if (e.target && e.target.id === "dcItemSearch") dcSetListOpen(true);
 });
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;

@@ -74,6 +74,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | TABLES_CACHE | (akey, chash[, prep]) | raw_data 편집(chash) / 전처리 / 세션 삭제 |
 | DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
 | _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
+| _DIST_SEQ_CACHE | (akey, chash[, prep], mode, subjects_digest, "seq", ver[, "bin1"[, scope]]) | 〃 — 항목 배치 **Serial 순**(rawdata 누적 순) 값 배열 gzip (`?order=seq`). ECDF 와 별도 키 = 축이 다른 응답이 서로의 304 로 오염되지 않는다. pack 지름길 없음(순서 보존) |
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8). **report 콜드 빌드가 `service.seed_map` 으로 RAM+디스크를 함께 채운다** (아래 "Map dies 시딩" — Map 3초 SLA) |
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
@@ -351,6 +352,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | `WEB_REPORT_REPORT_CACHE_MB` | `256` (운영 `1024`) | report dict 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). 크기는 put 시 1회 직렬화 길이로 추정 |
 | `WEB_REPORT_DIST_BATCH_CACHE` | `64` | Distribution 항목 배치 응답 gzip 캐시 개수 |
 | `WEB_REPORT_DIST_BATCH_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 소스·die 가 많은 세션은 배치 1건이 수 MB |
+| `WEB_REPORT_DIST_SEQ_CACHE` | `32` | Distribution **Serial 순** 배치 응답 gzip 캐시 개수 |
+| `WEB_REPORT_DIST_SEQ_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). seq 는 pack 지름길이 없어 계산이 비싸다 — 히트율을 ECDF 와 따로 지킨다 |
 | `WEB_REPORT_DIST_CHUNK_CACHE` | `64` (운영 `128`) | dist pack chunk **디코드 결과** 캐시 개수 (distribution_batch 의 gunzip+json.loads 반복 제거) |
 | `WEB_REPORT_DIST_CHUNK_CACHE_MB` | `512` | 〃 비압축 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `8`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수. `_COMPUTE_WORKERS` 와 같은 값으로 유지 |

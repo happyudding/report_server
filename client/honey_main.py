@@ -2502,7 +2502,10 @@ class HoneyMainWindow(QMainWindow):
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
                 return None
-            return dlg.result_arrangement()
+            arranged = dlg.result_arrangement()
+            if not self._temp_coord_check(arranged):
+                return None
+            return arranged
 
         stage_q = queue.Queue()
         cancel = threading.Event()
@@ -2617,12 +2620,21 @@ class HoneyMainWindow(QMainWindow):
                     self._status("Temperature 배치 취소")
                     return None
                 arranged = dlg2.result_arrangement()
+            # 좌표 없는 rawdata 확인 — 여기가 물어볼 수 있는 첫 지점이다(좌표는 파싱
+            # 산출물에만 있다). No 면 생성을 중단한다.
+            if not self._temp_coord_check(arranged):
+                return None
             # 최종 배치와 어긋난 member 의 선행 정리분을 버린다 — 조립이 그것만 다시
             # 인코딩한다. index → md 는 **source_names(창에 들어간 rename 전 이름)** 로
             # 잇는다. group.names() 순서로 이으면 파서가 파일을 병합해 순서·개수가
             # 어긋난 경우 엉뚱한 source 를 지워 잘못된 정리본이 살아남는다.
             invalid = _temp_invalid_members(guess_groups, names_guess, arranged)
-            if invalid:
+            if arranged.get("serial_match"):
+                # 선행 정리분은 **좌표 매칭**으로 만든 것이라 SERIAL 매칭과 값이 다르다 —
+                # 전부 버려 조립이 정리부터 다시 하게 한다(raw 풀은 정리와 무관해 그대로).
+                prefetch.drop_cleaned({id(md) for md
+                                       in self.group.mass_data_map.values()})
+            elif invalid:
                 mass_map = self.group.mass_data_map
                 src_names = arranged.get("source_names") or []
                 prefetch.drop_cleaned(
@@ -2639,6 +2651,61 @@ class HoneyMainWindow(QMainWindow):
             if not handed_over:
                 cancel.set()
                 ex.shutdown(wait=False, cancel_futures=True)
+
+    def _temp_coord_check(self, arranged):
+        """좌표 없는 rawdata 확인 → 계속할지 여부(bool). UI 스레드 전용.
+
+        Temperature 정리는 CT/HT 를 **RT pass 좌표**로 자르는데(``temperature.clean_group``),
+        좌표가 비어 있으면 그 필터가 아무것도 걸러내지 못한 채 조용히 통과한다 — RT 에서
+        죽은 die 가 CT/HT 에 그대로 남아 재판정 결과가 통째로 틀린다. 그래서 좌표 없는
+        source 가 있으면 파일 목록을 보여주고 묻는다:
+          - Yes → SERIAL 순서로 RT↔CT/HT 를 짝짓는다(``arranged["serial_match"]``).
+            그룹 안에서 행 개수가 다르면 "가장 적은 raw data 기준" 안내를 띄운다.
+          - No  → False 를 돌려 Web Report 생성을 중단한다(rawdata 수정 요청).
+
+        좌표는 파싱 산출물(honeyform)에만 있어 배치 창 시점에는 알 수 없다 — 파싱이 끝난
+        직후이자 정리·인코딩이 시작되기 전인 이 지점이 물어볼 수 있는 첫 자리다.
+        ``arranged`` 의 groups/names 는 새(rename 후) 이름이고 mass_data_map 은 원본
+        이름이라, index 정렬인 ``source_names``↔``names`` 로 잇는다.
+        """
+        from web_report.temperature import data_row_count, has_coords
+
+        mass_map = getattr(self.group, "mass_data_map", None) or {}
+        md_of = {new: mass_map[old]
+                 for old, new in zip(arranged.get("source_names") or [],
+                                     arranged.get("names") or [])
+                 if old in mass_map}
+        frames = {name: (md.to_df() if hasattr(md, "to_df") else md.df)
+                  for name, md in md_of.items()}
+        missing = [name for name, df in frames.items() if not has_coords(df)]
+        if not missing:
+            return True
+
+        listing = [f"· {self._source_file_name(md_of[n], n)} ({n})" for n in missing]
+        if len(listing) > 20:
+            listing = listing[:20] + [f"· … 외 {len(missing) - 20}건"]
+        answer = QMessageBox.question(
+            self, "좌표 없는 rawdata",
+            "좌표가 없는 rawdata 가 있습니다.\n\n" + "\n".join(listing) + "\n\n"
+            "Room Hot Cold 매칭을 Test 순서대로 적용하시겠습니까?\n"
+            "(No 선택시 Rawdata 에 좌표 재확인 및 수정 부탁드립니다.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            self._status("좌표 없는 rawdata — Web Report 생성 중단")
+            return False
+
+        arranged["serial_match"] = True
+        counts = {name: data_row_count(df) for name, df in frames.items()}
+        for group in arranged.get("groups") or []:
+            names = [n for n in [group.get("rt"), *(group.get("members") or [])]
+                     if n in counts]
+            if any(n in missing for n in names) and len({counts[n] for n in names}) > 1:
+                QMessageBox.warning(
+                    self, "rawdata 개수 불일치",
+                    "rawdata 개수가 맞지 않습니다. 가장 적은 raw data 기준으로 진행합니다")
+                break
+        return True
 
     def _start_encode_prefetch(self):
         """현재 그룹으로 선행 parquet 인코딩을 시작한다 (이전 것은 정리).
@@ -2726,7 +2793,10 @@ class HoneyMainWindow(QMainWindow):
             options["temperature"] = {"groups": arranged["groups"],
                                       "limits_file": arranged["limits_file"]}
             # bin_map(.lt/.pds)은 세션에 싣지 않는다 — 업로드 전 정리에서만 쓰고 소진한다.
-            temperature = {"groups": arranged["groups"], "bin_map": arranged["bin_map"]}
+            # serial_match: 좌표 없는 rawdata 를 SERIAL 순서로 짝지으라는 사용자 확인 결과
+            # (_temp_coord_check). 정리 지시일 뿐이라 세션 옵션에는 싣지 않는다.
+            temperature = {"groups": arranged["groups"], "bin_map": arranged["bin_map"],
+                           "serial_match": bool(arranged.get("serial_match"))}
         elif mode == "DUT":
             colors = self._ask_dut_colors()      # 이름·순서는 서버가 정한다 — 색만
             if colors:
@@ -2909,6 +2979,9 @@ class HoneyMainWindow(QMainWindow):
         honey_parse 산출물(md.df)을 건드리지 않도록 **컬럼 개명 전 프레임을 모아 넘기고**
         결과만 받는다. 워커 스레드에서 도는 함수라 다이얼로그를 띄우지 않고, 통계는
         모아뒀다가 UI 스레드가 실행 로그에 출력한다.
+
+        ``serial_match`` 는 좌표 없는 rawdata 를 SERIAL 순서로 짝지으라는 **사용자 확인
+        결과**다(_temp_coord_check). 확인 없이 켜면 안 되므로 여기서 추정하지 않는다.
         """
         if not temperature or not temperature.get("groups"):
             return {}
@@ -2919,7 +2992,8 @@ class HoneyMainWindow(QMainWindow):
             md = work_group.mass_data_map[name]
             frames[name] = md.to_df() if hasattr(md, "to_df") else md.df
         cleaned, stats = clean_frames(frames, temperature["groups"],
-                                      temperature.get("bin_map"))
+                                      temperature.get("bin_map"),
+                                      bool(temperature.get("serial_match")))
         self._temperature_clean_log = format_stats(stats)
         # RT 는 정리 대상이 아니라 원본 객체 그대로 돌아온다 — 바뀐 것만 남긴다.
         return {name: df for name, df in cleaned.items() if df is not frames[name]}

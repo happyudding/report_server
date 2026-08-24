@@ -303,6 +303,10 @@ def test_per_source_values(sid) -> None:
     assert body["gap_mode"] == "per_source", body["gap_mode"]
     assert body["is_gap"] is True and body["gap_id"] == cid, body
     assert body["note_subject"] == f"gap:{cid}", body["note_subject"]
+    # Item_detail 헤더가 수식을 **원래 서식**으로 그리려면 토큰이 필요하다(평문은 되돌려
+    # 읽을 수 없다). formula 평문도 함께 실어 구 캐시 폴백을 남긴다.
+    assert body["tokens"] == tokens, body["tokens"]
+    assert "IT01" in body["formula"] and "×" in body["formula"], body["formula"]
     assert [s["name"] for s in body["sources"]] == SOURCES, body["sources"]
     for src in SOURCES:
         want = [VALUES[src]["IT00"][i] - VALUES[src]["IT01"][i] * 2 for i in range(N_ROWS)]

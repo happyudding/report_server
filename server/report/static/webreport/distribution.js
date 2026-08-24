@@ -145,6 +145,17 @@ let distBin1Ready = false;
 let distRtBin1Only = false;
 let distRtBin1Cache = {};
 
+// ── "Serial 순" (rawdata 가 쌓인 순) — ECDF 대신 run chart 로 보는 모드 (2026-08-24) ──
+// x = 각 source 의 측정 순서(1..n) · y = 측정값. ECDF payload 는 동일값을 접어(np.unique)
+// 순서를 잃으므로 **별도 배치 응답**(GET .../distribution_batch?order=seq, web_report/
+// dist_seq.py)을 받아 별도 캐시에 담는다. bin1 축(all/bin1/rtbin1)과 직교하므로 캐시도 3벌.
+// 갤러리 + Item_detail 이 이 전역 하나를 공유한다(Bin1·Limit 토글과 같은 규약).
+let distSeqOnly = false;
+let distSeqReady = false;
+let distSeqCache = {};         // subject → {lower_limit, upper_limit, units, bySource:{src:{vs}}}
+let distSeqBin1Cache = {};
+let distSeqRtBin1Cache = {};
+
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
   const out = {};
@@ -155,6 +166,23 @@ function buildDistDataFromCompact(payload) {
       bySource[src] = { xs: it.sources[src].x || [], ys: it.sources[src].y || [] };
     });
     out[subj] = { lower_limit: it.lo, upper_limit: it.hi, units: it.units || "", bySource };
+  });
+  return out;
+}
+
+// seq-columnar-v1(행 순서 보존 값 배열) → 갤러리 캐시 스키마. ECDF 캐시와 필드 이름을
+// 일부러 다르게(xs/ys 가 아니라 vs) 두어, 렌더러가 변형을 잘못 잡으면 조용히 그려지는
+// 대신 즉시 빈 칸이 되게 한다(x 축이 인덱스라 서버는 값만 보낸다).
+function buildDistSeqFromCompact(payload) {
+  const out = {};
+  const items = (payload && payload.items) || {};
+  Object.keys(items).forEach(subj => {
+    const it = items[subj], bySource = {};
+    Object.keys(it.sources || {}).forEach(src => {
+      bySource[src] = { vs: it.sources[src].v || [] };
+    });
+    out[subj] = { lower_limit: it.lo, upper_limit: it.hi, units: it.units || "",
+                  bySource, seq: true };
   });
   return out;
 }
@@ -173,7 +201,9 @@ function distBadgeEl(create) {
       const b = ev.target.closest("[data-dist-retry]");
       if (!b) return;
       distBadgeHide();
-      if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
+      // seq 계열 키("seq" / "seq-bin1" / "seq-rtbin1")는 어느 것이든 갤러리 재큐잉이면 된다.
+      if (distVariantIsSeq(b.dataset.distRetry)) ensureDistSeqData();
+      else if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
       else if (b.dataset.distRetry === "rtbin1") ensureDistRtBin1Data();
       else if (b.dataset.distRetry === "map") ensureMapData();
       else if (b.dataset.distRetry === "tempmap") ensureTempMapData(true);   // 백오프 무시
@@ -255,31 +285,47 @@ function distSpecLimits(subject, info) {
   return { lo: info ? info.lower_limit : null, hi: info ? info.upper_limit : null };
 }
 
-// 변형 3종: all(전체) / bin1(전 소스 양품) / rtbin1(RT 만 양품 — Temperature 전용).
-const DIST_VARIANTS = ["all", "bin1", "rtbin1"];
-const _distPending = { all: new Set(), bin1: new Set(), rtbin1: new Set() };   // 요청 대기
-const _distHave = { all: new Set(), bin1: new Set(), rtbin1: new Set() };      // 완료/진행 중
-const _distOrder = { all: [], bin1: [], rtbin1: [] };                          // LRU 축출 순서
+// 변형 6종 = bin1 축 3종(all 전체 / bin1 전 소스 양품 / rtbin1 RT 만 양품 — Temperature 전용)
+// × 정렬 축 2종(기본 ECDF / "seq-" 접두 = Serial 순 = rawdata 누적 순). 두 축은 직교하고
+// 캐시는 변형마다 따로다 — 축 의미가 다른 데이터가 섞이면 그림이 조용히 잘못 그려진다.
+// 순서가 곧 배치 처리 우선순위다(distFlushBatch) — ECDF 계열을 먼저 비운다.
+const DIST_VARIANTS = ["all", "bin1", "rtbin1", "seq", "seq-bin1", "seq-rtbin1"];
+const _distPending = {};   // variant → Set (요청 대기)
+const _distHave = {};      // variant → Set (완료/진행 중)
+const _distOrder = {};     // variant → [] (LRU 축출 순서)
+DIST_VARIANTS.forEach(k => {
+  _distPending[k] = new Set(); _distHave[k] = new Set(); _distOrder[k] = [];
+});
 let _distInflight = 0;
 let _distBatchTimer = null;
 let _distRefreshTimer = null;
 
 // variant 는 문자열이지만 기존 호출부는 true/false 를 넘긴다 — 둘 다 받는다.
+// 정식 키(DIST_VARIANTS, seq 계열 포함)는 그대로 통과시킨다.
 function distVariantKey(v) {
-  if (v === true || v === "bin1") return "bin1";
-  if (v === "rtbin1") return "rtbin1";
+  if (v === true) return "bin1";
+  if (typeof v === "string" && DIST_VARIANTS.indexOf(v) >= 0) return v;
   return "all";
 }
+// Serial 순 변형인가 (캐시 스키마·렌더러·요청 쿼리가 갈리는 분기점).
+function distVariantIsSeq(v) { return distVariantKey(v).indexOf("seq") === 0; }
 function distCacheFor(v) {
-  const k = distVariantKey(v);
-  return k === "bin1" ? distBin1Cache : (k === "rtbin1" ? distRtBin1Cache : distDataCache);
+  switch (distVariantKey(v)) {
+    case "bin1": return distBin1Cache;
+    case "rtbin1": return distRtBin1Cache;
+    case "seq": return distSeqCache;
+    case "seq-bin1": return distSeqBin1Cache;
+    case "seq-rtbin1": return distSeqRtBin1Cache;
+    default: return distDataCache;
+  }
 }
-// variant → 요청 쿼리 조각 (서버 routes_webreport 가 bin1/bin1_scope 로 받는다).
+// variant → 요청 쿼리 조각 (서버 routes_webreport 가 bin1/bin1_scope/order 로 받는다).
 function distVariantQuery(v) {
   const k = distVariantKey(v);
-  if (k === "bin1") return "&bin1=1";
-  if (k === "rtbin1") return "&bin1=1&bin1_scope=rt";
-  return "";
+  const ord = distVariantIsSeq(k) ? "&order=seq" : "";
+  if (k === "bin1" || k === "seq-bin1") return "&bin1=1" + ord;
+  if (k === "rtbin1" || k === "seq-rtbin1") return "&bin1=1&bin1_scope=rt" + ord;
+  return ord;
 }
 function _distPendingTotal() {
   return DIST_VARIANTS.reduce((n, k) => n + _distPending[k].size, 0);
@@ -354,7 +400,8 @@ function distFlushBatch() {
   fetch(url, { cache: "no-cache" })
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(j => {
-      const built = buildDistDataFromCompact(j);
+      const built = distVariantIsSeq(key) ? buildDistSeqFromCompact(j)
+                                         : buildDistDataFromCompact(j);
       Object.keys(built).forEach(s => distCachePut(key, s, built[s]));
       distScheduleRefresh();
     })
@@ -426,11 +473,29 @@ function ensureDistRtBin1Data() {
   _distBatchFailed = false;  refreshDistGallery();
   return Promise.resolve();
 }
-// 현재 갤러리가 쓰는 변형 키 ("all" | "bin1" | "rtbin1").
+// Serial 순 — 같은 배치 로더의 seq 변형. 데이터는 갤러리 진입 시 보이는 항목만 받는다.
+function ensureDistSeqData() {
+  distSeqReady = true;
+  _distBatchFailed = false;
+  refreshDistGallery();
+  return Promise.resolve();
+}
+
+// 현재 갤러리가 쓰는 **bin1 축** 변형 키 ("all" | "bin1" | "rtbin1").
+// ⚠️ 여기에 seq 를 섞지 말 것 — 이 값을 dist_composite.js `_dcCache[…]` / gap_chart.js
+// `_gcCache[…]` 가 **자기 캐시 인덱스로 직접** 쓰고(없는 키면 undefined 접근으로 죽는다),
+// item_detail 이 /scatter 쿼리 조각으로도 쓴다(/scatter 는 order 를 모른다).
+// 갤러리 미니셀이 실제로 쓰는 키는 아래 distGalleryDataVariant() 다.
 function distGalleryVariant() {
   if (distBin1Only) return "bin1";
   if (distRtBin1Only) return "rtbin1";
   return "all";
+}
+// 갤러리 미니셀이 쓰는 변형 키 — Serial 순 토글이 켜지면 seq 계열로 갈린다.
+function distGalleryDataVariant() {
+  const b = distGalleryVariant();
+  if (!distSeqOnly) return b;
+  return b === "all" ? "seq" : "seq-" + b;
 }
 
 // 갤러리에 보이는(관측 중) 카드만 재큐잉 — Bin1 데이터 도착 시 미니셀을 다시 채운다.
@@ -967,6 +1032,103 @@ function distDisplayPoints(entry, cap) {
   return v;
 }
 
+// ── Serial 순(rawdata 누적 순) 표시 좌표 · 기준선 ─────────────────────────────
+// ECDF 와 달리 x 는 **측정 순서**(1..n)이고 y 가 측정값이다. 그래서 ECDF 전용 규칙
+// (세로 채움 distFillVertical, 꼬리·Δy 보존 다운샘플)은 여기서 쓰지 않는다 — 그 규칙들은
+// "x 오름차순 · y 단조 누적%" 전제 위에 서 있어서 run chart 에 적용하면 없던 구조가 생긴다.
+// 미니셀 표시 캡은 **균등 stride**(distHardCap, 양끝 보존)로만 건다 — 시계열의 형태를
+// 왜곡하지 않는 유일한 방법이고, 캡은 썸네일 표시에만 걸린다(서버 payload·상세는 전량,
+// CLAUDE.md §5-5).
+const _distSeqDisplayMemo = new WeakMap();
+function distSeqDisplayPoints(entry, cap) {
+  const key = cap || DIST.DOWNSAMPLE;
+  let m = _distSeqDisplayMemo.get(entry);
+  if (!m) { m = new Map(); _distSeqDisplayMemo.set(entry, m); }
+  let v = m.get(key);
+  if (!v) {
+    const vs = entry.vs || [];
+    const xs = new Array(vs.length);
+    for (let i = 0; i < vs.length; i++) xs[i] = i + 1;   // 1-based 측정 순서
+    v = distHardCap(xs, vs, key);
+    m.set(key, v);
+  }
+  return v;
+}
+
+// 소스 합친 x 최대(측정 개수) · y 최소/최대(측정값) — sentinel 과 축 범위에 쓴다.
+function distSeqBounds(ptsBySource) {
+  let xMax = 0, yMin = Infinity, yMax = -Infinity;
+  Object.keys(ptsBySource).forEach(src => {
+    const xs = ptsBySource[src].xs, ys = ptsBySource[src].ys;
+    if (!xs || !xs.length) return;
+    if (xs[xs.length - 1] > xMax) xMax = xs[xs.length - 1];
+    for (let i = 0; i < ys.length; i++) {
+      const v = ys[i];
+      if (v < yMin) yMin = v;
+      if (v > yMax) yMax = v;
+    }
+  });
+  return { xMax, yMin, yMax };
+}
+
+// 점을 canvas 로 뺀 뒤에도 autorange 를 그대로 재현하는 투명 sentinel (ECDF 의
+// distSentinelTrace 와 같은 역할 — y 가 고정 0~100 이 아니라 데이터 범위인 점만 다르다).
+function distSeqSentinelTrace(b) {
+  if (!b || !isFinite(b.yMin) || !isFinite(b.yMax)) return null;
+  return { type: "scatter", mode: "markers", cliponaxis: false,
+    x: [1, Math.max(b.xMax, 1)], y: [b.yMin, b.yMax],
+    marker: { color: "#000", size: 3, opacity: 0 }, hoverinfo: "skip", showlegend: false };
+}
+
+// LSL/USL 은 **수평** 점선이다 (ECDF 의 distSpecShapes 는 수직 — 축이 뒤바뀌었다).
+function distSeqSpecShapes(lo, hi) {
+  const sh = [];
+  [lo, hi].forEach(v => { if (v !== null && v !== undefined) sh.push({
+    type: "line", xref: "paper", x0: 0, x1: 1, y0: v, y1: v,
+    line: { color: "#DC2626", width: 1.2, dash: "dash" } }); });
+  return sh;
+}
+function distSeqSpecAnnos(lo, hi, mini) {
+  const fs = mini ? 9.2 : 11.5;
+  const mk = (v, label) => ({ xref: "paper", x: 1, y: v, text: `${label} ${v}`,
+    showarrow: false, font: { size: fs, color: "#DC2626" },
+    bgcolor: "rgba(255,255,255,.72)", borderpad: 1, xanchor: "right", yanchor: "bottom" });
+  const a = [];
+  if (hi !== null && hi !== undefined) a.push(mk(hi, "USL"));
+  if (lo !== null && lo !== undefined) a.push(mk(lo, "LSL"));
+  return a;
+}
+
+// 갤러리 미니셀 Serial 순 렌더 — 점은 ECDF 와 같은 canvas 오버레이(distPaintPoints)로
+// 그리므로 마커 DOM 이 0 이다. Map Analysis 선택 좌표 마커(chipMarkersFor)와 Compare
+// before-limit 선은 (값, 누적%) 좌표계 전용이라 이 축에서는 그리지 않는다 — 옮겨 그리면
+// 엉뚱한 위치에 찍혀 "선택한 die 가 저기 있다"는 거짓 정보가 된다.
+function distRenderGallerySeqCell(plot, info, status, subject) {
+  const { lo, hi } = distSpecLimits(subject, info);
+  const pts = {};
+  if (info) {
+    const srcNames = Object.keys(info.bySource);
+    const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_CARD);
+    srcNames.forEach(src => { pts[src] = distSeqDisplayPoints(info.bySource[src], cap); });
+  }
+  const b = distSeqBounds(pts);
+  const traces = [];
+  const sentinel = distSeqSentinelTrace(b);
+  if (sentinel) traces.push(sentinel);
+  // "Limit 안 Data만" 은 ECDF 에서 x 를 규격 창으로 클램프한다 — Serial 순에서 그 창은
+  // **y**(측정값) 축이다. 계산식(distLimitRange)은 축과 무관한 산수라 그대로 재사용한다.
+  const yr = distLimitRange(lo, hi, b.yMin, b.yMax);
+  const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
+    xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
+      tickcolor: "#bbb", tickfont: { size: 9 }, rangemode: "tozero" },
+    yaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 9 },
+      ...(yr ? { range: yr, autorange: false } : {}) },
+    shapes: distSeqSpecShapes(lo, hi), annotations: distSeqSpecAnnos(lo, hi, true),
+    margin: { l: 40, r: 10, t: 8, b: 20 }, showlegend: false };
+  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
+  distPaintPoints(plot, pts, null);
+}
+
 // ── 미니셀 점 렌더: 축·그리드·스펙선은 Plotly, ECDF 점만 canvas 오버레이 ────────
 // 표시점 캡(DIST.DOWNSAMPLE)은 소스별이라 소스 S개면 S×캡 만큼 SVG 마커 DOM 이 생겨
 // 소스가 늘수록 카드가 급격히 느려진다.
@@ -1083,9 +1245,10 @@ function distRepaintPoints() {
 }
 
 // 갤러리 미니셀이 쓸 활성 분포 캐시/준비상태 — Bin1 only 토글 시 양품 캐시로 전환.
-function distGalleryCache() { return distCacheFor(distGalleryVariant()); }
+function distGalleryCache() { return distCacheFor(distGalleryDataVariant()); }
 function distGalleryReady() {
-  const v = distGalleryVariant();
+  const v = distGalleryDataVariant();
+  if (distVariantIsSeq(v)) return distSeqReady;
   return v === "bin1" ? distBin1Ready : (v === "rtbin1" ? distRtBin1Ready : distDataReady);
 }
 
@@ -1110,9 +1273,15 @@ function distRenderGalleryCell(cell) {
   // 이 항목 ECDF 가 아직 없으면 배치로 요청하고 리턴 — rendered 플래그를 세우지 않아야
   // 도착 후 refreshDistConsumers/refreshDistGallery 재큐잉으로 다시 그려진다.
   // (인덱스에 아예 없는 항목은 데이터가 없는 것이 확정이라 그대로 빈 축만 그린다.)
-  if (!info && distHasData(subject)) { distRequestSubject(subject, distGalleryVariant()); return; }
+  if (!info && distHasData(subject)) { distRequestSubject(subject, distGalleryDataVariant()); return; }
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
+  // Serial 순 모드는 축 의미가 통째로 달라 전용 렌더러가 그린다(아래 ECDF 경로 무변경).
+  if (distSeqOnly) {
+    distRenderGallerySeqCell(plot, info, status, subject);
+    cell.dataset.rendered = "1";
+    return;
+  }
   const { lo, hi } = distSpecLimits(subject, info);
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
   // 이산(code)값의 성김을 세로 점기둥으로 채운다. 점 자체는 canvas 로 그린다(distPaintPoints).
@@ -1213,13 +1382,17 @@ function distToolbarHtml() {
   const newBtn = (webReportMode() === "Compare" && newItems.size)
     ? `<button class="distseg${distNewOnly ? " active" : ""}" data-seg="newitem" title="Before 에 없고 After 에만 있는 신규 Test Item 만 표시 (판정 기준: 그룹 전체 합집합)">신규항목보기 (${newItems.size})</button>`
     : "";
+  // Serial 순(rawdata 누적 순) — 데이터 변형이라 별도 배치(order=seq)를 받는다.
+  // 툴바 **맨 앞**(좌상단, 사용자 요청 2026-08-24). Item_detail 에도 같은 상태를 쓰는
+  // 버튼이 있다(item_detail.js idetOptsHtml) — 어느 쪽에서 켜도 둘 다 같은 모드가 된다.
+  const seqBtn = `<button class="distseg${distSeqOnly ? " active" : ""}" data-seg="seq" title="켜짐: 각 source 의 rawdata 가 쌓인 순서(Serial 순)로 x=측정 순서 · y=측정값 표시 (Limit 은 수평 점선) · 꺼짐: 누적분포(ECDF)">Serial 순</button>`;
   const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 · 신규항목보기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
   // "분석하기" — 합성 산포 차트(Distribution composite) 만들기 메뉴. 편집모드에서만
   // 노출한다(Issue Table 액션 메뉴와 같은 정책). 만들어진 카드는 전원에게 보인다.
   const analyzeBtn = (typeof MODE !== "undefined" && MODE === "edit"
                       && typeof dcAnalyzeBtnHtml === "function") ? dcAnalyzeBtnHtml() : "";
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}${newBtn}</div>
+    <div class="distseg-group">${seqBtn}${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}${newBtn}</div>
     ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">

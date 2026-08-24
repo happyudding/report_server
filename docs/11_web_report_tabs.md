@@ -76,6 +76,22 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     LOLIM/HILIM 으로 다시 판정한다 → 한 die 가 여러 항목을 벗어나면 그 항목 전부에
     계상되고, 소스별 fail% 합이 **100% 를 넘을 수 있다**(사용자 확정). 클라 정리 로직은
     한 줄도 바뀌지 않아 기존 세션도 재배포 없이 새 화면이 된다.
+  - **좌표 없는 rawdata (2026-08-24 사용자 요청)** — 업로드 전 정리의 RT pass 좌표 필터는
+    좌표가 비어 있으면 아무것도 걸러내지 못한 채 **조용히 통과**한다(RT 에서 죽은 die 가
+    CT/HT 에 남아 재판정이 통째로 틀린다). 그래서 Honey 는 파싱 직후(배치 확정 후, 인코딩
+    전) 좌표 없는 source 를 찾아 **파일 목록 + 확인창**을 띄운다
+    ([honey_main.py](../client/honey_main.py) `_temp_coord_check`):
+    - **Yes** → `clean_frames(..., serial_match=True)` — 좌표가 없는 **pair 만** SERIAL
+      오름차순 i 번째끼리 짝지어 같은 규칙(RT BIN==1 인 짝만 남김)을 적용한다. 양쪽에
+      좌표가 있는 pair 는 종전 좌표 매칭 그대로다(pair 단위 판정).
+      행 개수가 다르면 **적은 쪽 기준**으로 앞에서부터만 짝짓고("가장 적은 raw data
+      기준으로 진행합니다" 안내), 남는 행은 버린다.
+    - **No** → Web Report 생성 중단(rawdata 좌표 수정 요청).
+    판정 기준은 `temperature.has_coords` 한 곳이다 — XPOS/YPOS 가 **둘 다** 채워진 데이터
+    행이 하나라도 있으면 "좌표 있음"(부분 결측은 종전 좌표 매칭 유지). 서버·manifest 는
+    무변경이다(정리 결과가 곧 parquet 이고, 조회 경로는 좌표로 pair 를 잇지 않는다) —
+    좌표가 없으므로 그 소스의 웨이퍼 맵만 비어 있게 된다.
+    회귀 고정: [tests/test_temperature_serial_match.py](../tests/test_temperature_serial_match.py).
   - **Bin 표기**: `manifest["temperature_limits"]`(.lt/.pds 유래, 신규 업로드만)의
     `usl_bin` — `.lt` 의 `20:19` 는 **콜론 오른쪽(19)만** 쓴다. 없으면 관측 bin 최빈값
     (member → RT 순, `"999"` 제외), 그래도 없으면 공백. 행은 항상 item 1개다 —
@@ -602,7 +618,14 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       0 나눗셈은 inf/NaN 을 만든 뒤 유한값 마스크로 제외한다(제외 수는 `dropped_nonfinite`).
       마스크는 values·serial·xpos·ypos **네 배열에 함께** 적용한다(`scatter_item` 규약).
     - 응답은 **`scatter_item` 키 집합을 그대로 포함**한다 → Item_detail 이 수정 없이 재사용된다
-      (`openItemDetail(subject, navList, opts)` 의 `opts.url` 만 갈아끼운다). 차트 주석 키는
+      (`openItemDetail(subject, navList, opts)` 의 `opts.url` 만 갈아끼운다). Item_detail 헤더
+      바로 아래에는 **어떤 수식이었는지**를 만들 때와 같은 서식(item 파란 기울임 / source
+      빨간 기울임)으로 보여준다 — 그래서 응답에 `tokens` 를 함께 싣는다(평문 `formula` 는
+      되돌려 읽을 수 없어 서식을 복원할 수 없다. 구 캐시 응답은 평문으로 폴백).
+      모달 폭은 Distribution composite 와 같은 `min(1600px, 96vw)` 이고, 셀렉터는
+      **`.modal-box.gc-modal-box`** 로 특이도를 올려야 한다 — 한 클래스로 쓰면 뒤쪽
+      `.modal-box{width:360px}` 가 이겨 창이 좁아진다(dc 와 같은 함정을 실제로 밟았다).
+      차트 주석 키는
       `note_subject = "gap:<uuid>"` 로 갈라 동명의 실제 항목과 섞이지 않게 한다.
       CDF die 제외 편집바는 gap 에서 숨긴다 — 합성값에는 되돌릴 원본 항목이 없다.
     - 조회는 전용 라우트 `GET .../web_report/gap_chart/<chart_id>` **하나**이고 갤러리 카드와
@@ -615,6 +638,41 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       카드 1장이 Item_detail 1개분 페이로드라 차트 수 상한이 실질 보호막이다.
     - `distUpdateCount()` 의 "N 개"에는 gap·composite 카드가 **포함되지 않는다**(distIndex
       밖이라 검색·세그먼트 필터 대상이 아니다) — composite 와 같은 기존 동작이다.
+  - **Serial 순 (rawdata 누적 순 run chart — 2026-08-24)**: 툴바 **맨 앞** 버튼
+    (`data-seg="seq"`, Item_detail 표시옵션에도 같은 버튼 `data-idet-seg="seq"`)으로
+    갤러리 미니셀과 Item_detail CDF 자리를 **x = 각 source 의 측정 순서(1..n) · y = 측정값**
+    차트로 바꾼다. Limit 은 **수평** 점선이고 markers 전용(선 금지 — 규칙 #5). 켜고 끄는
+    상태는 전역 하나(`distSeqOnly`)라 갤러리·상세가 같은 모드를 본다(Bin1·Limit 토글 관례).
+    - **ECDF payload 로는 그릴 수 없다** — `build_distribution_compact` 이 `np.unique` 로
+      동일값을 접어 순서를 버린다. 그래서 **행 순서를 보존한 값 배열**을 내는 배치 응답
+      `GET .../distribution_batch?order=seq`(포맷 `seq-columnar-v1`, 계산
+      [web_report/dist_seq.py](../web_report/dist_seq.py))를 따로 낸다. x 는 인덱스라
+      서버는 값만 보낸다(ECDF 의 xs+ys 2배열보다 가볍다).
+    - **dist pack 지름길을 쓰지 않는다** — pack 은 업로드 시점에 정렬(np.unique)해 굳힌
+      산출물이라 순서가 없다. seq 는 항상 tables 를 읽는다(TABLES_CACHE 공유 = `/scatter`
+      와 같은 비용). Item_detail 은 아예 서버를 다시 부르지 않는다(`scatter_item` 의
+      values/serial 이 이미 행 순서다).
+    - **모듈 위치가 `web_report/tabs/` 밖인 이유**: perf_guard S01 이 tabs 변경마다
+      `REPORT_SCHEMA_VERSION` bump 를 요구하고 그 bump 는 전 세션 콜드 폭풍이다
+      (gap_chart.py 와 같은 이유). 이 계산은 report payload 와 무관하다.
+    - **변형 키가 6종이 된다** — bin1 축 3종 × 정렬 축 2종. `distGalleryVariant()` 는
+      **계속 bin1 3종만** 반환하고(그 값을 dist_composite/gap_chart 가 자기 캐시 인덱스로,
+      item_detail 이 `/scatter` 쿼리로 쓴다) 갤러리 미니셀이 쓰는 키는
+      `distGalleryDataVariant()` 다. 캐시는 변형마다 별도 객체다.
+    - **미니셀 표시 캡은 균등 stride**(`distHardCap`, 양끝 보존)뿐이다 — ECDF 전용 규칙
+      (세로 채움 `distFillVertical`·꼬리/Δy 보존 다운샘플)은 "x 오름차순 · y 단조 누적%"
+      전제 위에 있어 run chart 에 쓰면 없던 구조를 만든다. 상세는 전량 렌더.
+    - **차트 주석(chart_notes)은 seq 차트에 붙이지 않는다** — 주석 도형은 데이터 좌표
+      (xref"x"/yref"y")로 저장되는데 이 축은 (순서, 측정값)이라 CDF 좌표와 의미가 다르다.
+      붙이면 편집 모드에서 도형을 한 번 건드리는 순간 `cnSyncFromChart` 가 **seq 좌표로
+      저장값을 덮어써** 사용자가 CDF 에 그려둔 주석이 망가진다(§5-12). 저장값은 그대로
+      두고 표시만 생략한다 — CDF 로 돌아가면 다시 보인다. Map 선택 좌표 마커·Compare
+      before-limit 선도 같은 이유로 제외(누적% 축 전용), CDF x축 옵션 바도 비운다.
+    - Issue Table 미니셀은 **전체 기준 ECDF 를 유지**한다(Bin1 토글과 같은 정책 — 그 표의
+      숫자가 ECDF 기준이라 그림만 다른 축이 되면 표와 어긋난다).
+    - 회귀 고정: [tests/test_dist_seq.py](../tests/test_dist_seq.py)(서버 6항목 — 행 순서·
+      ETag 분리·bin1·`/scatter` 값 일치) · [tests/test_dist_seq_js.py](../tests/test_dist_seq_js.py)
+      (프런트 6항목 — 변형 분리·stride 캡·주석 미부착).
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
@@ -1040,6 +1098,8 @@ Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — E
   조절한다(≥16 → 1장, ≥8 → 2장). 실측 40소스 미니셀 1장: 44.6ms → 11.3ms(콜드),
   재스크롤 4.4ms. 표시점 메모(`distDisplayPoints` / limitWin 전용 `distDisplayPointsWindowed`)
   는 **캡별로 분리 저장**한다 — 같은 항목도 칸 종류에 따라 캡이 다르기 때문.
+- **Serial 순 모드의 미니셀 캡은 균등 stride 뿐이다**(위 Distribution 절) — ECDF 전용
+  세로 채움·꼬리 보존 규칙을 run chart 에 적용하지 말 것(없던 구조가 생긴다).
 - **Distribution ECDF 미니셀 렌더는 markers 전용, 선 금지.** 갤러리 카드
   (`distRenderGalleryCell`)·Bin 상세 셀(`renderDistCell`)·Issue Table 산포 미니셀
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형

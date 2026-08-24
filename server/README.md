@@ -339,6 +339,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
 | `GET` | `/distribution` | 공개 | Distribution ECDF **전량** (컴팩트 gzip, 전 포인트). 클라 프리컴퓨트 시딩·하위호환 폴백용 — 프런트는 아래 배치를 쓴다 |
 | `GET` | `/distribution_batch?subjects=a,b,c[&bin1=1]` | 공개 | Distribution ECDF **항목 배치** (화면에 보이는 항목만, 최대 40개/요청). 전량 payload 의 부분집합과 값 동일 |
+| `GET` | `/distribution_batch?subjects=…&order=seq` | 공개 | 같은 라우트의 **Serial 순**(rawdata 누적 순) 변형 — ECDF 대신 **행 순서를 보존한 값 배열**(포맷 `seq-columnar-v1`). Distribution "Serial 순" 토글 전용. `order` 는 화이트리스트(`""`/`ecdf`/`seq`, 그 외 400)이고 캐시·ETag 가 ECDF 와 갈린다 |
 | `GET` | `/map_analysis` | 공개 | Map Analysis die 전량 (gzip+ETag — `/full` 은 dies 뺀 경량 메타, schema v8). 콜드면 `202 {"building":true}` |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
 | `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 1개 (gzip+ETag). 프런트는 배치를 쓰고 이 단일 경로는 폴백·하위호환용 |

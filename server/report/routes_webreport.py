@@ -52,6 +52,10 @@ _COMPUTE_BUSY_EXC = (web_report_compute.QueueWaitTimeout, BrokenProcessPool)
 # 배치로 나눠 보낸다.
 _DIST_BATCH_MAX = 40
 
+# /distribution_batch 의 order 파라미터 화이트리스트. ""/"ecdf" = 종전 누적분포(기본),
+# "seq" = Serial 순(rawdata 누적 순) 값 배열 (web_report/dist_seq.py).
+_DIST_BATCH_ORDERS = ("", "ecdf", "seq")
+
 # trim_chart_batch 한 요청의 그룹 수 상한 — 프런트 산포 한 페이지 크기(TRIM.PAGE_SIZE=6)와
 # 같은 값. 페이지를 키우면 두 곳을 함께 올려야 한다.
 _TRIM_BATCH_MAX = 6
@@ -211,6 +215,10 @@ def web_report_distribution_batch(session_id):
     항목 상세(전 포인트+hover 메타)는 기존 /scatter/<subject> 그대로다.
 
     구분자는 콤마 — 항목명에 콤마가 들어갈 수 있으므로 개행(%0A)도 함께 허용한다.
+
+    ``order=seq`` 면 ECDF 대신 **행 순서를 보존한 값 배열**을 준다(Distribution "Serial 순"
+    토글 · 갤러리 미니셀 전용). 응답 포맷·캐시·ETag 가 모두 갈라져 서로의 304 로 오염되지
+    않는다 — 자세한 이유는 web_report/dist_seq.py 모듈 docstring.
     """
     session = _require_web_report_session(session_id)
     raw = request.args.get("subjects") or ""
@@ -223,8 +231,15 @@ def web_report_distribution_batch(session_id):
     if any(len(s) > 200 for s in subjects):
         abort(400, "invalid subject")
     bin1, bin1_scope, _variant = _bin1_args()
+    # order=seq → ECDF 대신 **rawdata 행 순서를 보존한 값 배열**(Serial 순 차트). 화이트리스트로
+    # 받는다 — 오타를 조용히 ECDF 로 흘리면 프런트가 다른 축의 데이터를 그대로 그린다.
+    order = (request.args.get("order") or "").strip().lower()
+    if order not in _DIST_BATCH_ORDERS:
+        abort(400, "invalid order")
+    getter = (web_report_response_cache.get_dist_seq_batch_gzip if order == "seq"
+              else web_report_response_cache.get_dist_batch_gzip)
     try:
-        etag, body = web_report_response_cache.get_dist_batch_gzip(
+        etag, body = getter(
             session_id, subjects, session=session, report_db=report_db,
             upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope)
     except FileNotFoundError as exc:

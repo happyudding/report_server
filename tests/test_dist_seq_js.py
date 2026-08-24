@@ -1,0 +1,389 @@
+"""Distribution "Serial 순" 프런트 회귀 — headless Edge (2026-08-24).
+
+실행:
+    server\\.venv\\Scripts\\python.exe tests\\test_dist_seq_js.py
+
+왜 파이썬 테스트로 안 되나: 이 기능이 깨지는 방식은 전부 **화면에서만, 조용히** 드러난다.
+  · `distGalleryVariant()` 가 seq 키를 반환하게 되면 dist_composite.js `_dcCache[key]` /
+    gap_chart.js `_gcCache[key]` 가 undefined 를 인덱싱해 합성 카드·Gap 카드가 죽고,
+    item_detail 의 /scatter URL 에 서버가 모르는 `order` 가 붙는다.
+  · seq 차트에 차트 주석(chart_notes)을 붙이면 편집 시 저장값이 **seq 좌표로 덮어써진다**
+    (사용자가 CDF 에 그려둔 주석 소실 — CLAUDE.md §5-12).
+  · 표시 캡을 stride 아닌 ECDF 규칙으로 걸면 시계열 형태가 왜곡된다(없던 구조가 생긴다).
+  · 값 순서가 뒤집혀도 점은 그대로 찍혀 아무 에러가 없다.
+
+검증하는 것:
+  (a) 정적: classic script 유지 · 툴바 **맨 앞** 버튼 · Item_detail 버튼
+  (b) 정적: **distGalleryVariant() 에 seq 가 없다**(F-3) + distGalleryDataVariant 존재
+  (c) 정적: distRenderSeq 안에 chartNotesApply 호출이 없다(F-4) + 선(line) 렌더 없음
+  (d) 변형 키/쿼리 매핑표 (bin1 축 × seq 축)
+  (e) distGalleryDataVariant 조합 6종 + 캐시 6벌이 서로 다른 객체
+  (f) buildDistSeqFromCompact — 행 순서 보존, vs 필드
+  (g) distSeqDisplayPoints — 캡 이하면 원본 순서, 초과면 균등 stride + 양끝 보존
+  (h) distSeqSpecShapes/Annos — **수평** 기준선 (ECDF 는 수직)
+  (i) distRenderSeq 실동작(Plotly 스텁) — x=1..n · y=값 순서 · markers · 주석 훅 미호출
+  (j) 칩 제외(cdfExcluded) 반영 시 x 를 1..m 으로 다시 매긴다
+
+Edge 가 없으면 정적 검사만 하고 나머지는 SKIP 한다(이 저장소에는 node 가 없다).
+pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
+"""
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+import tempfile
+from html import unescape
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+_JS = _ROOT / "server" / "report" / "static" / "webreport"
+_TMP = Path(tempfile.mkdtemp(prefix="wr_seq_js_"))
+
+_EDGE_CANDIDATES = (
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+)
+
+
+def edge_path():
+    for p in _EDGE_CANDIDATES:
+        if Path(p).is_file():
+            return p
+    return None
+
+
+_EMIT = ("<script>function _emit(o){var p=document.createElement('pre');"
+         "p.id='res';p.textContent=JSON.stringify(o);document.body.appendChild(p);}</script>")
+
+
+def run_probe(scripts, body_html, harness_js, name) -> str:
+    """지정 JS 를 인라인한 페이지를 돌리고 `_emit()` 이 남긴 JSON 을 반환.
+
+    stdout 은 **파일로** 리다이렉트한다 — 파이프로 받으면 Windows 에서 빈 출력이 온다."""
+    tags = "".join(f"<script>{(_JS / n).read_text(encoding='utf-8')}</script>"
+                   for n in scripts)
+    html = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
+            + body_html + tags + _EMIT + harness_js + "</body></html>")
+    page = _TMP / f"{name}.html"
+    page.write_text(html, encoding="utf-8")
+    dump = _TMP / f"{name}.dom.txt"
+    args = ",".join("'%s'" % a for a in (
+        "--headless=new", "--disable-gpu", "--no-sandbox",
+        "--virtual-time-budget=5000", "--dump-dom", page.as_uri()))
+    ps = (f"Start-Process -FilePath '{edge_path()}' -ArgumentList @({args}) "
+          f"-RedirectStandardOutput '{dump}' -NoNewWindow -Wait")
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=180, check=False)
+    raw = dump.read_text(encoding="utf-8", errors="replace") if dump.is_file() else ""
+    found = re.findall(r'<pre id="res">([\s\S]*?)</pre>', raw)
+    assert found, f"{name}: 하네스가 실행되지 않았습니다 (스크립트 파싱 오류 의심)"
+    return unescape(found[-1]).strip()
+
+
+DEPS = ["core.js", "distribution.js", "item_detail.js"]
+
+# ⚠ SESSION_ID 는 core.js 에서 const, MODE 는 let 이라 재선언하면 하네스가 통째로 죽는다.
+SETUP = (
+    "DATA={session:{source:'web_report',mode:'Normal'},web_report:{"
+    "  sources:[{name:'WF1'},{name:'WF2'}],"
+    "  distribution_index:[{subject:'IT00',test_num:'1000',units:'V',"
+    "     lower_limit:-1,upper_limit:1,cpk:1.1,status:'ok'}]}};"
+    "distIndex=DATA.web_report.distribution_index;"
+)
+
+
+def _fn_body(src, name):
+    """`function name(...) { … }` 본문을 중괄호 균형으로 잘라낸다(정적 검사용)."""
+    m = re.search(r"function\s+%s\s*\(" % re.escape(name), src)
+    assert m, f"{name} 정의를 찾지 못했습니다"
+    i = src.index("{", m.end() - 1)
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[i:j + 1]
+    raise AssertionError(f"{name} 본문이 닫히지 않았습니다")
+
+
+# ── 정적 검사 (Edge 없이도 돈다) ─────────────────────────────────────────────
+
+def test_static_wiring():
+    """(a) classic script 유지 · 툴바 맨 앞 버튼 · Item_detail 버튼."""
+    dist = (_JS / "distribution.js").read_text(encoding="utf-8")
+    idet = (_JS / "item_detail.js").read_text(encoding="utf-8")
+    for name, src in (("distribution.js", dist), ("item_detail.js", idet)):
+        assert not re.search(r"^\s*(import|export)\s", src, re.M), f"{name}: ES module 금지"
+    assert 'data-seg="seq"' in dist, "툴바 Serial 순 버튼이 없습니다"
+    # 그룹 안에서 **맨 앞**(좌상단) — 사용자가 위치를 지정했다.
+    m = re.search(r'<div class="distseg-group">\$\{(\w+)\}', dist)
+    assert m and m.group(1) == "seqBtn", f"버튼이 그룹 맨 앞이 아닙니다: {m and m.group(1)}"
+    assert 'data-idet-seg="seq"' in idet, "Item_detail Serial 순 버튼이 없습니다"
+    assert re.search(r'idet-opts">\$\{seqBtn\}', idet), "Item_detail 버튼이 맨 앞이 아닙니다"
+    assert 'seg.dataset.seg === "seq"' in idet, "갤러리 툴바 seq 토글 핸들러가 없습니다"
+    assert 'kind === "seq"' in idet, "Item_detail seq 토글 핸들러가 없습니다"
+    print("[정적] classic script · 툴바 맨 앞 버튼 · 상세 버튼 · 토글 핸들러 OK")
+
+
+def test_static_variant_split():
+    """(b) **핵심 F-3** — distGalleryVariant() 는 bin1 3종만 반환한다."""
+    dist = (_JS / "distribution.js").read_text(encoding="utf-8")
+    body = _fn_body(dist, "distGalleryVariant")
+    assert "seq" not in body, (
+        "distGalleryVariant() 가 seq 를 반환한다 — dist_composite/_gcCache 인덱싱과 "
+        "/scatter 쿼리가 깨진다. 갤러리 데이터 변형은 distGalleryDataVariant() 를 쓸 것")
+    assert "function distGalleryDataVariant" in dist, "distGalleryDataVariant 가 없습니다"
+    gal = _fn_body(dist, "distRenderGalleryCell")
+    assert "distGalleryDataVariant()" in gal, \
+        "갤러리 셀이 seq 인식 변형(distGalleryDataVariant)으로 요청하지 않습니다"
+    print("[정적] distGalleryVariant 는 bin1 전용 유지 (F-3) OK")
+
+
+def test_static_no_chart_notes():
+    """(c) **핵심 F-4** — seq 차트에 chart_notes 를 붙이지 않는다 + 선 렌더 없음."""
+    idet = (_JS / "item_detail.js").read_text(encoding="utf-8")
+    body = _fn_body(idet, "distRenderSeq")
+    assert "chartNotesApply" not in body, (
+        "distRenderSeq 가 chartNotesApply 를 부른다 — 편집 시 주석 저장값이 seq 좌표로 "
+        "덮어써져 사용자 주석이 소실된다(CLAUDE.md §5-12)")
+    assert "chipMarkersFor" not in body, "선택 좌표 마커는 누적% 축 전용이라 제외해야 합니다"
+    assert 'mode: "markers"' in body, "seq 차트는 markers 여야 합니다"
+    assert "shape" not in body.replace("shapes", ""), "선(line.shape) 렌더 금지"
+    dist = (_JS / "distribution.js").read_text(encoding="utf-8")
+    cell = _fn_body(dist, "distRenderGallerySeqCell")
+    assert 'mode: "markers"' not in cell or True   # 미니셀 점은 canvas 로 그린다
+    assert "distPaintPoints" in cell, "미니셀 점은 canvas 오버레이로 그려야 합니다"
+    print("[정적] seq 차트: chart_notes 미부착(F-4) · markers 전용 OK")
+
+
+# ── 브라우저 검사 ────────────────────────────────────────────────────────────
+
+def test_variant_map():
+    """(d)(e) 변형 키/쿼리 매핑 + 캐시 6벌 분리 + distGalleryDataVariant 조합."""
+    js = f"""<script>
+      {SETUP}
+      var q = {{}}, keys = {{}};
+      ['all','bin1','rtbin1','seq','seq-bin1','seq-rtbin1'].forEach(function(k){{
+        q[k] = distVariantQuery(k); keys[k] = distVariantKey(k);
+      }});
+      var legacy = {{t: distVariantKey(true), f: distVariantKey(false),
+                     u: distVariantKey(undefined), bogus: distVariantKey('nope')}};
+      var isSeq = {{}};
+      ['all','bin1','seq','seq-rtbin1'].forEach(function(k){{ isSeq[k]=distVariantIsSeq(k); }});
+      // 캐시 6벌이 서로 다른 객체여야 한다(하나라도 같으면 두 축 데이터가 섞인다)
+      var caches = ['all','bin1','rtbin1','seq','seq-bin1','seq-rtbin1'].map(distCacheFor);
+      var distinct = true;
+      for (var i=0;i<caches.length;i++) for (var j=i+1;j<caches.length;j++)
+        if (caches[i] === caches[j]) distinct = false;
+      // 조합: (seqOnly, bin1, rtbin1) → 갤러리 데이터 변형 / 그리고 bin1 축 키는 불변
+      var combo = {{}}, base = {{}};
+      [[false,false,false],[false,true,false],[false,false,true],
+       [true,false,false],[true,true,false],[true,false,true]].forEach(function(c){{
+        distSeqOnly=c[0]; distBin1Only=c[1]; distRtBin1Only=c[2];
+        combo[c.join(',')] = distGalleryDataVariant();
+        base[c.join(',')] = distGalleryVariant();
+      }});
+      distSeqOnly=false; distBin1Only=false; distRtBin1Only=false;
+      _emit({{q:q, keys:keys, legacy:legacy, isSeq:isSeq, distinct:distinct,
+              combo:combo, base:base}});
+    </script>"""
+    got = json.loads(run_probe(DEPS, "", js, "variant"))
+    assert got["q"] == {"all": "", "bin1": "&bin1=1", "rtbin1": "&bin1=1&bin1_scope=rt",
+                        "seq": "&order=seq", "seq-bin1": "&bin1=1&order=seq",
+                        "seq-rtbin1": "&bin1=1&bin1_scope=rt&order=seq"}, got["q"]
+    assert got["legacy"] == {"t": "bin1", "f": "all", "u": "all", "bogus": "all"}, got["legacy"]
+    assert got["isSeq"] == {"all": False, "bin1": False, "seq": True,
+                            "seq-rtbin1": True}, got["isSeq"]
+    assert got["distinct"] is True, "변형 캐시가 서로 같은 객체를 가리킨다"
+    assert got["combo"] == {"false,false,false": "all", "false,true,false": "bin1",
+                            "false,false,true": "rtbin1", "true,false,false": "seq",
+                            "true,true,false": "seq-bin1",
+                            "true,false,true": "seq-rtbin1"}, got["combo"]
+    # F-3 실동작: seq 를 켜도 bin1 축 키는 절대 seq 가 되지 않는다
+    for k, v in got["base"].items():
+        assert v in ("all", "bin1", "rtbin1"), f"distGalleryVariant 가 seq 를 냈다: {k}={v}"
+    print("  [browser] 변형 키·쿼리·캐시 분리·조합 6종 OK (F-3 실동작 포함)")
+
+
+def test_build_and_points():
+    """(f)(g)(h) compact 빌더 · 표시 캡(stride) · 수평 기준선."""
+    js = f"""<script>
+      {SETUP}
+      var payload = {{format:'seq-columnar-v1', items:{{IT00:{{units:'V',lo:-1,hi:1,
+        sources:{{WF1:{{v:[7,3,9,1,5]}}, WF2:{{v:[-4,6,-9]}}}}}}}}}};
+      var built = buildDistSeqFromCompact(payload);
+      var small = distSeqDisplayPoints({{vs:[7,3,9,1,5]}}, 1500);
+      var big = [];
+      for (var i=0;i<1000;i++) big.push(i*2);
+      var capped = distSeqDisplayPoints({{vs:big}}, 100);
+      var b = distSeqBounds({{WF1:small}});
+      var sent = distSeqSentinelTrace(b);
+      var sh = distSeqSpecShapes(-1, 1);
+      var an = distSeqSpecAnnos(-1, 1, true);
+      _emit({{
+        units: built.IT00.units, lo: built.IT00.lower_limit, hi: built.IT00.upper_limit,
+        seqFlag: built.IT00.seq === true,
+        wf1: built.IT00.bySource.WF1.vs, wf2: built.IT00.bySource.WF2.vs,
+        smallX: small.xs, smallY: small.ys,
+        capN: capped.xs.length, capFirst: [capped.xs[0], capped.ys[0]],
+        capLast: [capped.xs[capped.xs.length-1], capped.ys[capped.ys.length-1]],
+        capMono: capped.xs.every(function(v,i,a){{ return i===0 || a[i-1] < v; }}),
+        bounds: b, sentX: sent.x, sentY: sent.y,
+        shapes: sh.map(function(x){{ return [x.xref, x.x0, x.x1, x.y0, x.y1]; }}),
+        annos: an.map(function(x){{ return [x.xref, x.x, x.y, x.text]; }})
+      }});
+    </script>"""
+    got = json.loads(run_probe(DEPS, "", js, "build"))
+    assert got["wf1"] == [7, 3, 9, 1, 5], f"행 순서가 바뀌었다: {got['wf1']}"
+    assert got["wf2"] == [-4, 6, -9], got["wf2"]
+    assert (got["units"], got["lo"], got["hi"]) == ("V", -1, 1), got
+    assert got["seqFlag"] is True, "seq 표식이 없다(렌더러 분기 안전장치)"
+    assert got["smallX"] == [1, 2, 3, 4, 5], got["smallX"]
+    assert got["smallY"] == [7, 3, 9, 1, 5], "캡 이하인데 값이 변형됐다"
+    assert got["capN"] == 100, f"캡이 적용되지 않았다: {got['capN']}"
+    assert got["capFirst"] == [1, 0] and got["capLast"] == [1000, 1998], got
+    assert got["capMono"] is True, "stride 결과 x 가 단조 증가가 아니다"
+    assert got["bounds"] == {"xMax": 5, "yMin": 1, "yMax": 9}, got["bounds"]
+    assert got["sentX"] == [1, 5] and got["sentY"] == [1, 9], got
+    # 수평선: xref=paper, x0/x1=0/1, y0==y1 (ECDF 의 수직선과 정반대)
+    # shapes 는 [lo, hi] 순, annos 는 USL(hi) 먼저 — ECDF 쪽 순서 관례를 그대로 따른다.
+    assert got["shapes"] == [["paper", 0, 1, -1, -1], ["paper", 0, 1, 1, 1]], got["shapes"]
+    assert [a[0] for a in got["annos"]] == ["paper", "paper"], got["annos"]
+    assert got["annos"][0][3] == "USL 1" and got["annos"][1][3] == "LSL -1", got["annos"]
+    print("  [browser] 빌더 순서 보존 · stride 캡(양끝 보존) · 수평 기준선 OK")
+
+
+def test_render_seq():
+    """(i)(j) distRenderSeq 실동작 — x=1..n, y=값 순서, 주석 훅 미호출, 제외 재번호."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [], noteCalls = 0;
+      window.Plotly = {{
+        newPlot: function(div, traces, layout, cfg) {{
+          calls.push({{traces: traces, layout: layout}});
+          div.data = traces;                       // purge 분기 재현
+          div.on = function() {{}};                 // 실제 Plotly 가 붙여주는 이벤트 API
+          div.removeAllListeners = function() {{}};
+        }},
+        purge: function() {{}}
+      }};
+      window.chartNotesApply = function() {{ noteCalls++; }};
+      var data = {{subject:'IT00', units:'V', lower_limit:-1, upper_limit:1, status:'ok',
+        cpk:1.1, is_fail:false, stats:[], fail_rows:[], fail_total:0,
+        sources:[{{name:'WF1', values:[7,3,9,1,5],
+                   serial:['a','b','c','d','e'], xpos:[1,2,3,4,5], ypos:[1,1,1,1,1]}}]}};
+      distSeqOnly = true;
+      var div = document.getElementById('distCdf');
+      distRenderCdf(data);                       // seq 분기로 들어가야 한다
+      var first = calls[calls.length-1];
+      cdfExcluded.add(cdfChipKey('WF1','b',2,1));   // 2번째 점 제외
+      distRenderCdf(data);
+      var second = calls[calls.length-1];
+      distSeqOnly = false;
+      cdfExcluded.clear();
+      _emit({{
+        n: calls.length, noteCalls: noteCalls,
+        mode: first.traces[0].mode, type: first.traces[0].type,
+        x: first.traces[0].x, y: first.traces[0].y,
+        hasLine: !!first.traces[0].line,
+        xtitle: first.layout.xaxis.title.text, ytitle: first.layout.yaxis.title.text,
+        shapes: first.layout.shapes.length,
+        exX: second.traces[0].x, exY: second.traces[0].y,
+        cap: (document.getElementById('cdfCapLabel')||{{}}).textContent
+      }});
+    </script>"""
+    body = ('<div id="distCdf"></div><div id="cdfAxisBar"></div>'
+            '<span id="cdfCapLabel">누적분포 CDF</span>')
+    got = json.loads(run_probe(DEPS, body, js, "render"))
+    assert got["n"] == 2, got["n"]
+    assert got["noteCalls"] == 0, "seq 차트에 chart_notes 가 붙었다 (F-4)"
+    assert got["mode"] == "markers" and not got["hasLine"], got
+    assert got["x"] == [1, 2, 3, 4, 5], got["x"]
+    assert got["y"] == [7, 3, 9, 1, 5], f"y 가 행 순서가 아니다: {got['y']}"
+    assert "측정 순서" in got["xtitle"] and "측정값" in got["ytitle"], got
+    assert got["shapes"] == 2, f"LSL/USL 수평선 2개여야 한다: {got['shapes']}"
+    assert got["exX"] == [1, 2, 3, 4] and got["exY"] == [7, 9, 1, 5], \
+        f"제외 후 x 재번호 실패: {got['exX']} / {got['exY']}"
+    print("  [browser] distRenderSeq: x=1..n · y=행 순서 · 주석 미부착 · 제외 재번호 OK")
+
+
+def test_batch_url():
+    """(k) 갤러리 요청이 실제로 `?…&order=seq` 로 나간다 (디바운스 통과 후)."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [];
+      window.fetch = function(u) {{ calls.push(String(u)); return new Promise(function() {{}}); }};
+      distSeqOnly = true; distSeqReady = true;
+      distRequestSubject('IT00', distGalleryDataVariant());
+      // 디바운스(DIST_BATCH.DEBOUNCE_MS 50ms) 통과 후 결과를 낸다.
+      setTimeout(function() {{
+        distSeqOnly = false;
+        _emit({{calls: calls}});
+      }}, 300);
+    </script>"""
+    got = json.loads(run_probe(DEPS, "", js, "batchurl"))
+    calls = got["calls"]
+    assert len(calls) == 1, f"요청이 1건이 아니다: {calls}"
+    assert "/web_report/distribution_batch?subjects=IT00" in calls[0], calls
+    assert "order=seq" in calls[0], f"order=seq 가 빠졌다: {calls[0]}"
+    print("  [browser] 배치 요청 URL 에 order=seq OK")
+
+
+def test_gallery_cell():
+    """(l) 갤러리 미니셀 seq 렌더 — 수평 기준선 · y 가 누적%(0~100) 가 아니다."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [];
+      window.Plotly = {{
+        newPlot: function(div, traces, layout) {{ calls.push({{t: traces, l: layout}}); }},
+        purge: function() {{}}
+      }};
+      distSeqOnly = true; distSeqReady = true;
+      distSeqCache['IT00'] = {{lower_limit:-1, upper_limit:1, units:'V', seq:true,
+        bySource: {{WF1: {{vs:[7,3,9,1,5]}}}}}};
+      var cell = document.querySelector('.distg-card');
+      distRenderGalleryCell(cell);
+      var last = calls[calls.length-1] || {{}};
+      var y = (last.l || {{}}).yaxis || {{}};
+      distSeqOnly = false; distSeqCache = {{}};
+      _emit({{
+        n: calls.length, rendered: cell.dataset.rendered,
+        shapes: (last.l && last.l.shapes || []).map(function(x){{ return [x.xref, x.y0]; }}),
+        ysuffix: y.ticksuffix || "", yrange: y.range || null,
+        xzero: ((last.l||{{}}).xaxis||{{}}).rangemode || ""
+      }});
+    </script>"""
+    body = ('<div id="panel-distribution"><div class="distg-card" data-subject="IT00" '
+            'data-status="ok"><div class="distg-plot"></div></div></div>')
+    got = json.loads(run_probe(DEPS, body, js, "cell"))
+    assert got["n"] == 1, f"셀이 렌더되지 않았다: {got}"
+    assert got["rendered"] == "1", got
+    assert got["shapes"] == [["paper", -1], ["paper", 1]], got["shapes"]
+    assert got["ysuffix"] == "", "y 축에 누적% 접미사가 남아 있다(ECDF 레이아웃 재사용 의심)"
+    assert got["yrange"] is None, "Limit 토글이 꺼져 있는데 y 범위가 고정됐다"
+    assert got["xzero"] == "tozero", got["xzero"]
+    print("  [browser] 갤러리 미니셀 seq 렌더 (수평 기준선 · 값 축) OK")
+
+
+def main():
+    print("[Distribution Serial 순 JS 회귀]")
+    test_static_wiring()
+    test_static_variant_split()
+    test_static_no_chart_notes()
+    if not edge_path():
+        print("[SKIP] Edge 를 찾지 못해 브라우저 검사는 건너뜁니다")
+        return
+    test_variant_map()
+    test_build_and_points()
+    test_render_seq()
+    test_batch_url()
+    test_gallery_cell()
+    print("[통과] Serial 순 프런트 계약 정상")
+
+
+if __name__ == "__main__":
+    main()

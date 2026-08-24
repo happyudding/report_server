@@ -1076,6 +1076,8 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
    행 마크업(.dist-sug-item)은 갤러리 검색과 동일. */
 .dc-item-head { flex: 0 0 auto; border: 1px solid #e5e7eb; border-bottom: none;
   border-radius: 6px 6px 0 0; position: static; margin-top: 6px; }
+/* 접힌 상태 — 목록이 사라지므로 머리 혼자 완결된 상자가 된다(클릭하면 다시 펼침). */
+.dc-item-head.is-collapsed { border-bottom: 1px solid #e5e7eb; border-radius: 6px; cursor: pointer; }
 .dc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
   border-radius: 0 0 6px 6px; overflow-y: auto; overflow-x: auto; }
 .dc-item-list .placeholder { padding: 12px; font-size: 12.5px; }
@@ -1097,8 +1099,13 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .distg-gap { border-color: #6ee7b7; }
 .distg-gap-badge { flex: 0 0 auto; font-size: 12px; line-height: 1.2; }
 .gc-cell-empty { padding: 10px; font-size: 11.5px; text-align: center; }
-.gc-modal-box { width: min(1100px, 96vw); max-height: 92vh; display: flex;
-  flex-direction: column; }
+/* ⚠ 셀렉터를 `.modal-box.gc-modal-box`(특이도 0,2,0)로 쓴다 — 이 블록이 스타일시트에서
+   `.modal-box`(width:360px / overflow-y:auto) **앞에** 있어 한 클래스로 쓰면 그쪽이 이겨
+   폭이 360px 로 되돌아간다(dc-modal-box 와 같은 함정, 2026-08-24 실제로 밟았다).
+   규격은 Distribution composite 모달과 동일하게 맞춘다(사용자 요청). */
+.modal-box.gc-modal-box { width: min(1600px, 96vw); max-width: 96vw;
+  height: min(880px, calc(var(--vph) * 0.9)); max-height: calc(var(--vph) * 0.9);
+  display: flex; flex-direction: column; overflow: hidden; padding: 20px 24px; }
 .gc-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   margin: 4px 0 8px; }
 .gc-field { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
@@ -1107,14 +1114,16 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-limit { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #444; }
 .gc-limit-num { width: 84px; }
 .gc-limit-note { font-size: 11.5px; color: #888; }
-.gc-cols { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 14px;
-  flex: 1 1 auto; min-height: 0; }
+.gc-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: 20px; flex: 1 1 auto; min-height: 0; }
 .gc-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .gc-sec-head { display: flex; align-items: center; justify-content: space-between;
   gap: 8px; font-size: 12px; font-weight: 600; color: #555; margin: 8px 0 4px; }
 .gc-sec-acts { display: inline-flex; gap: 4px; }
-.gc-src-list { max-height: 130px; overflow-y: auto; border: 1px solid #e5e7eb;
-  border-radius: 6px; padding: 4px 6px; }
+.gc-src-list { max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb;
+  border-radius: 6px; padding: 4px 6px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 10px;
+  align-content: start; }
 .gc-src-item { display: flex; align-items: center; gap: 5px; font-size: 12px;
   color: #222; padding: 1px 0; cursor: pointer; }
 .gc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
@@ -1125,9 +1134,9 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-list-item:hover { background: #eef4fd; }
 .gc-list-more { padding: 4px 8px; font-size: 11px; color: #888; }
 /* 수식 칩 스트립 — 항목은 파란 기울임, source 는 빨간 기울임(사용자 요청 서식). */
-.gc-expr { min-height: 62px; border: 1px solid #cbd5e1; border-radius: 6px;
-  padding: 8px 10px; background: #f9fafb; font-size: 14px; line-height: 2;
-  overflow-x: auto; overflow-y: auto; max-height: 120px; }
+.gc-expr { min-height: 84px; border: 1px solid #cbd5e1; border-radius: 6px;
+  padding: 10px 12px; background: #f9fafb; font-size: 15px; line-height: 2;
+  overflow: auto; max-height: 180px; }
 .gc-expr-hint { color: #9aa1ab; font-size: 12.5px; font-style: italic; }
 .gc-tok { display: inline-block; padding: 1px 3px; border-radius: 4px; cursor: pointer;
   white-space: nowrap; }
@@ -1143,8 +1152,8 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-src-qual { flex: 0 0 auto; max-width: 190px; }
 .gc-ops { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 .gc-ops .btn-sm { min-width: 34px; font-weight: 700; }
-.gc-suggest { margin-top: 6px; max-height: 168px; overflow-y: auto;
-  border: 1px solid #e5e7eb; border-radius: 6px; }
+.gc-suggest { margin-top: 6px; flex: 1 1 auto; min-height: 0; max-height: 260px;
+  overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
 .gc-suggest:empty { display: none; }
 .gc-sug-item { display: flex; width: 100%; text-align: left; border: none;
   background: transparent; cursor: pointer; }
@@ -1157,14 +1166,29 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-status-ok { color: #15803d; font-weight: 600; }
 .gc-status-formula { color: #666; font-size: 11.5px; }
 .gc-help { font-size: 11.5px; color: #888; margin-top: 4px; line-height: 1.5; }
+/* Item_detail 상단의 수식 표시 — 만들 때와 **같은 서식**(item 파란 기울임 / source 빨간
+   기울임)으로 보여 "이 차트가 무슨 식이었는지" 를 헤더에서 바로 읽게 한다.
+   여기의 칩은 클릭 삭제 대상이 아니므로 모달의 hover(빨강)를 끈다. */
+.idet-formula { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 2px 0 6px; padding: 6px 10px; background: #f6f8fb;
+  border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
+.idet-formula-label { flex: 0 0 auto; font-size: 11.5px; font-weight: 600; color: #6b7280; }
+.idet-formula-expr { min-width: 0; overflow-x: auto; }
+.idet-formula .gc-tok { cursor: default; }
+.idet-formula .gc-tok:hover { background: transparent; outline: none; }
+.idet-formula-meta { flex: 0 0 auto; margin-left: auto; font-size: 11.5px; color: #6b7280; }
+.idet-formula-warn { flex: 0 0 auto; font-size: 11.5px; color: #b42318; }
 .dc-chip-x { border: none; background: transparent; cursor: pointer; color: #b42318;
   font-size: 11px; padding: 0 2px; flex: 0 0 auto; }
 .dc-summary { flex: 0 0 auto; margin-top: 8px; font-size: 12.5px; color: #344054; }
 .dc-count b { color: #1d4ed8; }
 .dc-warn { color: #b42318; margin-left: 8px; }
-.dc-limit { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* 2행 2열 — 라디오 | 값. "직접 입력" 을 항목 드롭다운과 같은 줄에 두면 어느 라디오에
+   딸린 입력인지 헷갈린다(2026-08-24 요청으로 아래 줄로 내림). */
+.dc-limit { flex: 0 0 auto; display: grid; grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px 10px; align-items: center; }
 .dc-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #344054; cursor: pointer; }
-.dc-limit-sel { flex: 1 1 240px; min-width: 180px; }
+.dc-limit-sel { width: 100%; min-width: 0; }
 .dc-limit-manual { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #344054; }
 .dc-limit-num { width: 100px; }
 /* 좁은 화면(노트북 세로 등)에서는 2단이 오히려 답답하다 — 1단으로 접는다 */
@@ -2704,6 +2728,10 @@ html[data-theme="dark"] .gc-list-more,
 html[data-theme="dark"] .gc-limit-note { color: #8b94a3; }
 html[data-theme="dark"] .gc-status-ok { color: #5fd08a; }
 html[data-theme="dark"] .gc-status-bad { color: #f88b83; }
+html[data-theme="dark"] .idet-formula { background: #1b1e24; border-color: #333a45; }
+html[data-theme="dark"] .idet-formula-label,
+html[data-theme="dark"] .idet-formula-meta { color: #8b94a3; }
+html[data-theme="dark"] .idet-formula-warn { color: #f88b83; }
 /* 원래 배경이 투명이라 다크가 비치는 차트 블록 — 흰 카드로 명시 고정 */
 html[data-theme="dark"] .distg-card { background: #fff; }
 html[data-theme="dark"] .dist-chart-block,

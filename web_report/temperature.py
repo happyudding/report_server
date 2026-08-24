@@ -6,6 +6,11 @@ CT/HT rawdata 를 정리한다:
 
   1. RT 에서 BIN==1(pass) 인 (XPOS, YPOS) 좌표만 CT/HT 에 남긴다 — RT 에서 이미 죽은
      die 는 저온/고온 결과를 볼 의미가 없다.
+     **좌표가 없는 rawdata 예외**(2026-08-24): 좌표가 비어 있으면 이 필터가 아무것도
+     걸러내지 못한 채 조용히 통과한다(RT 에서 죽은 die 가 CT/HT 에 그대로 남는다).
+     그래서 클라가 사용자에게 확인을 받아 ``serial_match=True`` 로 부르면, 좌표가 없는
+     pair 만 **SERIAL 순서 i 번째끼리** 짝지어 같은 필터를 적용한다(개수가 다르면 적은
+     쪽 기준). 확인 없이(기본값) 부르면 종전 좌표 매칭 그대로다.
   2. 남은 CT/HT 행을 **RT 의 HILIM/LOLIM** 으로 다시 판정한다 (CT/HT 자신의 limit 메타행은
      그대로 둔다 — 화면 표시용 원본 보존).
   3. 재판정으로 fail 이 된 행의 BIN 은 ① .lt/.pds 매핑(LSL/USL 위반 방향별) →
@@ -34,6 +39,10 @@ _log = logging.getLogger(__name__)
 UNKNOWN_BIN = "999"
 PASS_BIN = "1"
 
+# has_coords 가 먼저 훑어보는 행 수 (좌표 유무는 앞부분만 봐도 대개 판별된다).
+_COORD_PROBE = 200
+
+_COL_SERIAL = META_COLUMNS.index("SERIAL")
 _COL_XPOS = META_COLUMNS.index("XPOS")
 _COL_YPOS = META_COLUMNS.index("YPOS")
 _COL_BIN = META_COLUMNS.index("BIN")
@@ -236,6 +245,79 @@ def rt_pass_coords(rt_df: pd.DataFrame) -> set:
     return {(x, y) for x, y, b in zip(xs, ys, bins) if b == PASS_BIN}
 
 
+def data_row_count(df: pd.DataFrame) -> int:
+    """데이터 행 수(메타 6행 제외) — 클라의 '개수 불일치' 안내가 쓰는 기준."""
+    return int(len(_data(df)))
+
+
+def _coord_blank(series: pd.Series) -> pd.Series:
+    """좌표 값이 비었는가(NaN 또는 공백 문자열) — ``_fmt`` 가 "" 를 내는 값과 같은 기준."""
+    return series.isna() | (series.astype(str).str.strip() == "")
+
+
+def _coord_filled(data: pd.DataFrame) -> pd.Series:
+    """(XPOS, YPOS) 가 **둘 다** 채워진 행 마스크."""
+    return (~_coord_blank(data.iloc[:, _COL_XPOS])
+            & ~_coord_blank(data.iloc[:, _COL_YPOS]))
+
+
+def has_coords(df: pd.DataFrame) -> bool:
+    """(XPOS, YPOS) 가 **둘 다 채워진** 데이터 행이 하나라도 있으면 True.
+
+    "좌표가 없는 rawdata" 판정의 단일 기준이다. 값이 숫자인지는 보지 않는다 — 좌표
+    필터(``rt_pass_coords``/``_clean_member``)가 ``_fmt`` 문자열로 비교하므로, 비어 있지
+    않은 값은 (숫자가 아니어도) 좌표로 짝이 맞는다. 데이터 행이 없는 프레임은 짝지을
+    좌표도 없으므로 False 다.
+
+    앞 ``_COORD_PROBE`` 행을 먼저 본다 — 좌표가 있는 rawdata(대다수)는 거기서 즉시
+    끝나므로, 클라가 **UI 스레드에서 전 소스를 검사**해도(소스 수 × 행수) 창이 멎지
+    않는다. 전량 스캔은 앞부분에 좌표가 없는 프레임에서만 돈다.
+    """
+    data = _data(df)
+    if data.empty:
+        return False
+    if bool(_coord_filled(data.head(_COORD_PROBE)).any()):
+        return True
+    return bool(_coord_filled(data).any())
+
+
+def sources_without_coords(frames: dict) -> list:
+    """좌표가 없는 source 이름 목록 (입력 dict 순서) — 클라 확인창의 파일 목록."""
+    return [name for name, df in (frames or {}).items() if not has_coords(df)]
+
+
+def _serial_positions(data: pd.DataFrame) -> list:
+    """SERIAL 오름차순 행 위치 — 수치 우선, 비수치는 뒤로(문자순). 안정 정렬."""
+    serials = _col(data, _COL_SERIAL)
+
+    def key(i):
+        try:
+            return (0, float(serials[i]), "")
+        except (TypeError, ValueError):
+            return (1, 0.0, serials[i])
+
+    return sorted(range(len(serials)), key=key)
+
+
+def _serial_keep(rt_df: pd.DataFrame, member_df: pd.DataFrame) -> tuple:
+    """좌표 없는 pair 의 keep 마스크 — SERIAL 순서 i 번째끼리 짝짓는다.
+
+    반환 ``(keep 불린 배열, rt 행수, member 행수, 짝지은 행수)``. 개수가 다르면 **적은
+    쪽 기준**으로 앞에서부터만 짝짓고 남는 행은 버린다(사용자 확정 — 클라가 그 전에
+    "가장 적은 raw data 기준으로 진행합니다" 안내를 띄운다). 짝의 RT 행이 BIN==1 일
+    때만 남기므로 좌표 매칭과 **같은 규칙**(RT pass die 만)이다.
+    """
+    rt_data, m_data = _data(rt_df), _data(member_df)
+    rt_pos, m_pos = _serial_positions(rt_data), _serial_positions(m_data)
+    paired = min(len(rt_pos), len(m_pos))
+    rt_bins = _col(rt_data, _COL_BIN)
+    keep = np.zeros(len(m_pos), dtype=bool)
+    for i in range(paired):
+        if rt_bins[rt_pos[i]] == PASS_BIN:
+            keep[m_pos[i]] = True
+    return keep, len(rt_pos), len(m_pos), paired
+
+
 def rt_limits(rt_df: pd.DataFrame) -> dict:
     """RT 의 {item: (lolim, hilim)} — 값이 없는 쪽은 None(그 방향 무제한)."""
     hi, lo = _meta_row(rt_df, _ROW_HILIM), _meta_row(rt_df, _ROW_LOLIM)
@@ -312,14 +394,24 @@ def _resolve_bins(items, index, fail_bins) -> tuple:
     return np.array(lsl, dtype=object), np.array(usl, dtype=object), unknown
 
 
-def _clean_member(member_df, rt_df, coords, limits, index, fail_bins) -> tuple:
-    """CT/HT 소스 1개 정리 → (새 프레임, 통계 dict)."""
+def _clean_member(member_df, rt_df, coords, limits, index, fail_bins,
+                  serial=False) -> tuple:
+    """CT/HT 소스 1개 정리 → (새 프레임, 통계 dict).
+
+    ``serial=True`` 면 좌표 대신 SERIAL 순서로 RT 와 짝짓는다(좌표 없는 rawdata 전용 —
+    호출부가 사용자 확인을 받은 뒤에만 켠다). 재판정 이후는 두 경로가 완전히 같다.
+    """
     head = member_df.iloc[:DATA_START_ROW]
     data = _data(member_df)
     before = len(data)
 
-    xs, ys = _col(data, _COL_XPOS), _col(data, _COL_YPOS)
-    keep = np.array([(x, y) in coords for x, y in zip(xs, ys)], dtype=bool)
+    serial_info = None
+    if serial:
+        keep, rt_rows, member_rows, paired = _serial_keep(rt_df, member_df)
+        serial_info = {"rt_rows": rt_rows, "member_rows": member_rows, "paired": paired}
+    else:
+        xs, ys = _col(data, _COL_XPOS), _col(data, _COL_YPOS)
+        keep = np.array([(x, y) in coords for x, y in zip(xs, ys)], dtype=bool)
     data = data.loc[keep]
     dropped = before - len(data)
 
@@ -374,16 +466,23 @@ def _clean_member(member_df, rt_df, coords, limits, index, fail_bins) -> tuple:
         "pass": n - n_fail,
         "unknown_bin_items": sorted(set(unknown_items)),
     }
+    if serial_info is not None:
+        stats["serial"] = True
+        stats.update(serial_info)
     return frame, stats
 
 
-def clean_group(frames: dict, rt: str, members, bin_map=None) -> tuple:
+def clean_group(frames: dict, rt: str, members, bin_map=None,
+                serial_match=False) -> tuple:
     """RT/CT/HT 그룹 1개의 rawdata 정리.
 
     frames: {source 이름: 7-meta honeyform DataFrame} (RT + members 를 포함해야 한다)
     rt:     기준 source 이름 — **반환 프레임은 원본 그대로**(정리 대상 아님)
     members: 정리할 CT/HT source 이름 목록 (비어 있으면 RT 단독 그룹 — no-op)
     bin_map: parse_lt_text/parse_pds_text 결과(없으면 RT 관측 bin → 999 폴백만)
+    serial_match: 좌표가 없는 pair 를 SERIAL 순서로 짝지어도 되는가 (사용자 확인 결과).
+        판정은 **pair 단위**다 — RT 나 그 member 중 한쪽이라도 좌표가 없으면 그 pair 만
+        SERIAL 매칭이고, 양쪽에 좌표가 있는 pair 는 종전 좌표 매칭 그대로다.
 
     반환 ({이름: 프레임}, {이름: 통계}). 입력 프레임은 변형하지 않는다.
     """
@@ -392,21 +491,26 @@ def clean_group(frames: dict, rt: str, members, bin_map=None) -> tuple:
     limits = rt_limits(rt_df)
     fail_bins = rt_fail_bin_map(rt_df)
     index = bin_lookup(bin_map)
+    rt_missing = serial_match and not has_coords(rt_df)
 
     out = {rt: rt_df}
     stats: dict = {}
     for name in members or []:
-        frame, info = _clean_member(frames[name], rt_df, coords, limits, index, fail_bins)
+        serial = serial_match and (rt_missing or not has_coords(frames[name]))
+        frame, info = _clean_member(frames[name], rt_df, coords, limits, index, fail_bins,
+                                    serial=serial)
         out[name] = frame
         stats[name] = info
     return out, stats
 
 
-def clean_frames(frames: dict, groups, bin_map=None) -> tuple:
+def clean_frames(frames: dict, groups, bin_map=None, serial_match=False) -> tuple:
     """그룹 목록 전체에 clean_group 적용 → (정리된 frames, {source: 통계}).
 
     groups: [{"rt": 이름, "members": [이름, ...]}, ...] (manifest.options.temperature 형식)
     그룹에 속하지 않은 source 는 원본 그대로 통과시킨다.
+    serial_match: 좌표 없는 pair 의 SERIAL 순서 매칭 허용 (clean_group 참조 — 기본값
+        False 는 종전 동작과 완전히 동일하다).
     """
     out = dict(frames)
     stats: dict = {}
@@ -416,7 +520,7 @@ def clean_frames(frames: dict, groups, bin_map=None) -> tuple:
         if rt not in frames:
             _log.warning("temperature: RT source not found, group skipped: %r", rt)
             continue
-        cleaned, info = clean_group(out, rt, members, bin_map)
+        cleaned, info = clean_group(out, rt, members, bin_map, serial_match)
         out.update(cleaned)
         stats.update(info)
     return out, stats
@@ -426,7 +530,13 @@ def format_stats(stats: dict) -> list:
     """정리 통계 → 사용자용 한국어 로그 줄 목록 (Honey 실행 로그에 출력)."""
     lines = []
     for source, info in stats.items():
-        line = (f"{source}: RT pass 좌표 필터 {info['dropped']}행 제외 → {info['kept']}행, "
+        if info.get("serial"):
+            basis = (f"좌표 없음 → SERIAL 순서 매칭(RT {info['rt_rows']}행 ↔ "
+                     f"{info['member_rows']}행 중 {info['paired']}행 짝지음), "
+                     f"RT pass 필터 {info['dropped']}행 제외")
+        else:
+            basis = f"RT pass 좌표 필터 {info['dropped']}행 제외"
+        line = (f"{source}: {basis} → {info['kept']}행, "
                 f"재판정 fail {info['fail']} / pass {info['pass']}")
         if info["unknown_bin_items"]:
             n = len(info["unknown_bin_items"])

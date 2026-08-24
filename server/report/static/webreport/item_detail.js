@@ -170,7 +170,20 @@ function idetOptsHtml() {
       `title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
     : `<button class="distseg${distBin1Only ? " active" : ""}" data-idet-seg="bin1" ` +
       `title="켜짐: 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
-  return `<div class="distseg-group idet-opts">${limitBtn}${bin1Btn}</div>`;
+  // Serial 순 — 갤러리 툴바 맨 앞 버튼과 **같은 전역 상태**(distSeqOnly)를 공유한다.
+  // 상세는 /scatter 응답이 이미 rawdata 행 순서라 **데이터를 다시 받지 않는다**(차트만 재렌더).
+  const seqBtn = `<button class="distseg${distSeqOnly ? " active" : ""}" data-idet-seg="seq" ` +
+    `title="켜짐: 이 항목을 각 source 의 rawdata 순서(Serial 순)로 x=측정 순서 · y=측정값 표시 · 꺼짐: 누적분포 CDF">Serial 순</button>`;
+  return `<div class="distseg-group idet-opts">${seqBtn}${limitBtn}${bin1Btn}</div>`;
+}
+
+// CDF 자리 차트의 제목 — Serial 순 모드에서는 같은 자리에 run chart 를 그리므로 문구도 바뀐다.
+function idetCdfCapText() {
+  return distSeqOnly ? "Serial 순 (측정 순서 · rawdata 누적 순)" : "누적분포 CDF";
+}
+function idetSyncCdfCaption() {
+  const el = document.getElementById("cdfCapLabel");
+  if (el) el.textContent = idetCdfCapText();
 }
 
 function renderItemDetail(data) {
@@ -208,6 +221,7 @@ function renderItemDetail(data) {
         ${idetHeaderStats(data.stats)}
       </span>
     </div>
+    ${(typeof gcFormulaBarHtml === "function") ? gcFormulaBarHtml(data) : ""}
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="chartNoteBar"></div>
     ${distTempFilterHtml()}${idetOptsHtml()}
@@ -215,7 +229,7 @@ function renderItemDetail(data) {
     <div class="idet-charts">
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
-          <span>누적분포 CDF</span>
+          <span id="cdfCapLabel">${esc(idetCdfCapText())}</span>
           <button type="button" class="btn-sm idet-png" data-idet-png="cdf" title="지금 보이는 CDF 차트를 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">클립보드로 복사</button>
         </div>
         <div id="distCdf" class="dist-chart"></div>
@@ -476,6 +490,18 @@ function bindItemDetailPanel() {
         if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
         return;
       }
+      if (kind === "seq") {
+        // Serial 순 — 서버 응답(values/serial 이 이미 행 순서)을 그대로 다시 그리기만 한다.
+        // 재조회 없음: /scatter 는 order 를 모르고, 알 필요도 없다.
+        distSeqOnly = !distSeqOnly;
+        iseg.classList.toggle("active", distSeqOnly);
+        if (distSeqOnly) { cdfAxisOverride = null; ensureDistSeqData(); }
+        idetSyncCdfCaption();
+        renderIdetAxisBar("cdf");   // seq 모드에서는 바를 비운다(축 의미가 다르다)
+        if (_itemDetailData) distRenderCdf(_itemDetailData);
+        if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
+        return;
+      }
       // Bin1 계열은 데이터 변형이라 현재 항목을 새 변형으로 다시 연다. 두 버튼은 상호배타.
       if (kind === "bin1") {
         distBin1Only = !distBin1Only;
@@ -633,6 +659,9 @@ function renderIdetAxisBar(key) {
   const cfg = IDET_AXIS[key];
   const bar = cfg && document.getElementById(cfg.bar);
   if (!bar) return;
+  // Serial 순 모드의 CDF 자리는 x 가 "측정 순서"라 이 바(측정값 경계·단위)의 의미가 사라진다.
+  // 값을 남겨두면 순서 축에 규격 단위가 적용돼 조용히 이상한 눈금이 된다 → 바 자체를 비운다.
+  if (key === "cdf" && distSeqOnly) { bar.innerHTML = ""; bar.dataset.axisKey = key; return; }
   const num = k => `<input type="number" class="cdf-ax-in" data-cdf-ax="${k}" step="any">`;
   // 보조는 간격이 아니라 **등분 수(정수 n≥2)** 를 받는다 — 보조 눈금 간격 = 기본 단위 / n.
   const div = `<input type="number" class="cdf-ax-in" data-cdf-ax="minor" step="1" min="2" placeholder="n">`;
@@ -722,6 +751,9 @@ function cdfAfterEdit() {
 function distRenderCdf(data) {
   const cdfDiv = document.getElementById("distCdf");
   if (!cdfDiv) return;
+  // Serial 순 모드는 같은 자리에 축이 다른 차트를 그린다 — 분기는 이 한 곳뿐이라
+  // 재렌더 호출부(축옵션·칩 편집·항목 이동)가 전부 자동으로 따라온다.
+  if (distSeqOnly) { distRenderSeq(data, cdfDiv); return; }
   // 재렌더(제외/강조 편집) 시 이전 plot 을 해제 — scattergl 의 WebGL 컨텍스트 누적 방지
   // (SVG 에도 무해). newPlot 이 이어서 새로 초기화한다.
   if (cdfDiv.data) { try { Plotly.purge(cdfDiv); } catch (e) { /* no-op */ } }
@@ -812,6 +844,85 @@ function distRenderCdf(data) {
   // 차트 주석 오버레이 — 렌더 시점의 shapes 개수를 base 로 기억해야 하므로 항상 마지막에.
   if (window.chartNotesApply) chartNotesApply("cdf", data.subject, cdfDiv);
 }
+// ── Serial 순(rawdata 누적 순) 상세 차트 — CDF 자리에 그리는 run chart ─────────
+// x = 각 source 의 측정 순서(1..n) · y = 측정값. 데이터는 **/scatter 응답 그대로**다
+// (values/serial/xpos/ypos 가 이미 rawdata 행 순서) — 서버 재조회가 없다.
+// 전 포인트 렌더(다운샘플 없음, CLAUDE.md §5-5) — 대량 포인트는 CDF 와 같은 scattergl.
+//
+// ⚠️ **차트 주석(chart_notes)을 이 차트에 붙이지 않는다.** 주석 도형은 xref"x"/yref"y" =
+// 데이터 좌표로 저장되는데 이 축은 (순서, 측정값)이라 CDF 좌표와 의미가 다르다. 붙이면
+// 위치가 어긋나 보이는 데서 끝나지 않고, 편집 모드에서 도형을 한 번 건드리면
+// cnSyncFromChart 가 **seq 좌표로 저장값을 덮어써** 사용자가 CDF 에 그려둔 주석이 망가진다
+// (§5-12 "사용자 입력은 잃지 않는다"). 저장값은 그대로 두고 표시만 생략한다 — CDF 로
+// 돌아가면 그대로 다시 보인다. Map Analysis 선택 좌표 마커·Compare before-limit 선도
+// 같은 이유로 제외(누적% 축 전용).
+function distRenderSeq(data, seqDiv) {
+  if (seqDiv.data) { try { Plotly.purge(seqDiv); } catch (e) { /* no-op */ } }
+  const useGl = !!DIST.CDF_GL && webglOk();
+  const lo = data.lower_limit, hi = data.upper_limit;
+  const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
+  const unit = data.units || "";
+  let yMin = Infinity, yMax = -Infinity;
+  // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(CDF 와 동일 규칙).
+  const traces = distOrderedSources(data.sources).map(s => {
+    const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
+    // 제외 칩(cdfExcluded)은 CDF 와 같은 규칙으로 뺀다 — 남은 점의 순서는 그대로 유지되고
+    // x 는 1..m 으로 다시 매긴다(빈 자리를 남기면 없던 결측 구간처럼 보인다).
+    const xs = [], ys = [], cd = [];
+    for (let i = 0; i < s.values.length; i++) {
+      if (hasId && cdfExcluded.size
+          && cdfExcluded.has(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
+      const v = s.values[i];
+      xs.push(xs.length + 1);
+      ys.push(v);
+      if (hasId) cd.push([s.serial[i], s.xpos[i], s.ypos[i]]);
+      if (v < yMin) yMin = v;
+      if (v > yMax) yMax = v;
+    }
+    const base = distActiveColorFor(s.name);
+    const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name,
+      x: xs, y: ys, marker: { color: base, size: 5 } };
+    if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
+    if (hasId) {
+      trace.customdata = cd;
+      trace.hovertemplate = "source : %{fullData.name}<br>측정 순서 %{x}<br>측정값 %{y}<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
+    } else {
+      trace.hovertemplate = "source : %{fullData.name}<br>측정 순서 %{x}<br>측정값 %{y}<extra></extra>";
+    }
+    return trace;
+  });
+  // "Limit 안 Data만" 은 여기서 **y**(측정값) 축 클램프다 — 계산식은 축과 무관해 재사용한다.
+  const yr = distLimitRange(lo, hi, yMin, yMax);
+  Plotly.newPlot(seqDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
+    dragmode: cdfEditMode === "none" ? "zoom" : "select",
+    xaxis: { title: { text: "측정 순서 (rawdata 누적 순)" }, showgrid: true,
+      gridcolor: IDET_GRID_MAJOR, zeroline: false, rangemode: "tozero", nticks: 10 },
+    yaxis: { title: { text: `측정값${unit ? " [" + unit + "]" : ""}` }, showgrid: true,
+      gridcolor: IDET_GRID_MAJOR, zeroline: false,
+      ...(yr ? { range: yr, autorange: false } : {}) },
+    shapes: distSeqSpecShapes(lo, hi), annotations: distSeqSpecAnnos(lo, hi, false),
+    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
+  // 칩 제외 편집(클릭/박스선택)은 CDF 와 동일하게 동작한다 — 점 1개 = die 1개라 customdata
+  // 로 그 die 를 정확히 겨냥할 수 있다.
+  if (seqDiv.removeAllListeners) {
+    seqDiv.removeAllListeners("plotly_click");
+    seqDiv.removeAllListeners("plotly_selected");
+  }
+  seqDiv.on("plotly_click", ev => {
+    if (!cdfActiveSet() || !ev.points || !ev.points.length) return;
+    const pt = ev.points[0];
+    if (!pt.customdata) return;
+    cdfToggleChip(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2]));
+    cdfAfterEdit();
+  });
+  seqDiv.on("plotly_selected", ev => {
+    const set = cdfActiveSet();
+    if (!set || !ev || !ev.points || !ev.points.length) return;
+    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
+    cdfAfterEdit();
+  });
+}
+
 // 히스토그램(빈도 폴리곤)만 렌더 — CDF '제외'(cdfExcluded)를 반영하므로 편집/초기화 때도 재호출.
 function distRenderHist(data) {
   const hDiv = document.getElementById("distHist");
@@ -1060,6 +1171,10 @@ function distBindPanel() {
       } else if (seg.dataset.seg === "rtbin1") {
         distRtBin1Only = !distRtBin1Only;
         if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+      } else if (seg.dataset.seg === "seq") {
+        // Serial 순 — bin1 축과 직교(둘 다 켤 수 있다). 데이터 변형이라 seq 배치를 받는다.
+        distSeqOnly = !distSeqOnly;
+        if (distSeqOnly) ensureDistSeqData();
       }
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();

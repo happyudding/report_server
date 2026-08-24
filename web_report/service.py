@@ -28,6 +28,7 @@ from . import compute
 from . import disk_cache
 from . import dist_blob as _dist_blob
 from . import dist_pack as _dist_pack
+from . import dist_seq as _dist_seq
 from . import dist_pack_store
 from . import edits
 from . import eta
@@ -780,6 +781,22 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"),
         bin1=bin1, only=subjects, bin1_sources=_bin1_source_filter(session, bin1_scope))
+
+
+def get_distribution_seq_batch(session_id: str, subjects, *, report_db, upload_root: Path,
+                               bin1: bool = False, bin1_scope: str = "") -> dict:
+    """항목 배치 **Serial 순**(rawdata 누적 순) 값 배열 — 요청한 subject 만 (다운샘플 없음).
+
+    ECDF 배치(`get_distribution_batch`)의 짝이다. 다른 점 하나: **dist pack 지름길을 쓰지
+    않는다.** pack 은 업로드 시점에 값을 정렬(np.unique)해 굳힌 산출물이라 rawdata 순서가
+    남아 있지 않다 — 순서가 이 응답의 존재 이유이므로 항상 tables 를 읽는다(TABLES_CACHE
+    공유라 `/scatter` 와 같은 비용). 계산은 `dist_seq.compute_seq_compact` 한 곳이다.
+    """
+    session, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                             upload_root=upload_root)
+    return _dist_seq.compute_seq_compact(
+        tables, manifest.get("selected_items") or [], session.get("mode"),
+        only=subjects, bin1=bin1, bin1_sources=_bin1_source_filter(session, bin1_scope))
 
 
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
