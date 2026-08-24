@@ -174,7 +174,13 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
 - **그룹(pair) 유추** — [client/honey_ui/temperature_pairing.py](../client/honey_ui/temperature_pairing.py)
   `suggest_groups_by_role` 이 ① 이름 stem 일치(`WF1_RT`↔`WF1_CT`) ② 남은 것은 **역할별
   순번**(폴더마다 같은 파일명이면 source 이름이 `a`/`a_2`/`a_3` 로 갈리므로 순번이 유일한
-  단서) 2단계로 짝짓는다. 2단계는 추정이라 창이 '배치'가 아니라 **'확인' 창**이다 —
+  단서) 2단계로 짝짓는다. **①에는 짝 키가 우선한다**(2026-08-24, `pair_key_of` 인자):
+  `honey_main._temp_pair_keys` 가 입력 파일명에서 다시 계산한 base(LOT_WF, 소문자)를
+  이름별 키로 넘기고, 키가 같으면 dedupe(_2)로 legend 가 갈려도(`6Z19AFA1`/`6Z19AFA1_2`)
+  같은 그룹으로 묶인다 — 종전에는 stem 이 갈려 ②의 순번 추정이 다른 웨이퍼의 CT 를
+  RT 에 붙이는 오배치가 났다. 키가 있는데 RT 짝이 없는 CT/HT 는 ②로 넘기지 않고
+  미배정으로 남긴다(확실한 신원과 어긋나는 순번 결합 금지). 자동 배치가 행 순서까지
+  그룹 순으로 재정렬한 상태로 창이 뜬다. 2단계는 추정이라 창이 '배치'가 아니라 **'확인' 창**이다 —
   자동 배치가 표의 `Group`/`Role` 콤보를 채워 두고 사용자는 틀린 곳만 고른다. 자동 배치는
   **행 순서까지 그룹 순(RT→CT→HT)으로 재정렬**하므로 표시 순서가 곧 업로드 순서가 된다.
   계약은 `tests/test_temperature_pairing.py` 9개 검사가 고정한다.

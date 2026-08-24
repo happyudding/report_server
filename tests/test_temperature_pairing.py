@@ -112,6 +112,40 @@ def test_legacy_suggest_groups_unchanged():
     ], suggest_groups(names)
 
 
+def test_by_role_pair_key_beats_dedupe_suffix():
+    """짝 키(파일 base 이름)가 있으면 dedupe(_2) 로 갈린 legend 도 같은 그룹으로 묶는다.
+
+    사용자가 겪은 오배치(2026-08-24): 같은 웨이퍼의 RT/CT 파일이 base 가 같아
+    ``6Z19AFA1``/``6Z19AFA1_2`` 로 갈리면 stem 매칭이 빗나가고, 순번 추정이
+    ``6Z19AFA1``(RT) 를 다른 웨이퍼 ``6Z19AFA2``(CT) 와 묶었다.
+    """
+    names = ["6Z19AFA1", "6Z19AFA2", "6Z19AFA3", "6Z19AFA1_2"]
+    roles = {"6Z19AFA1": "RT", "6Z19AFA2": "CT",
+             "6Z19AFA3": "HT", "6Z19AFA1_2": "CT"}
+    keys = {"6Z19AFA1": "6z19afa1", "6Z19AFA2": "6z19afa2",
+            "6Z19AFA3": "6z19afa3", "6Z19AFA1_2": "6z19afa1"}
+    groups = suggest_groups_by_role(names, roles.get, keys.get)
+    assert groups == [{"RT": "6Z19AFA1", "CT": "6Z19AFA1_2"}], groups
+    # 키가 있는데 RT 짝이 없는 CT/HT 는 순번으로 엉뚱한 RT 에 붙이지 않고 미배정.
+    placed = {v for g in groups for v in g.values()}
+    assert "6Z19AFA2" not in placed and "6Z19AFA3" not in placed, placed
+
+
+def test_by_role_keyed_rt_only_group_is_kept():
+    """키가 있어도 RT 단독 그룹은 종전대로 만들어진다 (RT-only 세션 회귀 가드)."""
+    keys = {"r1": "lot_1", "r2": "lot_2"}
+    groups = suggest_groups_by_role(["r1", "r2"], {"r1": "RT", "r2": "RT"}.get, keys.get)
+    assert groups == [{"RT": "r1"}, {"RT": "r2"}], groups
+
+
+def test_suggest_groups_uses_pair_key():
+    """역할 없는 경로(suggest_groups)도 짝 키가 있으면 stem 대신 그 키로 묶는다."""
+    names = ["W1_RT", "W1B_CT"]                    # stem 은 다르지만 키가 같은 경우
+    keys = {"W1_RT": "w1", "W1B_CT": "w1"}
+    assert suggest_groups(names, keys.get) == [
+        {"RT": "W1_RT", "CT": "W1B_CT"}], suggest_groups(names, keys.get)
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -126,7 +160,10 @@ def main():
                test_by_role_duplicate_role_is_left_unassigned,
                test_by_role_drops_group_without_rt,
                test_by_role_rt_only_group_is_kept,
-               test_legacy_suggest_groups_unchanged):
+               test_legacy_suggest_groups_unchanged,
+               test_by_role_pair_key_beats_dedupe_suffix,
+               test_by_role_keyed_rt_only_group_is_kept,
+               test_suggest_groups_uses_pair_key):
         fn()
         checks += 1
     print(f"PASS: test_temperature_pairing ({checks} checks)")

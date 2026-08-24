@@ -48,9 +48,19 @@ _DIST_BATCH_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_BATCH_CACHE_
                                          or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 _DIST_BATCH_CACHE: OrderedDict = OrderedDict()
 
+# Gap Chart: 키 (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) -> gzip bytes.
+# 한 응답을 갤러리 카드와 Item_detail 상세가 **공유**한다(카드가 ECDF 를 프런트에서 만든다)
+# → 카드를 본 뒤 클릭하면 상세는 클라 캐시 히트다. 건당 크기가 scatter 급이라 바이트 상한이
+# 실질 상한 역할을 한다.
+_GAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_GAP_CACHE", "16") or 16))
+_GAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_GAP_CACHE_MB", "256")
+                                  or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+_GAP_CACHE: OrderedDict = OrderedDict()
+
 cache.register_akey_cache(_FULL_CACHE)
 cache.register_akey_cache(_SCATTER_CACHE)
 cache.register_akey_cache(_DIST_BATCH_CACHE)
+cache.register_akey_cache(_GAP_CACHE)
 
 
 def _stats() -> dict:
@@ -61,7 +71,7 @@ def _stats() -> dict:
     with cache.CACHE_LOCK:
         return {name: {"n": len(c), "bytes": sum(len(v) for v in c.values())}
                 for name, c in (("full", _FULL_CACHE), ("scatter", _SCATTER_CACHE),
-                                ("dist_batch", _DIST_BATCH_CACHE))}
+                                ("dist_batch", _DIST_BATCH_CACHE), ("gap", _GAP_CACHE))}
 
 
 cache.register_stats_provider(_stats)
@@ -192,4 +202,36 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
         blob = _gzip_json(result)
         cache._bytes_capped_put(_SCATTER_CACHE, cache_key, blob,
                                 _SCATTER_CACHE_MAX, _SCATTER_CACHE_MAX_BYTES)
+    return blob
+
+
+def get_gap_chart_gzip(session_id: str, chart_id: str, spec_digest: str, *, session: dict,
+                       report_db, upload_root: Path, bin1: bool = False,
+                       bin1_scope: str = "") -> bytes:
+    """Gap Chart 응답 gzip bytes 캐시 (get_scatter_gzip 동형).
+
+    ``spec_digest`` 는 호출부(라우트)가 `gap_chart.spec_digest(spec)` 로 만들어 넘긴다 —
+    **같은 값이 ETag 에도 들어가야** 수식 수정 후 stale 304 가 나가지 않는다.
+    정의가 없으면 service 가 KeyError (라우트가 404 처리)."""
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
+    cache_key = cache_policy.gap_key(   # 키 규약: cache_policy
+        session, chart_id, spec_digest, bin1=bin1, bin1_scope=scope,
+        prep_digest=preprocess.session_digest(report_db, session_id))
+
+    blob = cache.cache_get(_GAP_CACHE, cache_key)
+    if blob is not None:
+        return blob
+    with cache.keyed_lock_ctx(("gap",) + cache_key):
+        blob = cache.cache_get(_GAP_CACHE, cache_key)
+        if blob is not None:
+            return blob
+        result = service.gap_chart_item(
+            session_id, chart_id, report_db=report_db, upload_root=upload_root,
+            bin1=bin1, bin1_scope=scope, session=session)
+        blob = _gzip_json(result)
+        cache._bytes_capped_put(_GAP_CACHE, cache_key, blob,
+                                _GAP_CACHE_MAX, _GAP_CACHE_MAX_BYTES)
     return blob

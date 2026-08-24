@@ -20,11 +20,15 @@ LIMIT_FILTER = "Limit Table (*.lt *.pds)"
 _ROLE_TOKEN = re.compile(r"(?:^|[^A-Za-z0-9])(RT|CT|HT)(?:[^A-Za-z0-9]|$)", re.IGNORECASE)
 
 
-def suggest_groups(names) -> list:
+def suggest_groups(names, pair_key_of=None) -> list:
     """파일명 기반 자동 그룹 제안 → [{"RT": name, "CT": name, "HT": name}, ...].
 
     이름에서 RT/CT/HT 토큰을 떼어낸 나머지(stem)가 같은 것끼리 한 그룹으로 묶는다.
     토큰이 없거나 같은 stem·역할이 겹치면 그 source 는 제안에서 빠진다(미배정으로 남는다).
+
+    ``pair_key_of(name)`` 이 값을 주면 stem 대신 **그 키**로 묶는다(2026-08-24) —
+    입력 파일명에서 다시 계산한 LOT_WF base 같은 확실한 신원이다. dedupe 접미사(_2)로
+    이름이 갈려도 base 는 같아 짝이 깨지지 않는다.
     """
     buckets: dict = {}
     order: list = []
@@ -33,7 +37,8 @@ def suggest_groups(names) -> list:
         if not m:
             continue
         role = m.group(1).upper()
-        stem = (str(name)[:m.start(1)] + str(name)[m.end(1):]).strip(" _-.")
+        stem = (pair_key_of(name) if pair_key_of else None) or \
+            (str(name)[:m.start(1)] + str(name)[m.end(1):]).strip(" _-.")
         if stem not in buckets:
             buckets[stem] = {}
             order.append(stem)
@@ -75,7 +80,7 @@ def pair_key(name) -> str:
     return text.strip(" _-.").lower()
 
 
-def suggest_groups_by_role(names, role_of) -> list:
+def suggest_groups_by_role(names, role_of, pair_key_of=None) -> list:
     """역할이 **확정된** 상태에서 pair 를 묶는다 → [{"RT":…, "CT":…, "HT":…}, ...].
 
     role_of(name) → "RT"|"CT"|"HT"|"" (빈 값이면 파일명 토큰으로 폴백). 폴더 구조로 역할을
@@ -83,10 +88,19 @@ def suggest_groups_by_role(names, role_of) -> list:
 
       1. **이름 유사도** — pair_key(온도 토큰 제거) 가 같은 것끼리. 이름 자체에 온도가
          든 경우(``WF1_RT`` ↔ ``WF1_CT``)를 잡는다. RT + member 가 모두 있어야 확정.
+         ``pair_key_of(name)`` 이 값을 주면 그 이름은 **그 키**로 묶는다(2026-08-24) —
+         입력 파일명에서 다시 계산한 LOT_WF base 같은 확실한 신원이다. 같은 웨이퍼의
+         RT/CT 파일이 같은 base 를 내면 dedupe 접미사(_2)로 legend 가 갈려도(예:
+         ``6Z19AFA1`` / ``6Z19AFA1_2``) base 가 같아 여기서 정확히 묶인다.
       2. **역할별 순서** — 1에서 남은 것은 i 번째 RT ↔ i 번째 CT ↔ i 번째 HT 로 짝짓는다.
          폴더마다 같은 파일명을 쓰는 경우(``EP1/RT/a.stdf`` ↔ ``EP1/CT/a.stdf`` → source
          이름이 ``a`` / ``a_2`` / ``a_3`` 로 갈리는 경우)가 여기서 잡힌다. folder_intake 가
          역할마다 이름순으로 정렬해 주므로 같은 순번이 같은 웨이퍼다.
+         **키가 있는 CT/HT 는 순번 추정에서 뺀다** — 신원이 확실한데 1단계에서 RT 짝을
+         못 찾았다면 그 RT 가 입력에 없는 것이라, 순번으로 다른 웨이퍼의 RT 에 붙이는
+         것(사용자가 겪은 오배치)보다 미배정으로 남겨 직접 놓게 하는 편이 낫다.
+         키가 있는 RT 는 그대로 순번 대상이다(RT 단독 그룹 허용 유지 — 키 없는 CT/HT 와의
+         순번 결합은 종전처럼 남는 단서가 순번뿐이라 허용).
 
     2단계는 추정이라 틀릴 수 있다 — 사용자가 표에서 확인·수정하는 이유가 그것이다.
     짝이 남으면(RT 보다 CT 가 많은 등) 배치하지 않고 남겨 사용자가 직접 고르게 한다.
@@ -100,11 +114,14 @@ def suggest_groups_by_role(names, role_of) -> list:
         if role in ROLES:
             role_by_name[name] = role
 
-    # 1단계 — 이름 stem 이 같은 것끼리
+    keyed = {n: pair_key_of(n) for n in role_by_name} if pair_key_of else {}
+    keyed = {n: k for n, k in keyed.items() if k}
+
+    # 1단계 — 짝 키(있으면) 또는 이름 stem 이 같은 것끼리
     buckets: dict = {}
     order: list = []
     for name, role in role_by_name.items():
-        stem = pair_key(name)
+        stem = keyed.get(name) or pair_key(name)
         if stem not in buckets:
             buckets[stem] = {}
             order.append(stem)
@@ -117,9 +134,10 @@ def suggest_groups_by_role(names, role_of) -> list:
             groups.append(bucket)
             taken.update(bucket.values())
 
-    # 2단계 — 남은 것은 역할별 순번으로
+    # 2단계 — 남은 것은 역할별 순번으로 (키 있는 CT/HT 는 미배정 유지)
     rest = {role: [n for n in names
-                   if role_by_name.get(n) == role and n not in taken]
+                   if role_by_name.get(n) == role and n not in taken
+                   and (role == "RT" or n not in keyed)]
             for role in ROLES}
     for i, rt in enumerate(rest["RT"]):
         pair = {"RT": rt}

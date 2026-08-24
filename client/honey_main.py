@@ -298,7 +298,7 @@ def _encode_sources_worker(entries, cancel_evt=None):
     return out
 
 
-def _guess_temperature_groups(names, roles):
+def _guess_temperature_groups(names, roles, pair_key_of=None):
     """배치창의 자동 배치와 **같은 함수**로 추정 그룹을 만든다.
 
     반환 형태는 ``SourceNameDialog.result_arrangement()["groups"]`` 와 같은
@@ -307,12 +307,13 @@ def _guess_temperature_groups(names, roles):
 
     다이얼로그(_auto_arrange)와 **다른 규칙을 쓰면 안 된다** — 추정이 창의 초기 배치와
     달라지면 사용자가 아무것도 안 건드렸는데도 무효 판정이 나 헛경고가 뜬다.
+    ``pair_key_of`` 도 같은 이유로 창에 넘긴 ``pair_keys`` 와 같은 것을 넘겨야 한다.
     """
     from honey_ui.temperature_pairing import suggest_groups, suggest_groups_by_role
 
     try:
-        raw = (suggest_groups_by_role(list(names), roles.get) if roles
-               else suggest_groups(list(names)))
+        raw = (suggest_groups_by_role(list(names), roles.get, pair_key_of) if roles
+               else suggest_groups(list(names), pair_key_of))
     except Exception:  # noqa: BLE001
         return []
     out = []
@@ -2446,6 +2447,25 @@ class HoneyMainWindow(QMainWindow):
                     break
         return out
 
+    def _temp_pair_keys(self, names, paths):
+        """{source 이름: 짝 키} — Temperature 자동 배치용 (2026-08-24).
+
+        키 = 입력 파일명에서 product_type 규칙으로 다시 계산한 base(LOT_WF, 소문자).
+        같은 웨이퍼의 RT/CT 파일은 base 가 같아, dedupe(_2)로 source 이름이 갈려도
+        (``6Z19AFA1``/``6Z19AFA1_2``) 이 키로는 같은 그룹으로 묶인다. 이름 규칙이 없는
+        파일·개수가 어긋난 경우(병합)는 키를 만들지 않아 종전 추정(순번) 그대로다.
+        """
+        if not names or len(names) != len(paths):
+            return {}
+        from honey_ui.source_naming import source_name_for
+
+        out = {}
+        for name, path in zip(names, paths):
+            base = source_name_for(path, self.product_type())
+            if base:
+                out[str(name)] = str(base).lower()
+        return out
+
     def _temperature_first_flow(self):
         """Temperature 모드: RT/CT/HT 배치 창을 **파싱보다 먼저** 띄운다. 취소면 None.
 
@@ -2467,7 +2487,8 @@ class HoneyMainWindow(QMainWindow):
         def _temp_dialog(names, from_group):
             return SourceNameDialog(self, self._dialog_entries(names, paths, from_group),
                                     mode="Temperature",
-                                    roles=self._roles_for_names(names, paths))
+                                    roles=self._roles_for_names(names, paths),
+                                    pair_keys=self._temp_pair_keys(names, paths))
 
         names_guess = self._guess_source_names(paths)
         if names_guess is None:
@@ -2494,7 +2515,8 @@ class HoneyMainWindow(QMainWindow):
             # 창의 자동 배치와 **같은 규칙**으로 배치를 미리 추정한다 — CT/HT 는 이 배치로
             # rawdata 를 정리해야 인코딩할 수 있어서, 추정 없이는 RT·미배정분밖에 못 만든다.
             guess_groups = _guess_temperature_groups(
-                names_guess, self._roles_for_names(names_guess, paths))
+                names_guess, self._roles_for_names(names_guess, paths),
+                self._temp_pair_keys(names_guess, paths).get)
 
             def _prefetch_after_parse():
                 """파싱 뒤에 이어 달리는 선행 인코딩 (같은 워커 1개 FIFO).

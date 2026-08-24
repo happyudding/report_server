@@ -51,6 +51,7 @@ from flask import Flask  # noqa: E402
 from database import report_db  # noqa: E402
 from report.report_extension import report_bp, init_app as init_report  # noqa: E402
 from web_report import compute as wr_compute, edits as wr_edits  # noqa: E402
+from web_report.service import _DC_MAX_PAIRS as MAX_PAIRS  # noqa: E402
 from web_report.honeyform import (  # noqa: E402
     META_COLUMNS, META_ROW_LABELS, encode_honeyform_parquet,
 )
@@ -227,9 +228,9 @@ def test_reject(sid) -> None:
         "이름 빈값": ({"key": str(uuid.uuid4()), "value": spec(name="   ")}),
         "이름 초과": ({"key": str(uuid.uuid4()), "value": spec(name="x" * 121)}),
         "pairs 0": ({"key": str(uuid.uuid4()), "value": spec(pairs=[])}),
-        "pairs 41": ({"key": str(uuid.uuid4()),
-                      "value": spec(pairs=[{"source": f"S{i}", "item": "I"} for i in range(41)],
-                                    colors={})}),
+        "pairs 상한+1": ({"key": str(uuid.uuid4()),
+                         "value": spec(pairs=[{"source": f"S{i}", "item": "I"}
+                                              for i in range(MAX_PAIRS + 1)], colors={})}),
         "pair 빈값": ({"key": str(uuid.uuid4()),
                        "value": spec(pairs=[{"source": "", "item": "I"}], colors={})}),
         "limit mode": ({"key": str(uuid.uuid4()),
@@ -249,6 +250,32 @@ def test_reject(sid) -> None:
     assert post_comp(sid, [{"key": str(uuid.uuid4()), "value": spec()}
                            for _ in range(51)]).status_code == 400
     print(f"  [ok] 검증 거부 {len(cases) + 2}종 → 400")
+
+
+def test_many_pairs(sid) -> None:
+    """(h) 50개 이상 조합이 실제로 저장된다 — 사용자 요구(2026-08-24).
+
+    긴 항목명 + 색까지 실어 **바이트 상한**에 걸리지 않는지가 핵심이다(pair 개수만 늘리고
+    상한을 안 올리면 "50개 고르면 저장이 안 된다"가 된다)."""
+    assert MAX_PAIRS >= 50, f"pair 상한이 50 미만입니다 ({MAX_PAIRS})"
+    long_item = "VDD_CORE_MEAS_ACTIVE_MODE_VERY_LONG_ITEM_NAME_%02d"
+    pairs = [{"source": f"WF_LOT12345_W{s:02d}", "item": long_item % i}
+             for s in range(4) for i in range(MAX_PAIRS // 4)]
+    assert len(pairs) >= 50, len(pairs)
+    cid = str(uuid.uuid4())
+    body = spec(name="대량 조합", pairs=pairs,
+                colors={p["source"] + SEP + p["item"]: "#1f77b4" for p in pairs},
+                limit={"mode": "manual", "lo": 0, "hi": 1})
+    r = post_comp(sid, [{"key": cid, "value": body}])
+    assert r.status_code == 200, f"{len(pairs)} pair 저장 실패 {r.status_code}: " \
+                                 f"{r.get_data(as_text=True)[:200]}"
+    got = r.get_json()["dist_composites"][cid]
+    assert len(got["pairs"]) == len(pairs), got["pairs"][:2]
+    assert len(got["colors"]) == len(pairs), len(got["colors"])
+    extras = get_full(sid).get("dist_composites") or {}
+    assert len(extras[cid]["pairs"]) == len(pairs), "왕복에서 pair 가 줄었습니다"
+    post_comp(sid, [{"key": cid, "value": None}])
+    print(f"  [ok] {len(pairs)} pair 저장·왕복 (상한 {MAX_PAIRS})")
 
 
 def test_guards(sid) -> None:
@@ -289,6 +316,7 @@ def main():
         test_payload_rev_neutral(sid)
         test_update_and_delete(sid)
         test_sanitize(sid)
+        test_many_pairs(sid)
         test_reject(sid)
         test_guards(sid)
         test_state_excluded(sid)

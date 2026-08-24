@@ -186,6 +186,31 @@ def main():
     assert g2["members"] == ["LOTB_HT"], res["groups"]
     print("[ok] (j) result_arrangement 그룹 정합")
 
+    # (k) pair_keys — dedupe(_2)로 갈린 legend 도 base 키가 같으면 초기 배치가 같은 그룹
+    #     (2026-08-24 오배치 수정). 키 없는 RT 짝 없는 CT/HT 는 미배정으로 남는다.
+    ent = [("6Z19AFA1", r"C:\x\RT\6Z19AFA1.csv"), ("6Z19AFA2", r"C:\x\CT\6Z19AFA2.csv"),
+           ("6Z19AFA3", r"C:\x\HT\6Z19AFA3.csv"), ("6Z19AFA1_2", r"C:\x\CT\6Z19AFA1.csv")]
+    roles = {"6Z19AFA1": "RT", "6Z19AFA2": "CT", "6Z19AFA3": "HT", "6Z19AFA1_2": "CT"}
+    keys = {"6Z19AFA1": "6z19afa1", "6Z19AFA2": "6z19afa2",
+            "6Z19AFA3": "6z19afa3", "6Z19AFA1_2": "6z19afa1"}
+    FakeMsgBox.reset()
+    dlg7 = SourceNameDialog(None, ent, mode="Temperature", roles=roles, pair_keys=keys)
+    rm7 = {row.legend: (row.group, row.role) for row in dlg7._rows}
+    assert rm7["6Z19AFA1_RT"][0] == 1 and rm7["6Z19AFA1_2_CT"][0] == 1, rm7
+    # 미배정 행은 접미사도 role 도 안 붙는다(종전 동작) — 사용자가 창에서 직접 놓는다.
+    assert rm7["6Z19AFA2"][0] == 0 and rm7["6Z19AFA3"][0] == 0, rm7
+    # 자동 배치가 행 순서도 그룹 순(RT→CT, 미배정 뒤)으로 재정렬한 상태로 창이 뜬다.
+    order = [row.legend for row in dlg7._rows]
+    assert order[:2] == ["6Z19AFA1_RT", "6Z19AFA1_2_CT"], order
+    print("[ok] (k) pair_keys 로 dedupe legend 짝 매칭 + 그룹순 정렬")
+
+    # (l) Temperature 창은 입력 파일 열이 22자 더 넓다 (2026-08-24 가로 15% 확대)
+    dlg8 = SourceNameDialog(None, entries, mode="Normal")
+    assert dlg7._path_chars == dlg8._path_chars + 22, (dlg7._path_chars, dlg8._path_chars)
+    assert dlg7.table.columnWidth(0) > dlg8.table.columnWidth(0), (
+        dlg7.table.columnWidth(0), dlg8.table.columnWidth(0))
+    print("[ok] (l) Temperature 입력 파일 열 확대")
+
     print("\n전체 통과")
 
 

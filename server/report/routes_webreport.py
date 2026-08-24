@@ -359,6 +359,54 @@ def web_report_scatter(session_id, subject):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/gap_chart/<chart_id>")
+def web_report_gap_chart(session_id, chart_id):
+    """Gap Chart(사용자 수식으로 만든 파생 분포) 조회 — 갤러리 카드와 Item_detail 공용.
+
+    저장된 것은 수식뿐이고 값은 여기서 raw tables 에 적용해 만든다(web_report/gap_chart.py).
+    응답 구조는 `/scatter` 와 같아서 프런트가 Item_detail 화면을 그대로 재사용한다.
+
+    ETag 에 **수식 digest** 를 넣는 것이 핵심이다 — 캐시 키에만 넣고 여기서 빠뜨리면
+    수식을 고쳐도 브라우저가 304 로 옛 응답을 계속 쓴다(둘 다 같은
+    `gap_chart.spec_digest` 값을 쓴다)."""
+    from web_report import gap_chart as _gap
+
+    session = _require_web_report_session(session_id)
+    chart_id = (chart_id or "").strip()
+    if not chart_id or len(chart_id) > 40:
+        abort(400, "invalid gap chart id")
+    spec = web_report_service.get_gap_charts(session_id, report_db=report_db).get(chart_id)
+    if not spec:
+        abort(404, "gap chart not found")
+    digest = _gap.spec_digest(spec)
+    bin1, bin1_scope, variant = _bin1_args()
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-{variant}{_prep_tag(session_id)}-gap{digest[:12]}"')
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    try:
+        body = web_report_response_cache.get_gap_chart_gzip(
+            session_id, chart_id, digest, session=session,
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            bin1=bin1, bin1_scope=bin1_scope)
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except _gap.GapFormulaError as exc:
+        return jsonify({"error": str(exc), "index": exc.index}), 400
+    except KeyError:
+        abort(404, "gap chart or session data not found")
+    except Exception:
+        _log.exception("web_report gap_chart failed for session %s chart %s",
+                       session_id, chart_id)
+        abort(500, "gap chart failed")
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
 @report_bp.get("/session/<session_id>/web_report/trim_analysis")
 def web_report_trim_analysis(session_id):
     """Trim Analysis 탭 payload(항목 매칭 + 그룹 통계/shift) 지연 로드.
@@ -1180,6 +1228,43 @@ def web_report_dist_composites(session_id):
         _log.exception("web_report dist_composites failed for session %s", session_id)
         abort(500, "dist_composites failed")
     return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/gap_charts")
+def web_report_gap_charts(session_id):
+    """Gap Chart(수식 정의) 저장 — 세션 편집 DB(kind=gap_chart).
+
+    body: {"ops": [{"key": uuid, "value": {name,sources,tokens,limit}|null}]} — null 은 삭제.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard).
+    수식 문법 오류는 400 에 **토큰 인덱스**(index)까지 실어 프런트가 그 칩을 표시하게 한다."""
+    from web_report import gap_chart as _gap
+
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_gap_charts(
+            session_id, ops, report_db=report_db, client_ip=ip, user_agent=ua)
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except _gap.GapFormulaError as exc:
+        return jsonify({"error": str(exc), "index": exc.index}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report gap_charts failed for session %s", session_id)
+        abort(500, "gap_charts failed")
+    return jsonify(result)
+
 
 
 @report_bp.post("/session/<session_id>/web_report/note_tags")

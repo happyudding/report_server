@@ -394,18 +394,27 @@ class SourceNameDialog(QDialog):
     entries: ``[(legend, 대표 입력 파일 절대경로), ...]`` — **원본 source 순서**.
              (DUT 모드는 ``DUT <값>`` pseudo-source 목록 — 경로는 원본 파일 하나로 같다.)
     roles  : ``{원본 legend: "RT"|"CT"|"HT"}`` (Temperature 자동 배치용, 없으면 파일명 추정)
+    pair_keys: ``{원본 legend: 짝 키}`` (Temperature 자동 배치용, 2026-08-24) — 입력
+             파일명에서 다시 계산한 LOT_WF base(소문자). 같은 웨이퍼의 RT/CT 파일이
+             dedupe(_2)로 legend 가 갈려도 이 키가 같으면 자동 배치가 같은 그룹으로
+             묶는다. 없으면 종전(legend stem·순번) 추정 그대로.
     colors : 48색 팔레트 (없으면 옵션 팔레트를 읽는다)
 
     df_honey / df_honey_group 을 받지 않는다 — 그래야 QApplication 만으로 단독 실행해
     검증할 수 있고, 동결 영역 타입에 UI 가 결합되지 않는다.
     """
 
-    def __init__(self, parent, entries, mode="Normal", roles=None, colors=None):
+    def __init__(self, parent, entries, mode="Normal", roles=None, colors=None,
+                 pair_keys=None):
         super().__init__(parent)
         self._mode = str(mode or "Normal")
         self._is_temp = (self._mode == "Temperature")
         self._is_dut = (self._mode == "DUT")
         self._roles = {str(k): str(v).upper() for k, v in (roles or {}).items()}
+        self._pair_keys = {str(k): str(v) for k, v in (pair_keys or {}).items() if v}
+        # Temperature 는 창 가로를 15% 정도 더 쓰고, 늘어난 폭 전부를 입력 파일 열에 준다
+        # (2026-08-24 요청 — 파일명이 길어 상위 폴더 하나가 elide 로 잘려 보였다).
+        self._path_chars = _PATH_CHARS + 22 if self._is_temp else _PATH_CHARS
         self._original = [str(name) for name, _ in entries]
         self._paths = [str(path or "") for _, path in entries]
         self._bin_map = None
@@ -646,7 +655,7 @@ class SourceNameDialog(QDialog):
                     r, QTableWidgetItem(f"{r + 1} ★" if r == 0 and not self._is_dut
                                         else str(r + 1)))
 
-                cell = QTableWidgetItem(shorten_path(row.path))
+                cell = QTableWidgetItem(shorten_path(row.path, self._path_chars))
                 cell.setFont(self._mono)
                 cell.setToolTip(row.path or "(원본 파일 경로 정보 없음)")
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -968,8 +977,14 @@ class SourceNameDialog(QDialog):
         (그룹마다 RT → CT → HT)가 된다. 배치 못 한 source 는 미지정으로 뒤에 남는다.
         """
         names = [row.legend for row in self._rows]
-        groups = (suggest_groups_by_role(names, self._roles.get)
-                  if self._roles else suggest_groups(names))
+        # 짝 키는 원본 이름 기준으로 받았으므로 현재 legend(개명·접미사 반영)로 옮겨 잇는다.
+        key_by_legend = {}
+        for row in self._rows:
+            key = self._pair_keys.get(self._original[row.index])
+            if key:
+                key_by_legend.setdefault(row.legend, key)
+        groups = (suggest_groups_by_role(names, self._roles.get, key_by_legend.get)
+                  if self._roles else suggest_groups(names, key_by_legend.get))
         if not groups:
             if not silent:
                 QMessageBox.information(
@@ -1053,11 +1068,11 @@ class SourceNameDialog(QDialog):
         """21행까지 스크롤 없이 — 그 이상이면 세로 스크롤바가 자동으로 붙는다."""
         unit_mono = QFontMetrics(self._mono).horizontalAdvance("0")
         unit_ui = QFontMetrics(self.font()).horizontalAdvance("0")
-        self.table.setColumnWidth(0, _PATH_CHARS * unit_mono + 18)
+        self.table.setColumnWidth(0, self._path_chars * unit_mono + 18)
         self.table.setColumnWidth(1, self._legend_max * unit_ui + 28)
         width = self._legend_max * unit_ui + 28
         if not self._is_dut:                       # DUT 는 파일 열을 숨긴다
-            width += _PATH_CHARS * unit_mono + 18
+            width += self._path_chars * unit_mono + 18
         if self._is_temp:
             # Group 칸은 드롭다운 화살표(≈20px)가 폭을 먹는다 — 이름 자리 확보용으로 넓힌다.
             for col, w in ((2, 118), (3, 92)):

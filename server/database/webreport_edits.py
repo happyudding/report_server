@@ -32,7 +32,8 @@ def note_base_token(blob):
 # (routes_session extras). 이것들만 저장하면 payload_rev 를 올리지 않아 report 캐시가
 # 살아남는다. 여기 없는 kind 는 전부 payload 영향으로 간주한다(모르는 kind 가 생기면
 # 캐시를 유지하는 쪽보다 무효화하는 쪽이 안전 — 틀린 화면을 서빙하지 않는다).
-PAYLOAD_NEUTRAL_KINDS = ("chart_note", "note_sheet", "note_tag", "dist_composite")
+PAYLOAD_NEUTRAL_KINDS = ("chart_note", "note_sheet", "note_tag", "dist_composite",
+                        "gap_chart")
 
 
 # ── Note 본문 blob 헬퍼 (본문만 객체 저장으로 — 포인터는 report_session_blob) ──

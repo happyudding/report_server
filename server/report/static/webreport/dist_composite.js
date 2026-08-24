@@ -13,9 +13,11 @@
 //  · 저장은 ops 배열 1회 POST(rev 1회 증가) + 응답 권위본으로 DATA 갱신(재로드 금지 —
 //    report payload 는 kind 가 PAYLOAD_NEUTRAL 이라 캐시가 살아 있다).
 const DC_SEP = "\x1f";                 // pairKey 구분자 (서버 _DC_PAIR_SEP 와 동일)
-const DC_MAX_PAIRS = 40;               // 서버 _DC_MAX_PAIRS · distribution_batch 상한과 동일
+const DC_MAX_PAIRS = 200;              // 서버 _DC_MAX_PAIRS 와 동일 — 렌더 비용·저장 크기 기준
 const DC_NAME_MAX = 120;
 const DC_FETCH_CHUNK = 30;             // distribution_batch 한 요청 항목 수 (DIST_BATCH.SIZE 와 동일)
+// 검색 결과 목록 표시 상한 — 목록이 자체 스크롤이라 넉넉히 둔다(전체 선택은 일치 전량 대상).
+const DC_LIST_MAX = 300;
 
 function dcPairKey(source, item) { return source + DC_SEP + item; }
 function dcPairLabel(source, item) { return source + "_" + item; }
@@ -315,12 +317,12 @@ function dcRenderItemList(q) {
   if (head) {
     head.innerHTML = term
       ? `<span class="dist-sug-cnt">일치 <b>${rows.length}</b>개` +
-        (rows.length > 200 ? ` <span class="dist-sug-more">(상위 200개 표시)</span>` : "") + `</span>` +
+        (rows.length > DC_LIST_MAX ? ` <span class="dist-sug-more">(상위 ${DC_LIST_MAX}개 표시)</span>` : "") + `</span>` +
         `<button type="button" class="btn-sm" data-dc-sug-all="1">전체 선택</button>` +
         `<button type="button" class="btn-sm" data-dc-sug-all="0">전체 해제</button>`
       : `<span class="dist-sug-cnt">검색어를 입력해 항목을 고르세요 (선택 <b>${_dcSelItems.size}</b>개)</span>`;
   }
-  const show = rows.length > 200 ? rows.slice(0, 200) : rows;
+  const show = rows.length > DC_LIST_MAX ? rows.slice(0, DC_LIST_MAX) : rows;
   host.innerHTML = show.map(r =>
     `<label class="dist-sug-item">` +
     `<input type="checkbox" class="dc-item-chk" data-subject="${esc(r.subject)}"` +
@@ -330,19 +332,36 @@ function dcRenderItemList(q) {
     || `<div class="placeholder">${term ? "일치하는 항목이 없습니다" : "선택된 항목이 없습니다"}</div>`;
 }
 
-// 선택 요약(칩 + 조합 수) + limit 항목 드롭다운을 함께 갱신한다.
+// 선택된 항목 목록(오른쪽 칼럼) — 고정폭 그리드 + 자체 스크롤이라 50개를 골라도
+// 모달 높이가 변하지 않는다. 검색 결과 목록과 분리한 이유는, 검색어를 바꿔도 지금까지
+// 고른 것이 계속 보여야 "몇 개 골랐는지" 를 잃지 않기 때문이다.
+function dcRenderPicked() {
+  const host = document.getElementById("dcPickedList");
+  const head = document.getElementById("dcPickedHead");
+  const n = _dcSelItems.size;
+  if (head) head.textContent = n ? `선택된 항목 (${n}개)` : "선택된 항목";
+  if (!host) return;
+  // 표시 순서는 distIndex(TEST SEQ) 순 — 고른 순서대로 쌓이면 찾기 어렵다.
+  const picked = distIndex.filter(r => _dcSelItems.has(r.subject)).map(r => r.subject);
+  _dcSelItems.forEach(it => { if (picked.indexOf(it) < 0) picked.push(it); });  // 인덱스 밖 항목 보존
+  host.innerHTML = picked.map(it =>
+    `<div class="dc-picked-item">` +
+    `<span class="dc-picked-name" title="${esc(it)}">${esc(it)}</span>` +
+    `<button type="button" class="dc-chip-x" data-dc-unpick="${esc(it)}" title="빼기">✕</button></div>`).join("")
+    || `<div class="placeholder">왼쪽에서 항목을 검색해 고르세요</div>`;
+}
+
+// 조합 수 + limit 항목 드롭다운 + 저장 버튼 활성 상태를 함께 갱신한다.
 function dcRenderSummary() {
   const modal = document.getElementById("dcModal");
   const host = document.getElementById("dcSelSummary");
   const nSrc = _dcSelSources.size, nItem = _dcSelItems.size, n = nSrc * nItem;
+  dcRenderPicked();
   if (host) {
-    const chips = Array.from(_dcSelItems).map(it =>
-      `<span class="dc-chip" title="${esc(it)}">${esc(it)}` +
-      `<button type="button" class="dc-chip-x" data-dc-unpick="${esc(it)}">✕</button></span>`).join("");
     const warn = n > DC_MAX_PAIRS
       ? `<span class="dc-warn">조합이 ${DC_MAX_PAIRS}개를 넘습니다 — 항목이나 source 를 줄이세요</span>`
       : (n === 0 ? `<span class="dc-warn">source 와 항목을 각각 1개 이상 고르세요</span>` : "");
-    host.innerHTML = `<div class="dc-chips">${chips}</div>` +
+    host.innerHTML =
       `<div class="dc-count">조합: source ${nSrc} × item ${nItem} = <b>${n}</b>개 legend ${warn}</div>`;
   }
   // limit 기준 항목 드롭다운 — 선택된 항목만, 각 항목의 limit 을 함께 보여준다.
@@ -729,6 +748,14 @@ document.addEventListener("click", e => {
   const unpick = e.target.closest("[data-dc-unpick]");
   if (unpick) {
     _dcSelItems.delete(unpick.dataset.dcUnpick);
+    dcRenderItemList((document.getElementById("dcItemSearch") || {}).value || "");
+    dcRenderSummary();
+    return;
+  }
+  // 선택된 항목 전부 해제 — 검색어와 무관하게 고른 것을 통째로 비운다
+  // (검색 결과 헤더의 '전체 해제' 는 그 검색어의 일치 항목만 뺀다 — 둘은 다른 동작이다).
+  if (e.target.closest("[data-dc-pick-clear]")) {
+    _dcSelItems.clear();
     dcRenderItemList((document.getElementById("dcItemSearch") || {}).value || "");
     dcRenderSummary();
     return;

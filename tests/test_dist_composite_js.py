@@ -116,12 +116,44 @@ def test_registered():
     assert 'id="dcModal"' in view, "생성/수정 모달이 없습니다"
     assert 'id="panel-dist-composite-detail"' in view, "상세 패널 div 가 없습니다"
     # 모달 필수 입력 요소
-    for el in ("dcName", "dcSourceList", "dcItemSearch", "dcItemList",
-               "dcLimitItem", "dcLimitLo", "dcLimitHi", "dcSave", "dcCancel", "dcDelete"):
+    for el in ("dcName", "dcSourceList", "dcItemSearch", "dcItemList", "dcPickedList",
+               "dcSelSummary", "dcLimitItem", "dcLimitLo", "dcLimitHi",
+               "dcSave", "dcCancel", "dcDelete"):
         assert f'id="{el}"' in view, f"모달에 #{el} 이 없습니다"
+    # 좌우 2단 구조 — 왼쪽=고르기, 오른쪽=설정
+    assert "dc-modal-body" in view and view.count("dc-col") >= 3, "2단 레이아웃 마크업이 없습니다"
+    assert view.index('id="dcItemList"') < view.index('id="dcName"'), \
+        "왼쪽(고르기)이 오른쪽(설정)보다 먼저 와야 합니다"
     # 검색창은 dirty 유발 대상이 아니다(autoSave 오작동 방지)
     assert re.search(r'id="dcModal"[^>]*data-no-dirty', view), "모달에 data-no-dirty 가 없습니다"
-    print("[정적] 로드 순서 + 모달/패널/입력요소 + data-no-dirty OK")
+    print("[정적] 로드 순서 + 2단 모달/패널/입력요소 + data-no-dirty OK")
+
+
+def test_modal_fixed_height():
+    """모달은 **고정 높이 + 내부 스크롤** 이어야 한다.
+
+    항목을 수십 개 고르면 창이 세로로 자라고 바깥 스크롤이 생기던 것이 이번 개편의 발단이다.
+    .modal-box 의 overflow-y:auto 를 덮지 않으면 안쪽 flex 스크롤이 성립하지 않는다."""
+    view = (_ROOT / "server" / "report" / "report_view.html").read_text(encoding="utf-8")
+    # ⚠ 이 규칙은 `.modal-box`(width:360px / overflow-y:auto)보다 **앞**에 있어, 한 클래스
+    # 셀렉터로 쓰면 같은 특이도라 그쪽이 이겨 폭이 360px 로 되돌아간다(실측으로 확인).
+    assert ".modal-box.dc-modal-box {" in view, \
+        ".dc-modal-box 는 .modal-box 와 함께 써 특이도를 올려야 합니다(폭 360px 회귀)"
+    box = re.search(r"\.modal-box\.dc-modal-box \{([^}]*)\}", view)
+    assert box, ".modal-box.dc-modal-box 규칙이 없습니다"
+    css = box.group(1)
+    assert "overflow: hidden" in css, "모달이 자체 스크롤을 내면 안쪽 목록 스크롤이 안 생깁니다"
+    assert "height:" in css, "고정 높이가 없으면 내용에 따라 창이 자랍니다"
+    assert "flex-direction: column" in css, "세로 flex 가 아니면 목록이 남는 공간을 못 받습니다"
+    assert "1600px" in css, "가로 폭 확대(min(1600px, 96vw))가 반영되지 않았습니다"
+    # 목록 3종은 자체 스크롤
+    for cls in (".dc-item-list", ".dc-picked-list", ".dc-src-list"):
+        m = re.search(re.escape(cls) + r" \{([^}]*)\}", view)
+        assert m and "overflow-y: auto" in m.group(1), f"{cls} 에 자체 스크롤이 없습니다"
+    # 선택 목록은 고정폭 그리드 — 칩을 가로로 흘리면 50개에서 세로로 폭발한다
+    picked = re.search(r"\.dc-picked-list \{([^}]*)\}", view).group(1)
+    assert "grid-template-columns" in picked, "선택 목록이 다열 그리드가 아닙니다"
+    print("[정적] 고정 높이 + 내부 스크롤 3종 + 선택목록 그리드 OK")
 
 
 def test_hooks():
@@ -173,6 +205,21 @@ def test_pair_key_and_label():
     assert out["label"] == "WF1_IT00", out["label"]
     assert out["underscore"] == "A_B" + SEP + "C", out["underscore"]
     print("[c] pairKey(U+001F) / legend 표시명 OK")
+
+
+def test_pair_cap():
+    """(h) pair 상한이 50개 이상을 수용한다 (서버 _DC_MAX_PAIRS 와 같은 값)."""
+    svc = (_ROOT / "web_report" / "service.py").read_text(encoding="utf-8")
+    m = re.search(r"^_DC_MAX_PAIRS = (\d+)", svc, re.M)
+    assert m, "서버 _DC_MAX_PAIRS 를 찾지 못했습니다"
+    server_cap = int(m.group(1))
+    js = (_JS / "dist_composite.js").read_text(encoding="utf-8")
+    m2 = re.search(r"const DC_MAX_PAIRS = (\d+)", js)
+    assert m2, "프런트 DC_MAX_PAIRS 를 찾지 못했습니다"
+    assert int(m2.group(1)) == server_cap, \
+        f"상한 불일치: 프런트 {m2.group(1)} vs 서버 {server_cap} (프런트가 크면 저장이 400 난다)"
+    assert server_cap >= 50, f"50개 이상 선택을 수용해야 합니다 (현재 {server_cap})"
+    print(f"[h] pair 상한 {server_cap} — 프런트/서버 일치 + 50 이상 수용 OK")
 
 
 def test_color_assignment():
@@ -286,8 +333,10 @@ def main():
     print("[Distribution composite JS 검증]")
     test_no_es_module()
     test_registered()
+    test_modal_fixed_height()
     test_hooks()
     test_css_present()
+    test_pair_cap()
     if not edge_path():
         print("[SKIP] Edge 를 찾지 못해 브라우저 검증은 건너뜁니다")
         return

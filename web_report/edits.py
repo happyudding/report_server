@@ -67,6 +67,22 @@ KIND_CMP_ETC_ITEM = "cmp_etc_item"
 #   ECDF 데이터는 저장하지 않는다 — 조회 시 기존 distribution_batch 를 재사용한다.
 # manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_DIST_COMPOSITE = "dist_composite"
+# 2026-08-24 추가 — Gap Chart(사용자 수식으로 만든 파생 분포) 정의.
+#   item_key = 프런트 생성 UUID (**생성 후 불변** — CLAUDE.md 5-12. 이름·수식을 키로
+#   쓰면 개명 한 번에 차트와 그 차트의 chart_note(`cdf:gap:<uuid>`)가 통째로 끊긴다.)
+#   value = JSON {"name": str, "sources": [str...],
+#                 "tokens": [{"t":"item","source"?,"item"} | {"t":"num","v"} |
+#                            {"t":"op","v":"+|-|*|/"} | {"t":"lp"} | {"t":"rp"} ...],
+#                 "limit": {"mode":"manual"|"none","lo"?,"hi"?}}
+#   **수식은 평문이 아니라 토큰 배열이 정본이다** — item 이름에 공백·괄호·연산자가
+#   전부 합법이라 평문을 토큰으로 되돌리는 렉서가 원리적으로 존재할 수 없다
+#   (근거·파서는 web_report/gap_chart.py). 표시 문자열은 토큰에서 만들고 재파싱하지 않는다.
+#   계산 결과(die 값)는 저장하지 않는다 — 조회 시점에 raw tables 에서 다시 만든다.
+# ※ 새 kind 를 만들 때 **PAYLOAD_NEUTRAL_KINDS(database/webreport_edits.py) +
+#   _STATE_EXCLUDED_KINDS(아래) 동시 등재 필수** — 빠뜨리면 저장할 때마다 report
+#   전체가 콜드 재빌드된다(2026-08-13 조회 급락 사건과 같은 기전).
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_GAP_CHART = "gap_chart"
 # 2026-07-23 추가 — 조회 전처리 옵션(item_key='spec', value=JSON: exclude_items/outlier).
 # 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되는 되돌릴 수 있는 편집 (preprocess.py).
 KIND_PREPROCESS = "preprocess"
@@ -91,9 +107,10 @@ YIELD_BASIS_AUTO = "auto"
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
 # compare_note 도 표 payload 빌드와 무관하다 — /full extras 로 별도 조회한다.
-# dist_composite 도 마찬가지 — /full extras 로 별도 조회(load_dist_composites)한다.
+# dist_composite / gap_chart 도 마찬가지 — /full extras 로 별도 조회한다.
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
-                         KIND_YIELD_BASIS, KIND_COMPARE_NOTE, KIND_DIST_COMPOSITE)
+                         KIND_YIELD_BASIS, KIND_COMPARE_NOTE, KIND_DIST_COMPOSITE,
+                         KIND_GAP_CHART)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -267,6 +284,24 @@ def load_dist_composites(report_db, session_id: str) -> dict:
     kind 지정 조회라 note_sheet 등 다른 대용량 값을 끌어오지 않는다. (load_chart_notes 동형.)"""
     out = {}
     for row in report_db.get_webreport_edits(session_id, kinds=(KIND_DIST_COMPOSITE,)):
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            spec["updated_by"] = row.get("updated_by") or ""
+            spec["updated_at"] = row.get("updated_at") or ""
+            out[row["item_key"]] = spec
+    return out
+
+
+def load_gap_charts(report_db, session_id: str) -> dict:
+    """Gap Chart UUID → 정의 dict({name, sources, tokens, limit}). /full extras 조립용 —
+    kind 지정 조회라 note_sheet 등 다른 대용량 값을 끌어오지 않는다.
+    (load_dist_composites 동형. 계산 결과는 여기 없다 — 정의뿐이다.)"""
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_GAP_CHART,)):
         try:
             spec = json.loads(row["value"])
         except (json.JSONDecodeError, TypeError):

@@ -209,6 +209,9 @@ def session_full(session_id):
         # Distribution composite(합성 산포 차트) 정의 — 정의만이고 ECDF 는 안 실린다.
         extras["dist_composites"] = web_report_service.get_dist_composites(
             session_id, report_db=report_db)
+        # Gap Chart(사용자 수식) 정의 — 수식만이고 계산값은 안 실린다(조회 시 별도 라우트).
+        extras["gap_charts"] = web_report_service.get_gap_charts(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).

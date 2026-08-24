@@ -1248,6 +1248,34 @@ def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
                          temperature_groups=temp_groups)
 
 
+def gap_chart_item(session_id: str, chart_id: str, *, report_db, upload_root: Path,
+                   bin1: bool = False, bin1_scope: str = "", session=None) -> dict:
+    """Gap Chart 조회 — 저장된 수식을 raw tables 에 적용해 Item_detail 구조로 돌려준다.
+
+    `scatter_item`(위)과 같은 골격이다: 같은 tables 캐시(`_load_tables`)를 쓰고 같은 모드
+    보정(`_mode_tables`)을 거친다. 정의가 없으면 KeyError (라우트가 404 처리).
+
+    **워커 오프로드를 하지 않는다** — `/scatter` 와 같은 판단이다. 계산량은 scatter_item
+    보다 작고(fail_rows 의 행별 meta 슬라이싱이 없다) 지배항인 parquet 디코드는 TABLES_CACHE
+    를 공유한다. perf_guard S11 은 `forbid_remove` 규칙이라 오프로드를 넣지 않는 것은
+    위반이 아니다.
+
+    ``bin1`` 은 **양품(BIN==PASS_BIN) die 만** 이라는 의미로만 쓰고 규격 클리핑은 하지
+    않는다 — 수식 결과에는 고유 규격이 없다. 이 변형을 무시하면 갤러리에서 Bin1 버튼이
+    켜졌는데 Gap 카드만 전체 기준을 보여주는 조용한 불일치가 난다.
+    """
+    from . import gap_chart as _gap
+
+    spec = edits.load_gap_charts(report_db, session_id).get(str(chart_id))
+    if not spec:
+        raise KeyError(chart_id)
+    session, tables, _ = _load_tables(session_id, report_db=report_db,
+                                      upload_root=upload_root, session=session)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    return _gap.build_gap_item(tables, spec, chart_id=str(chart_id), bin1=bin1,
+                               bin1_sources=_bin1_source_filter(session, bin1_scope))
+
+
 def _commonality_index(session: dict, tables, prep_digest: str = ""):
     """Commonality 인덱스(메타 리스트 + item별 정렬 배열)를 세션 단위로 캐시해 반환.
 
@@ -2318,11 +2346,17 @@ def get_compare_notes(session_id: str, *, report_db) -> dict:
 # (조회 시 기존 distribution_batch 재사용). 규약 정본은 edits.KIND_DIST_COMPOSITE 주석.
 _DC_KEY_RE = re.compile(r"^[0-9a-fA-F-]{8,40}$")
 _DC_MAX_OPS = 50
-_DC_MAX_PAIRS = 40           # distribution_batch 의 subjects 상한(40)과 맞춘 값
+# pair(= source × item 조합) 상한. 처음엔 distribution_batch 의 subjects 상한(40)에 맞췄으나
+# 그 40 은 **item** 상한이고 프런트가 이미 30개씩 나눠 요청하므로 pair 수와는 무관하다
+# (2026-08-24 상향). 지금 상한을 정하는 것은 렌더 비용과 저장 크기다 — 200 pair 면 상세
+# CDF trace 200개·카드 canvas 3만 점 수준으로, 40소스 미니셀 실측(칸 예산 8000 분배)과
+# 같은 범위 안에 든다.
+_DC_MAX_PAIRS = 200
 _DC_NAME_MAX = 120
 _DC_SOURCE_MAX = 200
 _DC_ITEM_MAX = 300
-_DC_MAX_BYTES = 16 * 1024
+# pair 하나가 정의 + 색까지 약 150 bytes(긴 항목명 기준) → 200 pair ≈ 30KB. 여유를 둔다.
+_DC_MAX_BYTES = 64 * 1024
 _DC_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _DC_PAIR_SEP = "\x1f"
 
@@ -2454,6 +2488,127 @@ def update_dist_composites(session_id: str, ops: list, *, report_db,
 def get_dist_composites(session_id: str, *, report_db) -> dict:
     """/full extras 조립용 — composite UUID → {name,pairs,limit,colors,updated_by,updated_at}."""
     return edits.load_dist_composites(report_db, session_id)
+
+
+# Gap Chart — 사용자 수식으로 만든 파생 분포의 **정의**. 계산 결과는 저장하지 않는다
+# (조회 시 raw tables 에서 다시 만든다 — web_report/gap_chart.py). 수식은 평문이 아니라
+# 토큰 배열이 정본이다. 규약 정본은 edits.KIND_GAP_CHART 주석.
+_GAP_KEY_RE = re.compile(r"^[0-9a-fA-F-]{8,40}$")
+_GAP_MAX_OPS = 50
+_GAP_NAME_MAX = 120
+_GAP_SOURCE_MAX = 200
+_GAP_MAX_SOURCES = 40
+# 토큰 200개 × 긴 항목명(200자) 이라도 여유 있게 든다.
+_GAP_MAX_BYTES = 16 * 1024
+# 세션당 차트 수 상한. composite 에는 없는 안전장치인데 여기 두는 이유는 **페이로드 크기**다 —
+# gap 카드 1장이 Item_detail 1개분(die 전량 값 + hover meta)이고, 갤러리 필터 대상이 아니라
+# 탭에 들어오면 보이는 것부터 순서대로 요청된다.
+_GAP_MAX_CHARTS = 20
+
+
+def _sanitize_gap_chart(value) -> dict:
+    """저장 전 화이트리스트 재조립 (`_sanitize_dist_composite` 와 같은 방식).
+
+    항목이 실제로 존재하는지는 **검사하지 않는다** — 전처리(preprocess)로 항목이 잠시
+    빠져도 사용자가 만든 정의는 살아 있어야 한다. 없는 항목은 조회 시 `missing` 으로 알린다.
+    수식 문법 위반은 GapFormulaError(ValueError 하위)로 그대로 올려 라우트가 400 을 낸다."""
+    from . import gap_chart
+
+    if not isinstance(value, dict):
+        raise ValueError("gap chart must be an object")
+    name = str(value.get("name") or "").strip()
+    if not name:
+        raise ValueError("gap chart name is required")
+    if len(name) > _GAP_NAME_MAX:
+        raise ValueError(f"name too long (> {_GAP_NAME_MAX})")
+
+    sources, seen = [], set()
+    for raw in (value.get("sources") or []):
+        source = str(raw or "").strip()
+        if not source or source in seen:
+            continue
+        if len(source) > _GAP_SOURCE_MAX:
+            raise ValueError("source name too long")
+        seen.add(source)
+        sources.append(source)
+    if len(sources) > _GAP_MAX_SOURCES:
+        raise ValueError(f"too many sources ({len(sources)} > {_GAP_MAX_SOURCES})")
+
+    tokens = gap_chart.normalize_tokens(value.get("tokens"))
+    mode = gap_chart.formula_mode(tokens)
+    if mode == "mixed":
+        raise gap_chart.GapFormulaError(
+            "항목만 쓴 참조와 source 를 붙인 참조를 한 수식에 섞을 수 없습니다")
+    if mode == "per_source" and not sources:
+        raise ValueError("source 를 하나 이상 골라야 합니다")
+
+    raw_limit = value.get("limit") or {}
+    if str(raw_limit.get("mode") or "") == "manual":
+        limit = {"mode": "manual", "lo": _dc_num(raw_limit.get("lo")),
+                 "hi": _dc_num(raw_limit.get("hi"))}
+        if limit["lo"] is None and limit["hi"] is None:
+            limit = {"mode": "none"}
+    else:
+        limit = {"mode": "none"}
+    return {"name": name, "sources": sources, "tokens": tokens, "limit": limit}
+
+
+def update_gap_charts(session_id: str, ops: list, *, report_db,
+                      client_ip: str = "", user_agent: str = "") -> dict:
+    """Gap Chart 저장/삭제 — 세션 편집 DB(kind=gap_chart).
+
+    ops: [{"key": uuid, "value": {name,sources,tokens,limit} | null}] — null 은 삭제.
+    update_dist_composites 와 같은 규약(ops 배열 1회 = rev 1회 증가, 응답이 권위본)."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    if len(ops) > _GAP_MAX_OPS:
+        raise ValueError(f"too many gap chart entries ({len(ops)} > {_GAP_MAX_OPS})")
+
+    existing = {row.get("item_key")
+                for row in report_db.get_webreport_edit_meta(session_id, edits.KIND_GAP_CHART)}
+    changes, after = [], set(existing)
+    for entry in ops:
+        entry = entry or {}
+        key = str(entry.get("key") or "")
+        if not _GAP_KEY_RE.match(key):
+            raise ValueError(f"invalid gap chart key: {key[:80]!r}")
+        value = entry.get("value")
+        if value is None:
+            changes.append((edits.KIND_GAP_CHART, key, None))
+            after.discard(key)
+            continue
+        clean = _sanitize_gap_chart(value)
+        blob = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        if len(blob.encode("utf-8")) > _GAP_MAX_BYTES:
+            raise ValueError(f"gap chart too large (> {_GAP_MAX_BYTES} bytes)")
+        changes.append((edits.KIND_GAP_CHART, key, blob))
+        after.add(key)
+    if len(after) > _GAP_MAX_CHARTS:
+        raise ValueError(f"Gap Chart 는 세션당 {_GAP_MAX_CHARTS}개까지 만들 수 있습니다")
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"gap_charts({len(changes)} charts)",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "updated": len(changes), "rev": rev,
+            "gap_charts": edits.load_gap_charts(report_db, session_id)}
+
+
+def get_gap_charts(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 — Gap Chart UUID → {name,sources,tokens,limit,updated_by,updated_at}."""
+    return edits.load_gap_charts(report_db, session_id)
 
 
 def get_note_meta(session_id: str, *, report_db) -> dict:

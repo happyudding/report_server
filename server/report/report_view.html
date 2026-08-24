@@ -1041,39 +1041,70 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
   font-size: 12px; line-height: 1; padding: 1px 3px; border-radius: 4px; }
 .distg-comp-btn:hover { background: rgba(0,0,0,.08); color: #1A1A1F; }
 .distg-comp { border-color: #a5b4fc; }
-/* 모달 — Item 명이 길어도 안 잘리게 가로·세로 넉넉히 */
-.dc-modal-box { width: min(880px, 94vw); max-width: 94vw; max-height: calc(var(--vph) * 0.88); }
-.dc-field { display: block; font-size: 13px; color: #344054; margin-bottom: 4px; }
+/* 모달 — 좌우 2단, **고정 높이**. 항목을 수십 개 골라도 창이 세로로 자라거나 바깥
+   스크롤이 생기지 않도록 안쪽 목록 3개(source/검색결과/선택목록)가 각자 스크롤한다.
+   .modal-box 의 overflow-y:auto 를 hidden 으로 덮는 것이 그 전제다. */
+/* ⚠ 셀렉터를 `.modal-box.dc-modal-box`(특이도 0,2,0)로 쓴다 — 이 블록이 스타일시트에서
+   `.modal-box`(width:360px / overflow-y:auto) **앞에** 있어 같은 특이도면 그쪽이 이긴다.
+   한 클래스로 쓰면 폭이 360px 로 되돌아간다(실측으로 확인). */
+.modal-box.dc-modal-box { width: min(1600px, 96vw); max-width: 96vw;
+  height: min(880px, calc(var(--vph) * 0.9)); max-height: calc(var(--vph) * 0.9);
+  display: flex; flex-direction: column; overflow: hidden; padding: 20px 24px; }
+.dc-modal-head { flex: 0 0 auto; }
+.dc-modal-head .modal-desc { margin-bottom: 8px; }
+.dc-modal-body { flex: 1 1 auto; min-height: 0; display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
+.dc-col { display: flex; flex-direction: column; min-height: 0; }
+.dc-modal-actions { flex: 0 0 auto; }
+.dc-field { display: block; font-size: 13px; color: #344054; }
 .dc-field .field-input { margin-top: 4px; }
+/* 첫 섹션 머리는 위 여백 없이 붙인다(칼럼 최상단이라 이미 간격이 있다) */
 .dc-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: #344054; }
+  margin: 12px 0 6px; font-size: 13px; font-weight: 600; color: #344054; flex: 0 0 auto; }
+.dc-col > .dc-sec-head:first-child { margin-top: 0; }
 .dc-sec-acts { display: inline-flex; gap: 6px; }
 .dc-sec-acts .btn-sm { margin-top: 0; padding: 2px 8px; }
-.dc-src-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px 12px; max-height: 22vh; overflow-y: auto; border: 1px solid #e5e7eb;
+/* source 는 보통 수~수십 개라 고정 높이 스크롤 박스 */
+.dc-src-list { flex: 0 0 auto; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px;
+  max-height: 132px; overflow-y: auto; border: 1px solid #e5e7eb;
   border-radius: 6px; padding: 8px 10px; }
 .dc-src-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #222;
   cursor: pointer; overflow-wrap: anywhere; }
-/* 항목 목록 — .dist-suggest(position:absolute 드롭다운) 대신 모달 안 상시 목록이라
-   자체 컨테이너를 쓴다. 행 마크업(.dist-sug-item)은 갤러리 검색과 동일. */
-.dc-item-head { border: 1px solid #e5e7eb; border-bottom: none; border-radius: 6px 6px 0 0;
-  position: static; margin-top: 6px; }
-.dc-item-list { border: 1px solid #e5e7eb; border-radius: 0 0 6px 6px;
-  max-height: 34vh; overflow-y: auto; overflow-x: auto; }
+/* 검색 결과 목록 — 왼쪽 칼럼의 **남는 공간을 전부** 차지하고 자체 스크롤.
+   .dist-suggest(absolute 드롭다운) 대신 상시 목록이라 자체 컨테이너를 쓴다.
+   행 마크업(.dist-sug-item)은 갤러리 검색과 동일. */
+.dc-item-head { flex: 0 0 auto; border: 1px solid #e5e7eb; border-bottom: none;
+  border-radius: 6px 6px 0 0; position: static; margin-top: 6px; }
+.dc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
+  border-radius: 0 0 6px 6px; overflow-y: auto; overflow-x: auto; }
 .dc-item-list .placeholder { padding: 12px; font-size: 12.5px; }
-.dc-summary { margin-top: 10px; font-size: 12.5px; color: #344054; }
-.dc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
-.dc-chip { display: inline-flex; align-items: center; gap: 4px; background: #eef1f6;
-  border: 1px solid #d0d5dd; border-radius: 12px; padding: 2px 6px 2px 9px; font-size: 12px;
-  max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dc-chip-x { border: none; background: transparent; cursor: pointer; color: #b42318; font-size: 11px; padding: 0 2px; }
+/* 선택된 항목 — 칩을 가로로 흘리면 50개에서 세로로 폭발한다. 고정폭 그리드 + 자체
+   스크롤이라 몇 개를 고르든 높이가 그대로다. */
+.dc-picked-list { flex: 1 1 auto; min-height: 120px; overflow-y: auto;
+  border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 2px 8px; align-content: start; }
+.dc-picked-item { display: flex; align-items: center; gap: 4px; font-size: 12px;
+  color: #222; min-width: 0; }
+.dc-picked-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.dc-picked-list .placeholder { padding: 10px; font-size: 12.5px; grid-column: 1 / -1; }
+.dc-chip-x { border: none; background: transparent; cursor: pointer; color: #b42318;
+  font-size: 11px; padding: 0 2px; flex: 0 0 auto; }
+.dc-summary { flex: 0 0 auto; margin-top: 8px; font-size: 12.5px; color: #344054; }
 .dc-count b { color: #1d4ed8; }
 .dc-warn { color: #b42318; margin-left: 8px; }
-.dc-limit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dc-limit { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .dc-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #344054; cursor: pointer; }
-.dc-limit-sel { flex: 1 1 260px; min-width: 200px; }
+.dc-limit-sel { flex: 1 1 240px; min-width: 180px; }
 .dc-limit-manual { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: #344054; }
-.dc-limit-num { width: 110px; }
+.dc-limit-num { width: 100px; }
+/* 좁은 화면(노트북 세로 등)에서는 2단이 오히려 답답하다 — 1단으로 접는다 */
+@media (max-width: 1000px) {
+  .dc-modal-body { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .dc-item-list, .dc-picked-list { min-height: 140px; max-height: 260px; }
+}
 /* 상세 — Item detail(.idet) 레이아웃 재사용, 통계표만 추가 */
 .dc-detail .idet-chart-title { font-size: 13px; font-weight: 600; color: #344054; margin-bottom: 6px; }
 .dc-detail-acts { margin-left: auto; display: inline-flex; gap: 6px; }
@@ -2985,46 +3016,66 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <!-- Distribution composite 만들기/수정 — Item 명이 길어도 안 잘리게 넓은 규격(.dc-modal-box).
      검색 목록은 Distribution 검색 제안(.dist-sug-item)과 같은 마크업을 재사용한다. -->
 <div class="modal-overlay" id="dcModal" data-no-dirty>
+  <!-- 좌우 2단: 왼쪽=고르기(Source/TestItem), 오른쪽=설정(이름·선택목록·Limit).
+       창 높이는 **고정**이고 안쪽 목록 3개가 각자 스크롤한다 — 항목을 수십 개 골라도
+       모달 자체가 세로로 자라거나 바깥 스크롤이 생기지 않게 하기 위함. -->
   <div class="modal-box dc-modal-box">
-    <p class="modal-title" id="dcModalTitle">Distribution composite 만들기</p>
-    <p class="modal-desc">고른 source × 항목의 조합을 각각 legend 로 해서 한 차트에 겹쳐 그립니다.</p>
-
-    <label class="dc-field">차트 이름
-      <input type="text" id="dcName" class="field-input" maxlength="120" autocomplete="off"
-             placeholder="예: P1 vs P2 VDD 비교">
-    </label>
-
-    <div class="dc-sec-head">
-      <span>Source 선택</span>
-      <span class="dc-sec-acts">
-        <button type="button" class="btn-sm" data-dc-src-all="1">전체 선택</button>
-        <button type="button" class="btn-sm" data-dc-src-all="0">전체 해제</button>
-      </span>
-    </div>
-    <div id="dcSourceList" class="dc-src-list"></div>
-
-    <div class="dc-sec-head"><span>TestItem 검색</span></div>
-    <input type="text" id="dcItemSearch" class="field-input" autocomplete="off"
-           placeholder="항목 검색 (체크로 복수 선택)">
-    <div id="dcItemHead" class="dist-sug-head dc-item-head"></div>
-    <div id="dcItemList" class="dc-item-list"></div>
-
-    <div id="dcSelSummary" class="dc-summary"></div>
-
-    <div class="dc-sec-head"><span>Limit 기준</span></div>
-    <div class="dc-limit">
-      <label class="dc-radio"><input type="radio" name="dcLimitMode" value="item" checked>
-        선택 항목의 Limit 사용</label>
-      <select id="dcLimitItem" class="field-input dc-limit-sel"></select>
-      <label class="dc-radio"><input type="radio" name="dcLimitMode" value="manual">
-        직접 입력</label>
-      <span class="dc-limit-manual">
-        Lo <input type="text" id="dcLimitLo" class="field-input dc-limit-num" autocomplete="off">
-        Hi <input type="text" id="dcLimitHi" class="field-input dc-limit-num" autocomplete="off">
-      </span>
+    <div class="dc-modal-head">
+      <p class="modal-title" id="dcModalTitle">Distribution composite 만들기</p>
+      <p class="modal-desc">고른 source × 항목의 조합을 각각 legend 로 해서 한 차트에 겹쳐 그립니다.</p>
     </div>
 
-    <div class="modal-actions">
+    <div class="dc-modal-body">
+      <!-- ── 왼쪽: 고르기 ── -->
+      <div class="dc-col dc-col-pick">
+        <div class="dc-sec-head">
+          <span>Source 선택</span>
+          <span class="dc-sec-acts">
+            <button type="button" class="btn-sm" data-dc-src-all="1">전체 선택</button>
+            <button type="button" class="btn-sm" data-dc-src-all="0">전체 해제</button>
+          </span>
+        </div>
+        <div id="dcSourceList" class="dc-src-list"></div>
+
+        <div class="dc-sec-head"><span>TestItem 검색</span></div>
+        <input type="text" id="dcItemSearch" class="field-input" autocomplete="off"
+               placeholder="항목 검색 (체크로 복수 선택)">
+        <div id="dcItemHead" class="dist-sug-head dc-item-head"></div>
+        <div id="dcItemList" class="dc-item-list"></div>
+      </div>
+
+      <!-- ── 오른쪽: 설정 ── -->
+      <div class="dc-col dc-col-cfg">
+        <label class="dc-field">차트 이름
+          <input type="text" id="dcName" class="field-input" maxlength="120" autocomplete="off"
+                 placeholder="예: P1 vs P2 VDD 비교">
+        </label>
+
+        <div class="dc-sec-head">
+          <span id="dcPickedHead">선택된 항목</span>
+          <span class="dc-sec-acts">
+            <button type="button" class="btn-sm" data-dc-pick-clear="1">모두 해제</button>
+          </span>
+        </div>
+        <div id="dcPickedList" class="dc-picked-list"></div>
+        <div id="dcSelSummary" class="dc-summary"></div>
+
+        <div class="dc-sec-head"><span>Limit 기준</span></div>
+        <div class="dc-limit">
+          <label class="dc-radio"><input type="radio" name="dcLimitMode" value="item" checked>
+            선택 항목의 Limit 사용</label>
+          <select id="dcLimitItem" class="field-input dc-limit-sel"></select>
+          <label class="dc-radio"><input type="radio" name="dcLimitMode" value="manual">
+            직접 입력</label>
+          <span class="dc-limit-manual">
+            Lo <input type="text" id="dcLimitLo" class="field-input dc-limit-num" autocomplete="off">
+            Hi <input type="text" id="dcLimitHi" class="field-input dc-limit-num" autocomplete="off">
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions dc-modal-actions">
       <button class="modal-btn danger" id="dcDelete" style="display:none">🗑 삭제</button>
       <button class="modal-btn" id="dcCancel">취소</button>
       <button class="modal-btn primary" id="dcSave">저장</button>

@@ -17,6 +17,7 @@
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
 | _SCATTER_CACHE     | (akey, chash[, prep], mode, subject[, "bin1"])   | raw_data 편집 / 전처리 / 세션 삭제 ("bin1"=양품만) |
 | DIST_CHUNK_CACHE   | (akey, chash[, prep], mode, chunk_id)            | raw_data 편집 / 전처리 / 세션 삭제  |
+| _GAP_CACHE         | (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) | raw_data 편집 / 전처리 / **수식 수정(spec_digest)** / 세션 삭제 — **edits_rev·sid 무관** |
 | AI_COMMENT_CACHE   | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver) | raw_data 편집 / 전처리 / 세션 메타(PATCH) / eval 룰 편집 — **edits_rev·sid 무관**(comment 편집으로 재평가 안 함) |
 
 공통 규약:
@@ -494,4 +495,25 @@ def scatter_key(session, subject: str, *, bin1: bool = False, prep_digest: str =
                 bin1_scope: str = "") -> tuple:
     # bin1=True 는 양품(Bin1)만으로 낸 상세 — 전체 기준과 별도 캐시(키에만 추가).
     return (_base(session, prep_digest) + (_mode(session), subject)
+            + _bin1_suffix(bin1, bin1_scope))
+
+
+# Gap Chart 응답 구조를 바꿀 때만 올린다 (build_gap_item 의 반환 키/형태).
+# 전역 REPORT_SCHEMA_VERSION 과 무관 — gap 은 report payload 에 실리지 않는다.
+GAP_SCHEMA_VERSION = 1
+
+
+def gap_key(session, chart_id: str, spec_digest: str, *, bin1: bool = False,
+            prep_digest: str = "", bin1_scope: str = "") -> tuple:
+    """Gap Chart 조회 응답(gzip bytes) 캐시 키.
+
+    **spec_digest 는 기본값 없는 필수 인자다** — 빠뜨리면 TypeError 로 즉시 터지게 해서
+    "수식을 고쳤는데 옛 숫자가 그대로" 를 구조적으로 막는다. 값은
+    `gap_chart.spec_digest(spec)` 하나만 쓴다(라우트가 ETag 에도 같은 값을 박는다).
+
+    **edits_rev·sid 를 넣지 않는 이유**는 ai_comment_key/compare_key 와 같다 — edits_rev 는
+    남이 코멘트 한 줄만 쳐도 올라가므로, 키에 넣으면 그때마다 이 차트 캐시가 통째로 죽는다.
+    이 차트의 수식이 바뀌었는지는 spec_digest 하나로 정확히 판별된다."""
+    return (_base(session, prep_digest)
+            + (_mode(session), str(chart_id), str(spec_digest), GAP_SCHEMA_VERSION)
             + _bin1_suffix(bin1, bin1_scope))
