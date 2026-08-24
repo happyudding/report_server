@@ -598,7 +598,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     - 저장은 `POST .../web_report/dist_composites`(ops 배열, null=삭제) 단발. 응답이 권위본이라
       `load(false)` 재로드를 하지 않는다 — kind 가 payload 중립이라 report 캐시가 살아 있다.
   - **Gap Chart (사용자 수식 파생 분포 — 2026-08-24)**: 같은 "분석하기 ▾" 메뉴의 두 번째
-    항목. 모달(좌우 2단 — 왼쪽 source·항목 목록 / 오른쪽 수식)에서 `( ) + - * /` 로 식을
+    항목. 모달(좌우 2단 — 왼쪽 항목 목록 / 오른쪽 source 선택·수식)에서 `( ) + - * /` 로 식을
     조립하면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면 **기존 Item_detail
     화면이 그대로** 열린다. 프런트 [gap_chart.js](../server/report/static/webreport/gap_chart.js),
     계산 [web_report/gap_chart.py](../web_report/gap_chart.py).

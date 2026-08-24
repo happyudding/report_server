@@ -23,36 +23,67 @@ function honeyMapSelSnapshot() {
 }
 window.honeyMapSelSnapshot = honeyMapSelSnapshot;
 
-// 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색). 단일 선택일 때만
-// 포커싱용 점선 크로스헤어 추가(다중은 점 색으로 구분). 해당 항목 값 없는 chip 은 건너뜀.
-function chipMarkersFor(subject) {
-  if (!mapSelChips.length) return null;
-  const traces = [], shapes = [];
-  mapSelChips.forEach(c => {
-    const it = c.items[subject];
-    if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
-    traces.push({ type: "scatter", mode: "markers", x: [it.value], y: [it.cum_pct],
-      marker: { color: c.color, size: 7, line: { width: 1, color: "#fff" } },
-      cliponaxis: false, hoverinfo: "skip", showlegend: false });
-  });
-  if (!traces.length) return null;
-  if (mapSelChips.length === 1) {   // 단일: 해당 색 점선 크로스헤어로 포커싱
-    const c = mapSelChips[0], it = c.items[subject];
-    if (it && typeof it.value === "number" && typeof it.cum_pct === "number") {
-      shapes.push({ type: "line", x0: it.value, x1: it.value, yref: "paper", y0: 0, y1: 1,
-        line: { color: c.color, width: 1, dash: "dot" } });
-      shapes.push({ type: "line", xref: "paper", x0: 0, x1: 1, y0: it.cum_pct, y1: it.cum_pct,
-        line: { color: c.color, width: 1, dash: "dot" } });
-    }
+// ── chip 마커 (CDF 위 위치 표시) ─────────────────────────────────────────────
+// hits = [{color, value, cum}] → Plotly trace/shape. 점 크기·테두리·크로스헤어 규칙의
+// **단일 진실**이라, 어느 차트(일반 Distribution / composite / Gap Chart)에서든 같은
+// 모양으로 찍힌다. 크로스헤어는 "chip 도 1개, 이 차트에 찍힌 점도 1개" 일 때만 —
+// 점이 여러 개인데 선을 그으면 어느 점의 선인지 알 수 없다.
+function mapSelMarkerTraces(hits) {
+  if (!hits || !hits.length) return null;
+  const traces = hits.map(h => ({
+    type: "scatter", mode: "markers", x: [h.value], y: [h.cum],
+    marker: { color: h.color, size: 7, line: { width: 1, color: "#fff" } },
+    cliponaxis: false, hoverinfo: "skip", showlegend: false }));
+  const shapes = [];
+  if (mapSelChips.length === 1 && hits.length === 1) {
+    const h = hits[0];
+    shapes.push({ type: "line", x0: h.value, x1: h.value, yref: "paper", y0: 0, y1: 1,
+      line: { color: h.color, width: 1, dash: "dot" } });
+    shapes.push({ type: "line", xref: "paper", x0: 0, x1: 1, y0: h.cum, y1: h.cum,
+      line: { color: h.color, width: 1, dash: "dot" } });
   }
   return { traces, shapes };
 }
 
+// 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색).
+// 해당 항목 값 없는 chip 은 건너뜀. 값·누적% 는 **서버가 준 것**(chip_percentiles)을 쓴다 —
+// 같은 chip 이 어느 화면에 나오든 같은 좌표에 찍혀야 하기 때문(CLAUDE.md 규칙 13).
+function chipMarkersFor(subject) {
+  if (!mapSelChips.length) return null;
+  const hits = [];
+  mapSelChips.forEach(c => {
+    const it = c.items[subject];
+    if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
+    hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
+  });
+  return mapSelMarkerTraces(hits);
+}
+
+// Distribution composite 용 — pair(source×item) 목록 전체에 대한 마커를 **한 번에** 모은다.
+// pair 마다 따로 만들면 크로스헤어 판정(점 1개)이 pair 수만큼 걸려 선이 여러 벌 생긴다.
+// chip 은 특정 source 의 die 이므로 그 source 의 pair 에만 찍는다.
+function chipMarkersForPairs(pairs) {
+  if (!mapSelChips.length) return null;
+  const hits = [];
+  (pairs || []).forEach(p => {
+    mapSelChips.forEach(c => {
+      if ((c.source || "") !== p.source) return;
+      const it = c.items[p.item];
+      if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
+      hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
+    });
+  });
+  return mapSelMarkerTraces(hits);
+}
+
 // 선택 변경 후 Distribution 소비처(보이는 갤러리 카드 + 열려있는 Item_detail) 재렌더.
+// 갤러리 카드 셀렉터(.distg-card)에는 composite·Gap Chart 카드도 포함된다(같은 골격).
 function applyChipToDistribution() {
   document.querySelectorAll('#panel-distribution .distg-card').forEach(c => { c.dataset.rendered = ""; });
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]').forEach(distQueueRender);
   if (_itemDetailData) { distRenderCdf(_itemDetailData); renderIdetChipVals(); }
+  // composite 상세는 별도 패널이라 갤러리 재렌더에 걸리지 않는다.
+  if (typeof _dcDetailId !== "undefined" && _dcDetailId) dcRenderDetailCharts();
 }
 
 // 좌표 검색 패널의 펼침 상태 — 좌표를 추가/해제하면 renderMapAnalysis 가 Map 패널을

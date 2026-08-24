@@ -185,18 +185,24 @@ function dcRenderCompositeCell(cell) {
   });
   const { lo, hi } = dcLimitOf(comp);
   const sentinel = distSentinelTrace(pts);
+  // Map Analysis 선택 좌표(mapSelChips) — 일반 카드와 같은 규칙으로 이 pair 들 위에 찍는다.
+  const cm = chipMarkersForPairs(pairs);
+  const traces = sentinel ? [sentinel] : [];
+  if (cm) traces.push(...cm.traces);
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 9 } },
     yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
       zeroline: false, tickfont: { size: 9 } },
-    shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, true),
+    shapes: distSpecShapes(lo, hi, false).concat(cm ? cm.shapes : []),
+    annotations: distSpecAnnos(lo, hi, true),
     margin: { l: 34, r: 10, t: 8, b: 20 }, showlegend: false };
-  Plotly.newPlot(plot, sentinel ? [sentinel] : [], layout, DIST_CFG_STATIC);
+  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
   // 점 색 해석기 주입 — distDrawPoints 는 키를 source 명으로 보지만, composite 는 pairKey
   // 라 저장된 색 맵을 쓰게 한다(기존 경로는 _distColorFor 가 없어 종전과 동일하게 동작).
   plot._distColorFor = k => dcColorFor(comp, k);
-  distPaintPoints(plot, pts, null);
+  // chip 마커는 canvas 위로 다시 그린다 — 안 넘기면 ECDF 점 canvas 에 가려 안 보인다.
+  distPaintPoints(plot, pts, cm ? cm.traces : null);
   cell.dataset.rendered = "1";
 }
 
@@ -305,7 +311,8 @@ function dcRenderSources() {
   const host = document.getElementById("dcSourceList");
   if (!host) return;
   host.innerHTML = dcSourceNames().map(s =>
-    `<label class="dc-src-item"><input type="checkbox" class="dc-src-chk" data-source="${esc(s)}"` +
+    `<label class="dc-src-item" title="${esc(s)}">` +   // 한 줄 고정이라 긴 이름은 잘린다 → 툴팁으로 전체 노출
+    `<input type="checkbox" class="dc-src-chk" data-source="${esc(s)}"` +
     `${_dcSelSources.has(s) ? " checked" : ""}><span>${esc(s)}</span></label>`).join("")
     || `<div class="placeholder">source 없음</div>`;
 }
@@ -647,12 +654,16 @@ function dcRenderDetailCharts() {
     if (!useGl) t.cliponaxis = false;
     traces.push(t);
   });
+  // Map Analysis 선택 좌표 — 갤러리 카드와 같은 마커(상세는 canvas 가 없어 trace 만).
+  const cm = chipMarkersForPairs(pairs);
+  if (cm) traces.push(...cm.traces);
   const xtitle = `측정값${units ? " [" + units + "]" : ""}`;
   Plotly.newPlot(div, traces, { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",
     xaxis: { title: { text: xtitle }, showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false, nticks: 10 },
     yaxis: { title: { text: "누적 %" }, range: [-2, 102], tick0: 0, dtick: 20, ticksuffix: "%",
       showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false },
-    shapes: distSpecShapes(lo, hi, true), annotations: distSpecAnnos(lo, hi, false),
+    shapes: distSpecShapes(lo, hi, true).concat(cm ? cm.shapes : []),
+    annotations: distSpecAnnos(lo, hi, false),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
 }
 

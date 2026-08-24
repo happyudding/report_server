@@ -1,7 +1,7 @@
 // Gap Chart — 사용자 수식으로 만든 파생 분포 (2026-08-24).
 //
-// Distribution 툴바 "분석하기 ▾" → "Gap Chart" → 모달(좌우 2단: source·항목 목록 |
-// 수식 편집)에서 식을 조립하면 갤러리 맨 앞에 카드가 생기고, 카드를 누르면 **기존
+// Distribution 툴바 "분석하기 ▾" → "Gap Chart" → 모달(좌우 2단: 항목 목록 |
+// source 선택·수식 편집)에서 식을 조립하면 갤러리 맨 앞에 카드가 생기고, 카드를 누르면 **기존
 // Item_detail** 화면이 그대로 열린다(서버 응답 구조가 /scatter 와 같다).
 //
 // 저장되는 것은 수식(토큰 배열)뿐이다 — 값은 조회 때 서버가 raw tables 로 다시 만든다
@@ -115,11 +115,48 @@ const _gcInflight = { all: new Set(), bin1: new Set(), rtbin1: new Set() };
 
 function gcCacheFor(variant) { return _gcCache[distVariantKey(variant)] || _gcCache.all; }
 
+// cdf(정렬 결과 order 포함)와 원본 시리즈를 함께 들고 있는다 — Map 선택 좌표 마커가
+// "이 좌표의 gap 값과 그 누적%" 를 찾을 때 필요하다(gcChipHits).
 function gcBuildSeries(data) {
   return ((data && data.sources) || []).map(s => {
     const c = distCdfFromValues(s.values || []);
-    return { name: s.name, entry: { xs: c.x, ys: c.y } };
+    return { name: s.name, entry: { xs: c.x, ys: c.y }, cdf: c, src: s };
   }).filter(s => s.entry.xs && s.entry.xs.length);
+}
+
+// ── Map Analysis 선택 좌표(mapSelChips) → 이 gap 시리즈 위의 점 ──────────────
+// gap 값은 수식으로 만든 파생값이라 chip.items(서버가 준 원본 항목 값·누적%)에 없다.
+// 대신 서버 응답이 값과 나란히 SERIAL/XPOS/YPOS 를 주므로, **좌표로 원본 행을 찾아**
+// 그 값과 정렬 위치(=누적%)를 그대로 읽는다. 즉 마커는 이 차트가 그린 곡선 위에 정확히
+// 놓인다(별도 계산이 아니라 같은 배열에서 읽은 값).
+//   per_source 모드: 시리즈 이름 = source 명 → 그 source 의 chip 만
+//   explicit  모드: 좌표 교집합 시리즈 1개 → source 무관하게 좌표로만 매칭
+function gcChipHits(seriesName, cdf, xpos, ypos, perSource) {
+  const hits = [];
+  if (!mapSelChips.length || !cdf || !cdf.order) return hits;
+  const want = new Map();
+  mapSelChips.forEach(c => {
+    if (perSource && (c.source || "") !== seriesName) return;
+    want.set(String(c.xpos) + "\x1f" + String(c.ypos), c);
+  });
+  if (!want.size || !xpos || !ypos) return hits;
+  for (let k = 0; k < cdf.order.length; k++) {
+    const i = cdf.order[k];
+    const chip = want.get(String(xpos[i]) + "\x1f" + String(ypos[i]));
+    // chip 참조를 함께 실어 보낸다 — Item_detail 의 '선택 좌표 값' 표가 이 값을 그대로 쓴다.
+    if (chip) hits.push({ color: chip.color, value: cdf.x[k], cum: cdf.y[k], chip: chip });
+  }
+  return hits;
+}
+// 시리즈 전체분을 한 번에 모은다(크로스헤어 판정이 차트 단위여야 하므로 — mapSelMarkerTraces).
+function gcChipMarkers(hit, chart) {
+  if (!hit || !mapSelChips.length) return null;
+  const perSource = gcModeOf(chart && chart.tokens) !== "explicit";
+  let hits = [];
+  (hit.series || []).forEach(s => {
+    hits = hits.concat(gcChipHits(s.name, s.cdf, s.src.xpos, s.src.ypos, perSource));
+  });
+  return mapSelMarkerTraces(hits);
 }
 
 function gcEnsureChart(id, variant) {
@@ -219,20 +256,26 @@ function gcRenderGapCell(cell) {
   series.forEach(s => { pts[s.name] = distDisplayPoints(s.entry, cap); });
   const { lo, hi } = gcLimitOf(chart);
   const sentinel = distSentinelTrace(pts);
+  // Map Analysis 선택 좌표 — 일반 카드와 같은 마커(값·누적%는 이 차트 곡선에서 읽는다).
+  const cm = gcChipMarkers(hit, chart);
+  const traces = sentinel ? [sentinel] : [];
+  if (cm) traces.push(...cm.traces);
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 9 } },
     yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
       zeroline: false, tickfont: { size: 9 } },
-    shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, true),
+    shapes: distSpecShapes(lo, hi, false).concat(cm ? cm.shapes : []),
+    annotations: distSpecAnnos(lo, hi, true),
     margin: { l: 34, r: 10, t: 8, b: 20 }, showlegend: false };
-  Plotly.newPlot(plot, sentinel ? [sentinel] : [], layout, DIST_CFG_STATIC);
+  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
   // explicit 모드는 시리즈 이름이 차트 이름이라 distColorMap 에 없다 → 오버라이드로 색을 준다
   // (per_source 는 시리즈 이름 = source 명이라 기존 색이 그대로 맞는다).
   if (chart && gcModeOf(chart.tokens) === "explicit") {
     plot._distColorFor = () => "#7C3AED";
   }
-  distPaintPoints(plot, pts, null);
+  // chip 마커는 canvas 위로 다시 그린다 — 안 넘기면 ECDF 점 canvas 에 가려 안 보인다.
+  distPaintPoints(plot, pts, cm ? cm.traces : null);
   cell.dataset.rendered = "1";
 }
 
@@ -307,7 +350,8 @@ function gcRenderSources() {
   const host = document.getElementById("gcSourceList");
   if (!host) return;
   host.innerHTML = gcSourceNames().map(s =>
-    `<label class="gc-src-item"><input type="checkbox" class="gc-src-chk" data-source="${esc(s)}"` +
+    `<label class="gc-src-item" title="${esc(s)}">` +   // 한 줄 고정이라 긴 이름은 잘린다 → 툴팁으로 전체 노출
+    `<input type="checkbox" class="gc-src-chk" data-source="${esc(s)}"` +
     `${_gcSelSources.has(s) ? " checked" : ""}><span>${esc(s)}</span></label>`).join("")
     || `<div class="placeholder">source 없음</div>`;
 }

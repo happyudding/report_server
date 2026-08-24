@@ -1064,13 +1064,24 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .dc-col > .dc-sec-head:first-child { margin-top: 0; }
 .dc-sec-acts { display: inline-flex; gap: 6px; }
 .dc-sec-acts .btn-sm { margin-top: 0; padding: 2px 8px; }
-/* source 는 보통 수~수십 개라 고정 높이 스크롤 박스 */
-.dc-src-list { flex: 0 0 auto; display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px;
-  max-height: 132px; overflow-y: auto; border: 1px solid #e5e7eb;
-  border-radius: 6px; padding: 8px 10px; }
+/* source 목록 — **12개까지는 스크롤 없이 한 번에** 보여야 한다(사용자 요청).
+   그러려면 행 높이가 결정론적이어야 하므로 한 줄 고정(ellipsis, 전체 이름은 title 툴팁)이다.
+   이름을 여러 줄로 접으면 source 수가 같아도 높이가 들쭉날쭉해 12개 보장이 깨진다.
+   max-height 는 **1열로 늘어선 최악**(12행)을 기준으로 잡은 상한이라, 폭이 넓어 2~3열이
+   되면 박스는 내용만큼만 차지한다. 12행 = 20px×12 + 행간 4px×11 + padding 16 + border 2. */
+/* min(220px, 100%) — 컨테이너가 220px 보다 좁으면 트랙이 컨테이너를 넘어 가로 스크롤바가
+   생기고, 그 두께(≈15px)만큼 세로가 줄어 12행 상한이 깨진다. */
+/* flex: 0 1 auto — 화면이 낮아 오른쪽 칼럼이 모자라면 **이 목록이 먼저 줄어든다**(자체
+   스크롤이 있으므로). 그래야 아래의 선택목록·Limit 이 잘리지 않는다. */
+.dc-src-list { flex: 0 1 auto; min-height: 68px; display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 4px 12px;
+  max-height: 302px; overflow-y: auto; border: 1px solid #e5e7eb;
+  border-radius: 6px; padding: 8px 10px; align-content: start; }
 .dc-src-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #222;
-  cursor: pointer; overflow-wrap: anywhere; }
+  cursor: pointer; height: 20px; min-width: 0; }
+.dc-src-item > input { margin: 0; flex: 0 0 auto; }
+.dc-src-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 /* 검색 결과 목록 — 왼쪽 칼럼의 **남는 공간을 전부** 차지하고 자체 스크롤.
    .dist-suggest(absolute 드롭다운) 대신 상시 목록이라 자체 컨테이너를 쓴다.
    행 마크업(.dist-sug-item)은 갤러리 검색과 동일. */
@@ -1120,12 +1131,18 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-sec-head { display: flex; align-items: center; justify-content: space-between;
   gap: 8px; font-size: 12px; font-weight: 600; color: #555; margin: 8px 0 4px; }
 .gc-sec-acts { display: inline-flex; gap: 4px; }
-.gc-src-list { max-height: 160px; overflow-y: auto; border: 1px solid #e5e7eb;
-  border-radius: 6px; padding: 4px 6px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0 10px;
-  align-content: start; }
-.gc-src-item { display: flex; align-items: center; gap: 5px; font-size: 12px;
-  color: #222; padding: 1px 0; cursor: pointer; }
+/* Distribution composite 의 source 목록(.dc-src-list)과 **같은 규격**으로 맞춘다 —
+   12개까지 스크롤 없이 보이는 상한, 한 줄 고정. 근거는 .dc-src-list 주석 참조. */
+.gc-src-list { flex: 0 1 auto; min-height: 68px;
+  max-height: 302px; overflow-y: auto; border: 1px solid #e5e7eb;
+  border-radius: 6px; padding: 8px 10px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
+  gap: 4px 12px; align-content: start; }
+.gc-src-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  color: #222; cursor: pointer; height: 20px; min-width: 0; }
+.gc-src-item > input { margin: 0; flex: 0 0 auto; }
+.gc-src-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
 .gc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
   border-radius: 6px; overflow: auto; }
 .gc-item-list .placeholder { padding: 12px; font-size: 12.5px; }
@@ -1160,12 +1177,13 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-sug-item:hover, .gc-sug-item.active { background: #eef4fd; }
 .gc-sug-src { flex: 0 0 auto; margin-left: auto; padding-left: 8px; font-size: 11px;
   color: #DC2626; font-style: italic; }
-.gc-status { margin-top: 8px; font-size: 12px; display: flex; gap: 10px;
+/* 상태줄·도움말은 눌리지 않는다 — 모자라는 세로는 위의 .gc-src-list 가 먼저 내놓는다. */
+.gc-status { flex: 0 0 auto; margin-top: 8px; font-size: 12px; display: flex; gap: 10px;
   align-items: baseline; flex-wrap: wrap; }
 .gc-status-bad { color: #b42318; font-weight: 600; }
 .gc-status-ok { color: #15803d; font-weight: 600; }
 .gc-status-formula { color: #666; font-size: 11.5px; }
-.gc-help { font-size: 11.5px; color: #888; margin-top: 4px; line-height: 1.5; }
+.gc-help { flex: 0 0 auto; font-size: 11.5px; color: #888; margin-top: 4px; line-height: 1.5; }
 /* Item_detail 상단의 수식 표시 — 만들 때와 **같은 서식**(item 파란 기울임 / source 빨간
    기울임)으로 보여 "이 차트가 무슨 식이었는지" 를 헤더에서 바로 읽게 한다.
    여기의 칩은 클릭 삭제 대상이 아니므로 모달의 hover(빨강)를 끈다. */
@@ -3133,7 +3151,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <!-- Distribution composite 만들기/수정 — Item 명이 길어도 안 잘리게 넓은 규격(.dc-modal-box).
      검색 목록은 Distribution 검색 제안(.dist-sug-item)과 같은 마크업을 재사용한다. -->
 <div class="modal-overlay" id="dcModal" data-no-dirty>
-  <!-- 좌우 2단: 왼쪽=고르기(Source/TestItem), 오른쪽=설정(이름·선택목록·Limit).
+  <!-- 좌우 2단: 왼쪽=TestItem 검색, 오른쪽=설정(이름·Source·선택목록·Limit).
        창 높이는 **고정**이고 안쪽 목록 3개가 각자 스크롤한다 — 항목을 수십 개 골라도
        모달 자체가 세로로 자라거나 바깥 스크롤이 생기지 않게 하기 위함. -->
   <div class="modal-box dc-modal-box">
@@ -3143,17 +3161,8 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
     </div>
 
     <div class="dc-modal-body">
-      <!-- ── 왼쪽: 고르기 ── -->
+      <!-- ── 왼쪽: 항목 고르기 ── -->
       <div class="dc-col dc-col-pick">
-        <div class="dc-sec-head">
-          <span>Source 선택</span>
-          <span class="dc-sec-acts">
-            <button type="button" class="btn-sm" data-dc-src-all="1">전체 선택</button>
-            <button type="button" class="btn-sm" data-dc-src-all="0">전체 해제</button>
-          </span>
-        </div>
-        <div id="dcSourceList" class="dc-src-list"></div>
-
         <div class="dc-sec-head"><span>TestItem 검색</span></div>
         <input type="text" id="dcItemSearch" class="field-input" autocomplete="off"
                placeholder="항목 검색 (체크로 복수 선택)">
@@ -3167,6 +3176,17 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
           <input type="text" id="dcName" class="field-input" maxlength="120" autocomplete="off"
                  placeholder="예: P1 vs P2 VDD 비교">
         </label>
+
+        <!-- Source 선택은 오른쪽 칼럼 — 왼쪽은 항목 검색 목록이 세로 공간을 전부 쓴다
+             (2026-08-24 요청으로 왼쪽에서 이동). -->
+        <div class="dc-sec-head">
+          <span>Source 선택</span>
+          <span class="dc-sec-acts">
+            <button type="button" class="btn-sm" data-dc-src-all="1">전체 선택</button>
+            <button type="button" class="btn-sm" data-dc-src-all="0">전체 해제</button>
+          </span>
+        </div>
+        <div id="dcSourceList" class="dc-src-list"></div>
 
         <div class="dc-sec-head">
           <span id="dcPickedHead">선택된 항목</span>
@@ -3200,7 +3220,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   </div>
 </div>
 
-<!-- Gap Chart 만들기/수정 — 좌우 2단(왼쪽 source·항목 / 오른쪽 수식). 항목을 보면서
+<!-- Gap Chart 만들기/수정 — 좌우 2단(왼쪽 항목 / 오른쪽 source·수식). 항목을 보면서
      수식을 조립할 수 있어 긴 식을 만들 때 편하다.
      ⚠ data-no-dirty 필수 — 없으면 모달 타이핑이 세션을 dirty 로 만들어 이탈 경고가 뜬다. -->
 <div class="modal-overlay" id="gcModal" data-no-dirty>
@@ -3223,6 +3243,15 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 
     <div class="gc-cols">
       <div class="gc-col">
+        <div class="gc-sec-head"><span>항목 검색 (클릭하면 수식에 삽입)</span></div>
+        <input type="text" id="gcItemSearch" class="field-input" autocomplete="off"
+               placeholder="항목 검색">
+        <div id="gcItemList" class="gc-item-list"></div>
+      </div>
+
+      <div class="gc-col">
+        <!-- Source 선택은 오른쪽 칼럼 — 왼쪽은 항목 목록이 세로 공간을 전부 쓴다
+             (2026-08-24 요청으로 왼쪽에서 이동). -->
         <div class="gc-sec-head">
           <span>Source 선택</span>
           <span class="gc-sec-acts">
@@ -3231,13 +3260,6 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
           </span>
         </div>
         <div id="gcSourceList" class="gc-src-list"></div>
-        <div class="gc-sec-head"><span>항목 검색 (클릭하면 수식에 삽입)</span></div>
-        <input type="text" id="gcItemSearch" class="field-input" autocomplete="off"
-               placeholder="항목 검색">
-        <div id="gcItemList" class="gc-item-list"></div>
-      </div>
-
-      <div class="gc-col">
         <div class="gc-sec-head"><span>수식</span></div>
         <div id="gcExpr" class="gc-expr"></div>
         <div class="gc-input-row">

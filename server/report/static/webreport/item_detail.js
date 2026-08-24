@@ -271,10 +271,15 @@ function renderItemDetail(data) {
 }
 
 // Map Analysis 에서 선택한 좌표(mapSelChips)의 '현재 항목' 측정값·누적% 표. 좌표 변경 시에도 갱신.
+// Gap Chart 상세는 파생값이라 chip.items 에 값이 없다 — distRenderCdf 가 곡선을 그리며
+// 모아둔 값(_idetGapChipHits)을 쓴다. 차트 마커와 **같은 배열**에서 나온 값이라 어긋나지 않는다.
+let _idetGapChipHits = [];
 function idetChipValuesHtml(subject) {
   if (!mapSelChips.length) return "";
+  const gap = !!(_itemDetailData && _itemDetailData.is_gap);
   const rows = mapSelChips.map(c => {
-    const it = c.items[subject];
+    const hit = gap ? _idetGapChipHits.find(h => h.chip === c) : null;
+    const it = gap ? (hit ? { value: hit.value, cum_pct: hit.cum } : null) : c.items[subject];
     const val = (it && typeof it.value === "number") ? String(it.value) : "-";
     const cum = (it && typeof it.cum_pct === "number") ? it.cum_pct.toFixed(1) + "%" : "-";
     return `<tr>` +
@@ -744,6 +749,7 @@ function idetAxisAuto(key) {
 // 히스토그램은 제외(cdfExcluded)를 반영하므로 함께 재렌더해야 초기화 시 원복된다. 통계표는 불변.
 function cdfAfterEdit() {
   if (_itemDetailData) { distRenderCdf(_itemDetailData); distRenderHist(_itemDetailData); }
+  renderIdetChipVals();   // gap 은 제외 편집으로 분모가 바뀌면 누적%도 바뀐다
   renderCdfEditBar();
   if (_itemDetailData && _itemDetailData.is_fail) renderItemFailRows();
 }
@@ -751,6 +757,7 @@ function cdfAfterEdit() {
 function distRenderCdf(data) {
   const cdfDiv = document.getElementById("distCdf");
   if (!cdfDiv) return;
+  _idetGapChipHits = [];   // 이번 렌더에서 다시 모은다(Serial 순 분기로 빠져도 stale 금지)
   // Serial 순 모드는 같은 자리에 축이 다른 차트를 그린다 — 분기는 이 한 곳뿐이라
   // 재렌더 호출부(축옵션·칩 편집·항목 이동)가 전부 자동으로 따라온다.
   if (distSeqOnly) { distRenderSeq(data, cdfDiv); return; }
@@ -765,6 +772,9 @@ function distRenderCdf(data) {
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 단측 스펙 클램프용 데이터 끝값 — 제외(cdfExcluded) 반영 후 곡선 기준으로 잡는다.
   let cdfMin = Infinity, cdfMax = -Infinity;
+  // Gap Chart 상세(이 화면을 그대로 재사용한다)의 Map 선택 좌표 마커. gap 값은 파생이라
+  // chip.items 에 없어 여기서 곡선과 **같은 배열**로부터 모은다(제외 편집도 자동 반영).
+  let gapChipHits = [];
   // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(distOrderedSources).
   const traces = distOrderedSources(data.sources).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
@@ -778,6 +788,10 @@ function distRenderCdf(data) {
       }
     }
     const c = distCdfFromValues(vals);
+    if (data.is_gap && hasId && typeof gcChipHits === "function") {
+      gapChipHits = gapChipHits.concat(
+        gcChipHits(s.name, c, xpos, ypos, data.gap_mode !== "explicit"));
+    }
     if (c.x.length) {   // c.x 는 오름차순 — 양끝만 보면 된다
       if (c.x[0] < cdfMin) cdfMin = c.x[0];
       if (c.x[c.x.length - 1] > cdfMax) cdfMax = c.x[c.x.length - 1];
@@ -802,7 +816,8 @@ function distRenderCdf(data) {
   });
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let cdfShapes = distSpecShapes(lo, hi, true).concat(beforeLimitShapes(data.subject));
-  const cdfCm = chipMarkersFor(data.subject);
+  if (data.is_gap) _idetGapChipHits = gapChipHits;   // 아래 chip 값 표가 같은 값을 쓴다
+  const cdfCm = data.is_gap ? mapSelMarkerTraces(gapChipHits) : chipMarkersFor(data.subject);
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   const cdfLr = distLimitRange(lo, hi, cdfMin, cdfMax);
