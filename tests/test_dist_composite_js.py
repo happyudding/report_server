@@ -66,12 +66,17 @@ def run_probe(scripts, body_html, harness_js, name) -> str:
     page = _TMP / f"{name}.html"
     page.write_text(html, encoding="utf-8")
     dump = _TMP / f"{name}.dom.txt"
-    with open(dump, "wb") as fh:
-        subprocess.run(
-            [edge_path(), "--headless=new", "--disable-gpu", "--no-sandbox",
-             "--virtual-time-budget=5000", "--dump-dom", page.as_uri()],
-            stdout=fh, stderr=subprocess.DEVNULL, timeout=120, check=False)
-    raw = dump.read_text(encoding="utf-8", errors="replace")
+    # msedge 는 python subprocess 의 파일 stdout 으로는 **아무것도 쓰지 않는다**(파이프도
+    # 마찬가지 — 실측 0 bytes). PowerShell Start-Process -RedirectStandardOutput 만 동작한다.
+    args = ",".join("'%s'" % a for a in (
+        "--headless=new", "--disable-gpu", "--no-sandbox",
+        "--virtual-time-budget=5000", "--dump-dom", page.as_uri()))
+    ps = (f"Start-Process -FilePath '{edge_path()}' -ArgumentList @({args}) "
+          f"-RedirectStandardOutput '{dump}' -NoNewWindow -Wait")
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=180, check=False)
+    raw = dump.read_text(encoding="utf-8", errors="replace") if dump.is_file() else ""
     found = re.findall(r'<pre id="res">([\s\S]*?)</pre>', raw)
     assert found, f"{name}: 하네스가 실행되지 않았습니다 (스크립트 파싱 오류 의심)"
     return unescape(found[-1]).strip()

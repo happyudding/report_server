@@ -1098,6 +1098,11 @@ function distRenderGalleryCell(cell) {
     if (typeof dcRenderCompositeCell === "function") dcRenderCompositeCell(cell);
     return;
   }
+  // Gap Chart 카드도 데이터 축이 달라 전용 렌더러가 그린다(gap_chart.js).
+  if (cell.dataset.gapId) {
+    if (typeof gcRenderGapCell === "function") gcRenderGapCell(cell);
+    return;
+  }
   if (!distGalleryReady()) return;
   const subject = cell.dataset.subject;
   const status = cell.dataset.status || "ok";
@@ -1265,9 +1270,11 @@ function distRenderGallery() {
   // 사용자가 만든 합성 차트는 갤러리 **맨 앞**에 둔다 — 수백 장 일반 카드 뒤에 묻히면
   // 찾을 수 없다. 세그먼트/검색 선택 필터의 대상이 아니라 항상 표시된다(distIndex 밖).
   const compCards = (typeof dcCardsHtml === "function") ? dcCardsHtml() : "";
+  const gapCards = (typeof gcCardsHtml === "function") ? gcCardsHtml() : "";
+  const userCards = compCards + gapCards;
   panel.innerHTML = distToolbarHtml() +
     `<div class="dist-body">` +
-    ((distFiltered.length || compCards) ? `<div class="distg-grid">${compCards}${cards}</div>`
+    ((distFiltered.length || userCards) ? `<div class="distg-grid">${userCards}${cards}</div>`
                          : `<div class="placeholder dist-body-main">해당 조건의 항목이 없습니다</div>`) +
     `<aside class="dist-legend-side">` +
     distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], DIST_LEGEND_VERT_CLS) +

@@ -43,7 +43,13 @@ function cdfChipKey(source, serial, xpos, ypos) {
 function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : null; }
 function cdfResetEdits() { cdfExcluded.clear(); cdfEditMode = "none"; }
 
-function openItemDetail(subject, navList) {
+// opts.url 을 주면 /scatter 대신 그 URL 로 데이터를 받는다 (Gap Chart 가 이 화면을
+// 그대로 재사용한다 — 서버 응답 구조가 같다).
+// ⚠️ **기본값을 시그니처에 박은 이유**: `_itemDetailOpts = opts;` 를 무조건 실행해야 한다.
+// `if (opts)` 처럼 조건부로 대입하면 gap 상세를 본 뒤 일반 항목을 2인자로 열 때 이전 URL 이
+// 남아 일반 항목이 gap 라우트로 조회된다(에러 없이 조용히 깨진다).
+let _itemDetailOpts = null;
+function openItemDetail(subject, navList, opts = null) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   // 상세는 Plotly 로 그린다. plotly.min.js 는 async 로드라(첫 화면을 막지 않기 위함)
@@ -67,6 +73,7 @@ function openItemDetail(subject, navList) {
     dp.classList.add("active");
   }
   _itemDetailSubject = subject;
+  _itemDetailOpts = opts;          // 무조건 대입 (위 주석 — 조건부로 바꾸지 말 것)
   _itemDetailNav = Array.isArray(navList) && navList.length ? navList : [subject];
   _itemDetailFailPage = 1;
   cdfResetEdits();   // 항목이 바뀌면 CDF 제외 편집 초기화
@@ -81,8 +88,10 @@ function openItemDetail(subject, navList) {
   // Bin1 계열 토글이 켜져 있으면 상세도 같은 기준의 분포/통계를 받는다(?bin1=1[&bin1_scope=rt]).
   // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
   const scatterVariantQ = distVariantQuery(distGalleryVariant()).replace(/^&/, "?");
-  const scatterUrl = `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
-    + scatterVariantQ;
+  const scatterUrl = (opts && opts.url)
+    ? opts.url + scatterVariantQ
+    : `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
+      + scatterVariantQ;
   // 콜드(서버 tables 미적재) 세션은 202 가 온다 — 백그라운드 웜업이 끝날 때까지
   // fetchJson202(core.js)가 백오프 재시도한다. 항목 이동 시(reqId 변경) 재시도 중단.
   fetchJson202(scatterUrl, {
@@ -240,7 +249,9 @@ function renderItemDetail(data) {
   renderIdetAxisBar("hist");
   distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
   if (window.chartNotesBar) chartNotesBar(data);   // 차트 주석 툴바 (chart_notes.js)
-  if (window.cnRenderChartComments) cnRenderChartComments(subject);   // 차트 하단 Comment 표시
+  if (window.cnRenderChartComments) {   // 차트 하단 Comment 표시 (gap 은 gap:<uuid> 키)
+    cnRenderChartComments(window.cnSubjectOf ? cnSubjectOf(data) : subject);
+  }
   renderIdetChipVals();           // Map Analysis 선택 좌표의 이 항목 값
   if (data.is_fail) renderItemFailRows();
 }
@@ -474,7 +485,7 @@ function bindItemDetailPanel() {
         if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
       } else return;
       if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
-      if (_itemDetailSubject) openItemDetail(_itemDetailSubject, _itemDetailNav);
+      if (_itemDetailSubject) openItemDetail(_itemDetailSubject, _itemDetailNav, _itemDetailOpts);
       return;
     }
     const hm = e.target.closest("[data-hist-mode]");
@@ -597,6 +608,8 @@ function distHistXRange(sources, lo, hi) {
 function renderCdfEditBar() {
   const bar = document.getElementById("cdfEditBar");
   if (!bar) return;
+  // Gap Chart 는 합성값이라 die 제외(전처리)로 되돌릴 원본 항목이 없다 → 편집 UI 를 숨긴다.
+  if (_itemDetailData && _itemDetailData.is_gap) { bar.innerHTML = ""; return; }
   const modeBtn = (m, label, cls) =>
     `<button type="button" class="btn-sm cdf-mode ${cls}${cdfEditMode === m ? " active" : ""}" data-cdf-mode="${m}">${label}</button>`;
   bar.innerHTML =
@@ -1056,6 +1069,8 @@ function distBindPanel() {
     // Distribution composite — 분석하기 버튼/메뉴/카드 ✎✕/합성 카드 클릭.
     // 합성 카드도 .distg-card 라 **아래 일반 카드 분기보다 먼저** 가려야 한다.
     if (typeof dcPanelClick === "function" && dcPanelClick(e)) return;
+    // Gap Chart — 카드 ✎✕/카드 클릭. 이것도 .distg-card 라 일반 카드 분기보다 앞이다.
+    if (typeof gcPanelClick === "function" && gcPanelClick(e)) return;
     const card = e.target.closest(".distg-card");
     if (card) { openItemDetail(card.dataset.subject, distFiltered.map(r => r.subject)); return; }
   });

@@ -221,10 +221,13 @@ function dcToggleMenu(btn) {
   if (!panel) return;
   const menu = document.createElement("div");
   menu.className = "issue-menu dc-menu";
+  // 메뉴 항목 순서는 사용자 요청(2026-08-24): composite → **바로 아래** Gap Chart.
+  // Gap Chart 항목 마크업은 gap_chart.js 가 준다(로드 전이면 항목이 빠질 뿐 메뉴는 뜬다).
   menu.innerHTML = `<button type="button" class="issue-menu-item" data-dc-act="open-modal"` +
     ` title="여러 source·항목의 산포를 한 차트에 겹쳐 그린다">` +
     `<span class="issue-menu-mark"></span>` +
-    `<span class="issue-menu-label">📊 Distribution composite</span></button>`;
+    `<span class="issue-menu-label">📊 Distribution composite</span></button>`
+    + ((typeof gcMenuItemHtml === "function") ? gcMenuItemHtml() : "");
   menu.style.position = "fixed";
   menu.style.visibility = "hidden";
   panel.appendChild(menu);
@@ -689,6 +692,11 @@ function dcPanelClick(e) {
     if (kind === "menu") { dcToggleMenu(act); return true; }
     dcCloseMenu();
     if (kind === "open-modal") { dcOpenModal(null); return true; }
+    // Gap Chart 만들기 — 메뉴를 이 파일이 그리므로 진입도 여기서 넘긴다(gap_chart.js).
+    if (kind === "gap-modal") {
+      if (typeof gcOpenModal === "function") gcOpenModal(null);
+      return true;
+    }
     if (kind === "edit") { dcOpenModal(act.dataset.compId); return true; }
     if (kind === "del") { dcDelete(act.dataset.compId); return true; }
     return true;

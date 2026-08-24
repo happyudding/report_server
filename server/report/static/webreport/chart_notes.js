@@ -224,11 +224,15 @@ function cnReapply(key) {
 }
 
 // ── 툴바 (item detail 의 #chartNoteBar) ───────────────────────────────────────
+// 차트 주석 키의 subject — Gap Chart 는 `gap:<uuid>` 를 쓴다(서버 _CHART_KEY_RE 가 이미
+// gap: 접두를 허용한다). 차트 이름이 동명의 실제 항목과 겹쳐도 주석이 섞이지 않는다.
+function cnSubjectOf(d) { return (d && d.note_subject) || (d && d.subject) || ""; }
+
 function chartNotesBar(data) {
   const bar = document.getElementById("chartNoteBar");
   if (!bar) return;
   if (!isWebReportSession()) { bar.innerHTML = ""; return; }
-  const subject = data.subject;
+  const subject = cnSubjectOf(data);
   const cdfKey = `cdf:${subject}`, histKey = `hist:${subject}`;
   const canEdit = MODE === "edit";
 
@@ -407,7 +411,7 @@ async function cnFlush(opts) {
     _cnPending = {};
   }
   cnUpdateBarState();
-  if (_itemDetailData) cnRenderChartComments(_itemDetailData.subject);   // 저장값을 차트 하단에 반영
+  if (_itemDetailData) cnRenderChartComments(cnSubjectOf(_itemDetailData));   // 저장값을 차트 하단에 반영
   return j;
 }
 

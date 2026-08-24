@@ -1090,6 +1090,73 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .dc-picked-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
 .dc-picked-list .placeholder { padding: 10px; font-size: 12.5px; grid-column: 1 / -1; }
+/* ── Gap Chart (수식 기반 파생 분포) ─────────────────────────────────────────
+   모달은 좌우 2단이다 — 왼쪽에서 항목을 보면서 오른쪽에서 수식을 조립한다.
+   수식 렌더 영역(.gc-expr)은 **읽기 전용**이고 입력은 아래 <input> 하나다
+   (contenteditable 을 피한 이유는 gap_chart.js 머리 주석 참조). */
+.distg-gap { border-color: #6ee7b7; }
+.distg-gap-badge { flex: 0 0 auto; font-size: 12px; line-height: 1.2; }
+.gc-cell-empty { padding: 10px; font-size: 11.5px; text-align: center; }
+.gc-modal-box { width: min(1100px, 96vw); max-height: 92vh; display: flex;
+  flex-direction: column; }
+.gc-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin: 4px 0 8px; }
+.gc-field { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+  color: #444; flex: 1 1 260px; }
+.gc-field .field-input { flex: 1; min-width: 0; }
+.gc-limit { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #444; }
+.gc-limit-num { width: 84px; }
+.gc-limit-note { font-size: 11.5px; color: #888; }
+.gc-cols { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 14px;
+  flex: 1 1 auto; min-height: 0; }
+.gc-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.gc-sec-head { display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; font-size: 12px; font-weight: 600; color: #555; margin: 8px 0 4px; }
+.gc-sec-acts { display: inline-flex; gap: 4px; }
+.gc-src-list { max-height: 130px; overflow-y: auto; border: 1px solid #e5e7eb;
+  border-radius: 6px; padding: 4px 6px; }
+.gc-src-item { display: flex; align-items: center; gap: 5px; font-size: 12px;
+  color: #222; padding: 1px 0; cursor: pointer; }
+.gc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
+  border-radius: 6px; overflow: auto; }
+.gc-item-list .placeholder { padding: 12px; font-size: 12.5px; }
+.gc-list-item { display: flex; width: 100%; text-align: left; border: none;
+  background: transparent; cursor: pointer; }
+.gc-list-item:hover { background: #eef4fd; }
+.gc-list-more { padding: 4px 8px; font-size: 11px; color: #888; }
+/* 수식 칩 스트립 — 항목은 파란 기울임, source 는 빨간 기울임(사용자 요청 서식). */
+.gc-expr { min-height: 62px; border: 1px solid #cbd5e1; border-radius: 6px;
+  padding: 8px 10px; background: #f9fafb; font-size: 14px; line-height: 2;
+  overflow-x: auto; overflow-y: auto; max-height: 120px; }
+.gc-expr-hint { color: #9aa1ab; font-size: 12.5px; font-style: italic; }
+.gc-tok { display: inline-block; padding: 1px 3px; border-radius: 4px; cursor: pointer;
+  white-space: nowrap; }
+.gc-tok:hover { background: #fee2e2; outline: 1px solid #fca5a5; }
+.gc-tok-item { color: #1D4ED8; font-style: italic; font-weight: 600; }
+.gc-tok-src { color: #DC2626; font-style: italic; font-weight: 600; }
+.gc-tok-us { color: #9aa1ab; font-style: normal; }
+.gc-tok-num { color: #111827; }
+.gc-tok-op { color: #6B7280; font-weight: 700; padding: 0 5px; }
+.gc-tok-paren { color: #374151; font-weight: 700; }
+.gc-input-row { display: flex; gap: 6px; margin-top: 6px; }
+.gc-token-input { flex: 1 1 auto; min-width: 0; }
+.gc-src-qual { flex: 0 0 auto; max-width: 190px; }
+.gc-ops { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+.gc-ops .btn-sm { min-width: 34px; font-weight: 700; }
+.gc-suggest { margin-top: 6px; max-height: 168px; overflow-y: auto;
+  border: 1px solid #e5e7eb; border-radius: 6px; }
+.gc-suggest:empty { display: none; }
+.gc-sug-item { display: flex; width: 100%; text-align: left; border: none;
+  background: transparent; cursor: pointer; }
+.gc-sug-item:hover, .gc-sug-item.active { background: #eef4fd; }
+.gc-sug-src { flex: 0 0 auto; margin-left: auto; padding-left: 8px; font-size: 11px;
+  color: #DC2626; font-style: italic; }
+.gc-status { margin-top: 8px; font-size: 12px; display: flex; gap: 10px;
+  align-items: baseline; flex-wrap: wrap; }
+.gc-status-bad { color: #b42318; font-weight: 600; }
+.gc-status-ok { color: #15803d; font-weight: 600; }
+.gc-status-formula { color: #666; font-size: 11.5px; }
+.gc-help { font-size: 11.5px; color: #888; margin-top: 4px; line-height: 1.5; }
 .dc-chip-x { border: none; background: transparent; cursor: pointer; color: #b42318;
   font-size: 11px; padding: 0 2px; flex: 0 0 auto; }
 .dc-summary { flex: 0 0 auto; margin-top: 8px; font-size: 12.5px; color: #344054; }
@@ -2615,6 +2682,28 @@ html[data-theme="dark"] .dc-chip { background: #262a33; border-color: #3a3f4b; c
 html[data-theme="dark"] .dc-count b { color: #7fb3ef; }
 html[data-theme="dark"] .dc-detail .idet-chart-title { color: #c6ccd6; }
 html[data-theme="dark"] .dc-stats-note { color: #8b94a3; }
+html[data-theme="dark"] .gc-sec-head { color: #aab2bf; }
+html[data-theme="dark"] .gc-src-list,
+html[data-theme="dark"] .gc-item-list,
+html[data-theme="dark"] .gc-suggest { background: #1b1e24; border-color: #333a45; }
+html[data-theme="dark"] .gc-src-item,
+html[data-theme="dark"] .gc-field,
+html[data-theme="dark"] .gc-limit { color: #c6ccd6; }
+html[data-theme="dark"] .gc-list-item:hover,
+html[data-theme="dark"] .gc-sug-item:hover,
+html[data-theme="dark"] .gc-sug-item.active { background: #26303f; }
+html[data-theme="dark"] .gc-expr { background: #1b1e24; border-color: #3a4250; }
+html[data-theme="dark"] .gc-tok-item { color: #7fb3ef; }
+html[data-theme="dark"] .gc-tok-src { color: #f88b83; }
+html[data-theme="dark"] .gc-tok-num { color: #e6e9ee; }
+html[data-theme="dark"] .gc-tok-paren { color: #c6ccd6; }
+html[data-theme="dark"] .gc-tok:hover { background: #46232a; outline-color: #7f3a3a; }
+html[data-theme="dark"] .gc-status-formula,
+html[data-theme="dark"] .gc-help,
+html[data-theme="dark"] .gc-list-more,
+html[data-theme="dark"] .gc-limit-note { color: #8b94a3; }
+html[data-theme="dark"] .gc-status-ok { color: #5fd08a; }
+html[data-theme="dark"] .gc-status-bad { color: #f88b83; }
 /* 원래 배경이 투명이라 다크가 비치는 차트 블록 — 흰 카드로 명시 고정 */
 html[data-theme="dark"] .distg-card { background: #fff; }
 html[data-theme="dark"] .dist-chart-block,
@@ -3083,6 +3172,81 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   </div>
 </div>
 
+<!-- Gap Chart 만들기/수정 — 좌우 2단(왼쪽 source·항목 / 오른쪽 수식). 항목을 보면서
+     수식을 조립할 수 있어 긴 식을 만들 때 편하다.
+     ⚠ data-no-dirty 필수 — 없으면 모달 타이핑이 세션을 dirty 로 만들어 이탈 경고가 뜬다. -->
+<div class="modal-overlay" id="gcModal" data-no-dirty>
+  <div class="modal-box gc-modal-box">
+    <p class="modal-title" id="gcModalTitle">Gap Chart 만들기</p>
+    <p class="modal-desc">항목끼리 사칙연산한 결과의 분포를 새 차트로 만듭니다.
+      괄호 안이 먼저 계산됩니다.</p>
+
+    <div class="gc-top">
+      <label class="gc-field">차트 이름
+        <input type="text" id="gcName" class="field-input" maxlength="120" autocomplete="off"
+               placeholder="예: VREF gap (A-B)">
+      </label>
+      <span class="gc-limit">Limit
+        Lo <input type="text" id="gcLimitLo" class="field-input gc-limit-num" autocomplete="off">
+        Hi <input type="text" id="gcLimitHi" class="field-input gc-limit-num" autocomplete="off">
+        <span class="gc-limit-note">(비우면 규격선 없음)</span>
+      </span>
+    </div>
+
+    <div class="gc-cols">
+      <div class="gc-col">
+        <div class="gc-sec-head">
+          <span>Source 선택</span>
+          <span class="gc-sec-acts">
+            <button type="button" class="btn-sm" data-gc-src-all="1">전체 선택</button>
+            <button type="button" class="btn-sm" data-gc-src-all="0">전체 해제</button>
+          </span>
+        </div>
+        <div id="gcSourceList" class="gc-src-list"></div>
+        <div class="gc-sec-head"><span>항목 검색 (클릭하면 수식에 삽입)</span></div>
+        <input type="text" id="gcItemSearch" class="field-input" autocomplete="off"
+               placeholder="항목 검색">
+        <div id="gcItemList" class="gc-item-list"></div>
+      </div>
+
+      <div class="gc-col">
+        <div class="gc-sec-head"><span>수식</span></div>
+        <div id="gcExpr" class="gc-expr"></div>
+        <div class="gc-input-row">
+          <input type="text" id="gcTokenInput" class="field-input gc-token-input"
+                 autocomplete="off" placeholder="항목명 일부 또는 숫자를 입력 (Enter 로 확정)">
+          <select id="gcSrcQual" class="field-input gc-src-qual"></select>
+        </div>
+        <div class="gc-ops">
+          <button type="button" class="btn-sm" data-gc-op="+">+</button>
+          <button type="button" class="btn-sm" data-gc-op="-">−</button>
+          <button type="button" class="btn-sm" data-gc-op="*">×</button>
+          <button type="button" class="btn-sm" data-gc-op="/">÷</button>
+          <button type="button" class="btn-sm" data-gc-op="(">(</button>
+          <button type="button" class="btn-sm" data-gc-op=")">)</button>
+          <button type="button" class="btn-sm" data-gc-act="pop" title="마지막 토큰 지우기">⌫</button>
+          <button type="button" class="btn-sm" data-gc-act="clear" title="수식 비우기">전체 지우기</button>
+        </div>
+        <div id="gcSuggest" class="gc-suggest"></div>
+        <div id="gcStatus" class="gc-status"></div>
+        <div class="gc-help">
+          source 를 지정하지 않으면 고른 source <b>각각</b>에서 계산해 곡선이 여러 개 나옵니다.
+          오른쪽 드롭다운으로 source 를 지정하면 <b>좌표가 같은 die 끼리</b> 계산해 곡선 1개가
+          됩니다. 두 방식은 한 수식에 섞을 수 없습니다.<br>
+          입력창이 비어 있을 때 <b>+ − × ÷ ( )</b> 키를 누르면 연산자가 들어갑니다
+          (글자를 입력하는 중에는 항목명의 일부로 취급합니다). 칩을 클릭하면 그 토큰이 지워집니다.
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="modal-btn danger" id="gcDelete" style="display:none">🗑 삭제</button>
+      <button class="modal-btn" id="gcCancel">취소</button>
+      <button class="modal-btn primary" id="gcSave">저장</button>
+    </div>
+  </div>
+</div>
+
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script src="/pe/report/static/webreport/honey_hint.js"></script>
 <script src="/pe/report/static/webreport/user_name.js"></script>
@@ -3104,6 +3268,10 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <!-- Distribution composite — distribution.js 의 렌더 헬퍼와 item_detail.js 의 패널 위임을
      재사용하므로 그 뒤, edit_mode.js(MODE 정의) 앞에 둔다 -->
 <script src="/pe/report/static/webreport/dist_composite.js"></script>
+<!-- Gap Chart — distribution.js 의 렌더 헬퍼 · item_detail.js 의 openItemDetail/
+     distCdfFromValues · dist_composite.js 의 "분석하기" 메뉴를 재사용하므로 그 뒤,
+     edit_mode.js(MODE 정의) 앞에 둔다 -->
+<script src="/pe/report/static/webreport/gap_chart.js"></script>
 <script src="/pe/report/static/webreport/issue_dist.js"></script>
 <script src="/pe/report/static/webreport/trim.js"></script>
 <script src="/pe/report/static/webreport/characteristic.js"></script>

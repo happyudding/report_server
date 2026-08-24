@@ -211,12 +211,13 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/cmp_etc(Issue Table
   Compare 탭 ETC)/trim override/engr/
   chart_note(차트 주석)/compare_note(Compare 탭 행 코멘트)/dist_composite(Distribution
-  합성 산포 차트 정의)/note_sheet(Note 탭 Luckysheet
+  합성 산포 차트 정의)/gap_chart(사용자 수식 파생 분포 — 토큰 배열)/note_sheet(Note 탭 Luckysheet
   시트 JSON ≤10MB)/preprocess(조회 전처리
   spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
-  ⚠ report payload 계산에 안 쓰이는 kind(chart_note·note_sheet·note_tag·dist_composite)는
+  ⚠ report payload 계산에 안 쓰이는 kind(chart_note·note_sheet·note_tag·dist_composite·
+  gap_chart)는
   `PAYLOAD_NEUTRAL_KINDS`([database/webreport_edits.py](server/database/webreport_edits.py))에
   등재해야 한다 — 빠뜨리면 저장할 때마다 report 전체가 콜드 재빌드된다.
   ⚠️ **note_sheet 본문만 객체 저장으로 나갔다**(2026-08-14) — 저장은 blob+legacy 행
@@ -453,9 +454,15 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     - Distribution composite 키 — item_key = **생성 UUID(불변)**, pairKey =
       `<source>` + U+001F + `<item>`(색 맵의 키). 이름을 바꿔도 키는 그대로다 — 이름·표시명을
       키로 쓰면 개명 한 번에 사용자가 만든 차트가 통째로 사라진다.
-    - 편집 `kind` 11종 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
-      `trim_override`/`summary_engr`/`chart_note`/`compare_note`/`dist_composite`/`note_sheet`/
-      `issue_hidden`/`issue_status`
+    - Gap Chart 키 — item_key = **생성 UUID(불변)**, 수식은 **평문이 아니라 토큰 배열**이
+      정본이다(`{"t":"item","source"?,"item"}` / `num` / `op` / `lp` / `rp`). item 이름에
+      공백·괄호·연산자가 전부 합법이라 평문 재파싱이 원리적으로 불가능하고, source 명·item 명
+      둘 다 `_` 를 포함할 수 있어 `source_item` 분해도 못 한다 — 표시 문자열은 토큰에서
+      만들고 **절대 되돌려 읽지 않는다**([web_report/gap_chart.py](web_report/gap_chart.py)).
+      차트 주석 키는 `cdf:gap:<uuid>`(`note_subject`)로 갈라 동명 항목과 섞이지 않는다.
+    - 편집 `kind` 12종 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
+      `trim_override`/`summary_engr`/`chart_note`/`compare_note`/`dist_composite`/`gap_chart`/
+      `note_sheet`/`issue_hidden`/`issue_status`
       ([edits.py](web_report/edits.py) 규약). Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
       `cmp_etc_item` 은 Issue Table Compare 탭의 ETC 목록으로 `etc_item` 과 **분리**돼 있다 —
       한 세션에 두 표가 함께 있어 kind 를 공유하면 한쪽 추가가 다른 표에도 나타난다.
@@ -509,6 +516,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 콜드 빌드에서 무거운 계산 떼어내기 (AI Comment·Compare) | 분리 캐시 키 [cache_policy.py](web_report/cache_policy.py) `ai_comment_key`/`compare_key` · 조회 [service.py](web_report/service.py) `_ai_comment_cached`/`_compare_cached` · 대기본 `report_pending_key(kinds)` · 백그라운드 잡 [compute.py](web_report/compute.py) `_ONDEMAND_JOBS` · 프런트 폴링 [boot.js](server/report/static/webreport/boot.js) → [docs/12](docs/12_web_report_cache.md). **분리 캐시 키에 sid·edits_rev 를 넣지 말 것** — 그게 편집마다 전량 재계산을 부른다(perf_guard S10·S12) |
 | 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` → [docs/11](docs/11_web_report_tabs.md) |
 | **Distribution composite (source×item 합성 산포 차트)** | 프런트 [dist_composite.js](server/report/static/webreport/dist_composite.js) · 훅 [distribution.js](server/report/static/webreport/distribution.js)(툴바/갤러리/셀/`_distColorFor`) · 저장 [service.py](web_report/service.py) `update_dist_composites` + kind [edits.py](web_report/edits.py) `KIND_DIST_COMPOSITE` → [docs/11](docs/11_web_report_tabs.md). **서버 계산 추가 없음** — `distribution_batch` 재사용, 정의만 저장 |
+| **Gap Chart (사용자 수식 파생 분포)** | 계산 [web_report/gap_chart.py](web_report/gap_chart.py)(**tabs/ 밖 — perf_guard S01 이 REPORT_SCHEMA_VERSION bump 를 요구해 콜드 폭풍이 된다**) · 프런트 [gap_chart.js](server/report/static/webreport/gap_chart.js) · 저장 kind [edits.py](web_report/edits.py) `KIND_GAP_CHART`(토큰 배열이 정본) · 조회 `GET .../web_report/gap_chart/<id>` + 캐시 [cache_policy.py](web_report/cache_policy.py) `gap_key`(**spec_digest 를 키·ETag 양쪽에**) · 상세는 **기존 Item_detail 재사용**(`openItemDetail` 의 `opts.url`) → [docs/11](docs/11_web_report_tabs.md) |
 | **Compare 검출을 이슈 표로 (Issue Table Compare)** | 시트 [tabs/compare_issue.py](web_report/tabs/compare_issue.py)(Distribution·ETC) + 프런트 [compare_issue.js](server/report/static/webreport/compare_issue.js)(Bin Transition·Log 별도 표) · 패널 일반화는 [core.js](server/report/static/webreport/core.js) `ISSUE_PANEL_SEL` · 캐시 세대 `COMPARE_REPORT_SCHEMA_VERSION` · 검증 데이터 [tools/eval_testdata/make_compare_testdata.py](tools/eval_testdata/make_compare_testdata.py) → [docs/11](docs/11_web_report_tabs.md) |
 | Temperature(PMIC·SECURITY RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |

@@ -581,6 +581,40 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       점 색만 `plot._distColorFor` 주입으로 pairKey 기준이 된다(미설정이면 기존 경로 그대로).
     - 저장은 `POST .../web_report/dist_composites`(ops 배열, null=삭제) 단발. 응답이 권위본이라
       `load(false)` 재로드를 하지 않는다 — kind 가 payload 중립이라 report 캐시가 살아 있다.
+  - **Gap Chart (사용자 수식 파생 분포 — 2026-08-24)**: 같은 "분석하기 ▾" 메뉴의 두 번째
+    항목. 모달(좌우 2단 — 왼쪽 source·항목 목록 / 오른쪽 수식)에서 `( ) + - * /` 로 식을
+    조립하면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면 **기존 Item_detail
+    화면이 그대로** 열린다. 프런트 [gap_chart.js](../server/report/static/webreport/gap_chart.js),
+    계산 [web_report/gap_chart.py](../web_report/gap_chart.py).
+    - **수식은 평문이 아니라 토큰 배열이 정본**이다(`kind=gap_chart`, item_key=UUID 불변,
+      value=`{name, sources, tokens, limit}`). item 이름에 공백·`( )`·`+ - * /` 가 전부
+      합법이라(honeyform 은 중복·메타충돌만 검사) 평문을 토큰으로 되돌리는 렉서가 원리적으로
+      존재할 수 없고, source 명·item 명 둘 다 `_` 를 포함할 수 있어 `source_item` 분해도
+      불가능하다. 토큰 배열은 `source` 가 별도 필드라 구분자 자체가 필요 없다.
+      표시 문자열(`render_formula`/`gcFormulaText`)은 **절대 재파싱하지 않는다**.
+    - 수식 모드는 **저장하지 않고 매번 유도**한다(규칙 13) — 항목만 참조면 `per_source`
+      (선택한 각 source 안에서 계산, 시리즈 N개), 전부 source 명시면 `explicit`
+      (**좌표(XPOS,YPOS) 교집합**으로 계산, 시리즈 1개). 좌표 중복(재검)은 **첫 행 우선**
+      으로 `tabs/compare.py _coord_bin_map` 과 같은 규칙이다. 둘을 섞으면 400 —
+      같은 수식이 source 마다 다른 의미가 되어 결과를 읽을 수 없다.
+    - 파서는 `eval()` 없이 **재귀하강**이다(shunting-yard 가 아닌 이유: 위반 토큰의 인덱스를
+      알 수 있어 400 응답에 실어 프런트가 그 칩을 표시한다). 평가는 numpy 벡터 연산이고
+      0 나눗셈은 inf/NaN 을 만든 뒤 유한값 마스크로 제외한다(제외 수는 `dropped_nonfinite`).
+      마스크는 values·serial·xpos·ypos **네 배열에 함께** 적용한다(`scatter_item` 규약).
+    - 응답은 **`scatter_item` 키 집합을 그대로 포함**한다 → Item_detail 이 수정 없이 재사용된다
+      (`openItemDetail(subject, navList, opts)` 의 `opts.url` 만 갈아끼운다). 차트 주석 키는
+      `note_subject = "gap:<uuid>"` 로 갈라 동명의 실제 항목과 섞이지 않게 한다.
+      CDF die 제외 편집바는 gap 에서 숨긴다 — 합성값에는 되돌릴 원본 항목이 없다.
+    - 조회는 전용 라우트 `GET .../web_report/gap_chart/<chart_id>` **하나**이고 갤러리 카드와
+      상세가 같은 응답을 공유한다(카드는 프런트 `distCdfFromValues` 로 ECDF 를 만든다) →
+      카드를 본 뒤 클릭하면 상세가 클라 캐시 히트다. 캐시 키·ETag 둘 다 `spec_digest`
+      (정의 sha256[:16])를 물고 있어 수식 수정 시 자연 무효화된다. **합성 항목명을
+      `distribution_batch` 의 `subjects` 나 `/scatter/<subject>` 에 섞지 않는다** — 섞으면
+      dist pack 미스로 전 tables 디코드 + 전 항목 ECDF 재계산이 터진다.
+    - 상한: 세션당 차트 20개 / 토큰 200개 / 괄호 16단 / 참조 항목 20개 / 정의 16KB.
+      카드 1장이 Item_detail 1개분 페이로드라 차트 수 상한이 실질 보호막이다.
+    - `distUpdateCount()` 의 "N 개"에는 gap·composite 카드가 **포함되지 않는다**(distIndex
+      밖이라 검색·세그먼트 필터 대상이 아니다) — composite 와 같은 기존 동작이다.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
@@ -812,8 +846,8 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
   ("저장은 됐는데 세션이 안 열리는" 상태). decode 에도 넣어 **이미 오염된 parquet 도
   마이그레이션 없이 구제**한다. item 컬럼명이 메타 컬럼명과 겹치는 것은 구조 검증
   (`validate_honeyform_df`)에서 거부한다 — 그런 파일은 지금도 컬럼이 밀려 깨지므로 회귀가 아니다.
-- `kind` 15종: `issue_comment` / `etc_item` / `cmp_etc_item` / `trim_override` / `summary_engr` /
-  `chart_note` / `note_sheet` / `note_tag` / `compare_note` / `dist_composite` /
+- `kind` 16종: `issue_comment` / `etc_item` / `cmp_etc_item` / `trim_override` / `summary_engr` /
+  `chart_note` / `note_sheet` / `note_tag` / `compare_note` / `dist_composite` / `gap_chart` /
   `issue_hidden` / `issue_status` / `issue_signature` / `preprocess` / `yield_basis`
   ([edits.py](../web_report/edits.py) 규약 — 정본은 그 파일의 KIND_* 상수 주석).
   편집마다 `rev` 가
@@ -822,7 +856,8 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
   (manifest 에 있던 4종 — issue_comment/etc_item/trim_override/summary_engr — 만 시드 대상,
   나머지는 신규 kind 라 해당 없음). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시
   숨김/Status 는 자연 리셋된다.
-- **payload 중립 kind**: `chart_note` / `note_sheet` / `note_tag` / `dist_composite` 는
+- **payload 중립 kind**: `chart_note` / `note_sheet` / `note_tag` / `dist_composite` /
+  `gap_chart` 는
   report payload 계산에 안 들어가므로 저장해도 `payload_rev` 가 오르지 않는다
   ([webreport_edits.py](../server/database/webreport_edits.py) `PAYLOAD_NEUTRAL_KINDS`).
   새 kind 를 만들 때 **여기에 넣는 것을 빠뜨리면 저장할 때마다 report 전체가 콜드 재빌드**

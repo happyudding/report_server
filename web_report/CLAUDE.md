@@ -24,6 +24,10 @@ web_report/
 ├── honeyform.py        7-meta honeyform 검증/파싱, parquet 인코딩·디코딩 (스키마 상수)
 ├── dist_blob.py        Distribution ECDF compact 공용 빌더 — 서버 폴백 계산과 (구) 클라
 │                        dist blob 프리컴퓨트가 공유. 순수 모듈 — 클라에서 import 됨
+├── gap_chart.py        **Gap Chart** — 사용자 수식(토큰 배열) 파서(재귀하강, eval 금지)
+│                        + numpy 평가 + 좌표 교집합. 응답은 scatter_item 과 같은 구조라
+│                        Item_detail 이 그대로 재사용한다. ⚠ **tabs/ 로 옮기지 말 것**
+│                        (perf_guard S01 → REPORT_SCHEMA_VERSION bump = 콜드 폭풍)
 ├── dist_pack.py        Distribution **정렬 pack** 빌더/검증/ECDF 변환 (2026-07-23) —
 │                        Honey 가 정렬(np.unique)까지 끝내 올리고 서버는 덧셈(cumsum)만.
 │                        순수 모듈 — 클라 honey_main._build_webreport_dist_pack 이 import

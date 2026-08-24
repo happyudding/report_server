@@ -83,6 +83,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
 | _SCATTER_CACHE | (akey, chash[, prep], mode, subject) | raw_data 편집 / 전처리 / 세션 삭제 |
+| _GAP_CACHE | (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) | raw_data 편집 / 전처리 / **수식 수정(spec_digest)** / 세션 삭제 — **edits_rev·sid 무관**(남의 코멘트 저장으로 죽지 않게, ai_comment_key 와 같은 논리). 갤러리 카드와 Item_detail 이 이 한 엔트리를 공유한다 |
 
 공통 규약:
 - **모든 키의 첫 요소는 analysis_key** — `AKEY_CACHES` 무효화(`evict`/`invalidate`)의 전제.
@@ -361,6 +362,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | `WEB_REPORT_FULL_CACHE` | `8` (운영 `32`) | `/full` 응답 gzip 캐시 개수 |
 | `WEB_REPORT_FULL_CACHE_MB` | `512` (운영 `1024`) | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_SCATTER_CACHE` | `16` | `/scatter` 응답 gzip 캐시 개수 |
+| `WEB_REPORT_GAP_CACHE` | `16` | Gap Chart 응답 gzip 캐시 개수 |
+| `WEB_REPORT_GAP_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 건당 크기가 `/scatter` 급이다 |
 | `WEB_REPORT_SCATTER_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DISK_CACHE_MAX_GB` | `500` | 디스크 캐시 총량 상한 (0 이하 = 비활성) |
 | `WEB_REPORT_REWARM_ON_START` | `1` | 기동 후 재웜 스윕 사용 여부 (`0` = 끔) |
