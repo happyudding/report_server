@@ -219,192 +219,6 @@ function compareBinMatrixHtml(bm) {
     `<div class="sheet-wrap cmp-scroll cmp-binmatrix-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 
-// ── 산포 비교 (dist_shift) — Before 분모 정규화 지표 + 서버 focus 필터 ────────
-// 표시 지표 4종(MeanShift σ / Cpk% / Stdev증가율 / Median Shift)·유의성 2종·focus 판정·
-// 정렬(MeanShift σ 큰 순)은 전부 서버(compare.py build_dist_shift)가 정본이고, 여기서는
-// 표시 + focus 플래그 필터 토글 + 페이지 넘김만 한다. (서버가 함께 내려주는 iqr_delta_pct·
-// ks_d 는 2026-07-28 사용자 요청으로 **화면에서 뺐다** — 값 자체는 payload 에 남는다.)
-// p 는 전용 컬럼 없이 해당 값 셀의 ns 마커와 툴팁으로만 보여준다(n 이 수천이면 p 컬럼은
-// 0.000 벽이 되어 정보가 없다).
-// 대상은 **그룹 pool(Bin1)** — 그룹이 1 source 씩이면 avg/stdev/cpk 가 CPK 탭 값과 같다.
-// 그래서 avg/cpk 는 서버 반올림값을 그대로(_cmpServer), stdev 는 CPK 탭과 같은 유효숫자
-// 포맷(_cmpStdev)으로 찍어 **두 탭의 표시가 문자 단위로 일치**하게 한다.
-// 임계값은 dist.thresholds 만 참조(하드코딩 금지).
-let cmpDistFocusOnly = true;   // 필터 기본 ON — 관심(focus) 항목만 표시
-const CMP_DIST_PAGE_SIZE = 20; // 한 페이지 행 수 — Distribution 미니차트가 붙어 무한 스크롤이 무겁다
-let cmpDistPage = 1;
-
-// Distribution 열(미니 ECDF 카드) — Distribution 탭 갤러리 카드와 같은 규격을 1/2 크기로.
-// 데이터·표시점 계산은 distribution.js 공용 경로 그대로 쓴다(distDataCache = 전체 die 기준,
-// Issue Table 미니셀과 같은 캐시). 점은 canvas 오버레이(distPaintPoints) — 규칙 #5 준수.
-function cmpDistRenderCell(cell) {
-  if (!cell || cell.dataset.rendered === "1") return;
-  const subject = cell.dataset.subject;
-  const info = distDataCache[subject];
-  // 아직 안 받은 항목은 배치로 요청만 하고 리턴 — 도착하면 refreshDistConsumers 가 다시 부른다.
-  if (!info) { if (distHasData(subject)) distRequestSubject(subject, false); return; }
-  const plot = cell.querySelector(".dist-plot");
-  if (!plot || typeof Plotly === "undefined") return;
-  const lo = info.lower_limit, hi = info.upper_limit;
-  const pts = {};
-  const srcNames = Object.keys(info.bySource);
-  const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_MINI);
-  srcNames.forEach(s => { pts[s] = distDisplayPoints(info.bySource[s], cap); });
-  const traces = [];
-  const sentinel = distSentinelTrace(pts);
-  if (sentinel) traces.push(sentinel);
-  const layout = { ...DIST_PLOT_BG,
-    xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
-      tickcolor: "#bbb", tickfont: { size: 8 } },
-    yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
-      zeroline: false, tickfont: { size: 8 } },
-    shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject)),
-    annotations: distSpecAnnos(lo, hi, true),
-    margin: { l: 30, r: 8, t: 6, b: 18 }, showlegend: false };
-  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
-  distPaintPoints(plot, pts, null);
-  cell.dataset.rendered = "1";
-}
-
-// 보이는 셀만 rAF 로 나눠 그린다(한 페이지 20칸이라 IntersectionObserver + 프레임당 2칸).
-let cmpDistObserver = null;
-let cmpDistQueue = [];
-let cmpDistRaf = false;
-function cmpDistQueueRender(cell) {
-  if (cell.dataset.rendered === "1" || cmpDistQueue.includes(cell)) return;
-  cmpDistQueue.push(cell);
-  if (!cmpDistRaf) { cmpDistRaf = true; requestAnimationFrame(cmpDistFlushRender); }
-}
-function cmpDistFlushRender() {
-  cmpDistRaf = false;
-  let n = 0;
-  while (cmpDistQueue.length && n < 2) {
-    const cell = cmpDistQueue.shift();
-    if (cell.isConnected && cell.dataset.visible === "1") { cmpDistRenderCell(cell); n++; }
-  }
-  if (cmpDistQueue.length) { cmpDistRaf = true; requestAnimationFrame(cmpDistFlushRender); }
-}
-// 페이지 전환 전 정리 — innerHTML 교체로 DOM 만 지우면 Plotly 인스턴스·캔버스 옵저버가 남는다.
-function cmpDistPurgeCells(sec) {
-  cmpDistQueue = [];
-  if (cmpDistObserver) { try { cmpDistObserver.disconnect(); } catch (e) {} cmpDistObserver = null; }
-  sec.querySelectorAll('.cmp-dist-cell[data-rendered="1"]').forEach(cell => {
-    const plot = cell.querySelector(".dist-plot");
-    try { if (plot && window.Plotly) { distClearPoints(plot); Plotly.purge(plot); } } catch (e) {}
-  });
-}
-function cmpDistObserveCells(sec) {
-  if (typeof IntersectionObserver === "undefined") return;
-  cmpDistObserver = new IntersectionObserver(entries => {
-    entries.forEach(en => {
-      const cell = en.target;
-      if (en.isIntersecting) { cell.dataset.visible = "1"; cmpDistQueueRender(cell); }
-      else cell.dataset.visible = "";
-    });
-  }, { rootMargin: "600px 0px", threshold: 0 });
-  sec.querySelectorAll(".cmp-dist-cell").forEach(c => cmpDistObserver.observe(c));
-}
-
-function cmpDistSectionHtml(dist) {
-  if (!dist) return '<div class="placeholder">산포 비교 데이터 없음</div>';
-  // legacy payload(스키마 v16 이전, list 형) — 새 지표가 없어 기본 통계만 표시.
-  const legacy = Array.isArray(dist);
-  if (legacy) dist = { rows: dist, after: "", before: "", thresholds: {} };
-  const rows = dist.rows || [];
-  if (!rows.length) return '<div class="placeholder">공통 항목 없음</div>';
-  const th = dist.thresholds || {};
-  const shown = (!legacy && cmpDistFocusOnly) ? rows.filter(r => r.focus) : rows;
-  // 소스 색 범례 — Distribution 열의 ECDF 색이 어느 source 인지 알아야 한다(Distribution 탭과 같은 색).
-  const srcs = (DATA.web_report && DATA.web_report.sources) || [];
-  const grp = (DATA.web_report && DATA.web_report.compare && DATA.web_report.compare.groups) || {};
-  // srcs 는 {name, file_name} **객체** 배열이다(metrics.py). 종전엔 객체를 그대로
-  // distColorFor/_cmpSrcLabel 에 넘겨 색이 전부 회색이고 이름이 [object Object] 로
-  // 찍혔다 — 범례가 없는 것과 같았다(2026-08-20 수정).
-  const legendHtml = (typeof distColorFor === "function" && srcs.length)
-    ? `<span class="cmp-dist-legend">${srcs.map(s =>
-        `<span class="cmp-lg" title="${esc(s.file_name || s.name)}"><i style="background:${distColorFor(s.name)}"></i>${esc(_cmpSrcLabel(s.name, grp))}</span>`).join("")}</span>`
-    : "";
-  const toolbar = legacy ? "" : `<div class="compare-summary">
-      <button type="button" id="cmpDistFocusBtn" class="btn-sm cmp-fbtn${cmpDistFocusOnly ? " active" : ""}"
-        title="클릭 전환 — 관심 항목만 ↔ ALL(전체)">${cmpDistFocusOnly ? "관심 항목만" : "ALL"}</button>
-      <span class="cmp-chip">${shown.length}/${rows.length} 항목</span>
-      ${legendHtml}
-      <span class="gl-sub">관심 판정(서버): 한쪽 Cpk&lt;${th.cpk_low} 또는 |Stdev증가율|≥${th.stdev_delta_pct}%(단 유의할 때 — p&lt;${th.alpha}) · 양쪽 Cpk&gt;${th.cpk_high}(여유 과대)·양쪽 고정값은 항상 제외. <b>ns</b>=표본이 작아 노이즈와 구분 안 되는 값(셀에 마우스를 올리면 p·n)</span>
-    </div>`;
-  if (!shown.length) {
-    return toolbar +
-      `<div class="placeholder">관심 항목 없음 — ALL 로 전환하면 전체 ${rows.length}개 항목을 표시합니다</div>`;
-  }
-  // 페이지 분할(20행) — Distribution 미니차트가 행마다 붙어 전량 렌더는 무겁다.
-  const pages = Math.max(1, Math.ceil(shown.length / CMP_DIST_PAGE_SIZE));
-  if (cmpDistPage > pages) cmpDistPage = pages;
-  if (cmpDistPage < 1) cmpDistPage = 1;
-  const start = (cmpDistPage - 1) * CMP_DIST_PAGE_SIZE;
-  const pageRows = shown.slice(start, start + CMP_DIST_PAGE_SIZE);
-  const pager = pages <= 1 ? "" : `<div class="cmp-pager">
-      <button type="button" class="btn-sm cmp-page-prev"${cmpDistPage <= 1 ? " disabled" : ""}>‹ 이전</button>
-      <span class="cmp-page-info">${start + 1}–${start + pageRows.length} / ${shown.length} 항목 · ${cmpDistPage} / ${pages} 페이지</span>
-      <button type="button" class="btn-sm cmp-page-next"${cmpDistPage >= pages ? " disabled" : ""}>다음 ›</button>
-    </div>`;
-  const metricHead = legacy ? "" :
-    `<th class="num" rowspan="2" title="|Avg(A)−Avg(B)| / Stdev(B) — 평균 이동을 σ 단위로 정규화">MeanShift(σ)</th>` +
-    `<th class="num" rowspan="2" title="Cpk(A) / Cpk(B) × 100 — 100% 미만이면 악화">Cpk(%)</th>` +
-    `<th class="num" rowspan="2" title="(Stdev(A)−Stdev(B)) / Stdev(B) × 100 — 양수면 After 산포 증가">Stdev증가율(%)</th>` +
-    `<th class="num" rowspan="2" title="|Median(A)−Median(B)| / IQR(B) — outlier 에 강건한 이동량">Median Shift</th>` +
-    `<th rowspan="2" title="Distribution 탭 카드와 같은 ECDF(전체 die 기준) — 빨간 점선 LSL/USL, 색은 위 범례의 source 색">Distribution</th>`;
-  const head = `<thead>
-      <tr><th rowspan="2">Item</th><th rowspan="2">Unit</th>
-          <th colspan="3">Before — ${esc(dist.before || "")}</th>
-          <th colspan="3">After — ${esc(dist.after || "")}</th>${metricHead}</tr>
-      <tr><th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th>
-          <th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th></tr></thead>`;
-  const cpkCell = v =>
-    `<td class="num${v != null && th.cpk_low != null && v < th.cpk_low ? " cpk-warn" : ""}">${_cmpServer(v)}</td>`;
-  const ratioCell = v => {   // cmp-up/cmp-down 은 색 재사용(빨강=악화/파랑=개선)
-    if (v === null || v === undefined) return `<td class="num">–</td>`;
-    const cls = v < 100 ? " cmp-up" : (v > 100 ? " cmp-down" : "");
-    return `<td class="num${cls}">${_cmpNum(v, 1)}</td>`;
-  };
-  // Distribution 미니 카드 셀 — ECDF 가 없는 항목(측정 data 전무)은 빈 칸으로 둔다.
-  const distCell = subject => (typeof distHasData === "function" && distHasData(subject))
-    ? `<td class="cmp-dist-td"><div class="cmp-dist-cell" data-subject="${esc(subject)}"><div class="dist-plot"></div></div></td>`
-    : `<td class="cmp-dist-td"><span class="gl-sub">–</span></td>`;
-  const body = pageRows.map(r => {
-    const a = r.after || {}, b = r.before || {};
-    const nTip = (a.n != null || b.n != null)
-      ? ` title="After n=${a.n == null ? "–" : a.n} · Before n=${b.n == null ? "–" : b.n}"` : "";
-    // Before → After 순 (헤더와 같은 순서 — 2026-08-20 Compare 탭 전체 통일).
-    const base = `<tr><td${nTip}>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpServer(b.average)}</td><td class="num">${_cmpStdev(b.stdev)}</td>${cpkCell(b.cpk)}` +
-      `<td class="num">${_cmpServer(a.average)}</td><td class="num">${_cmpStdev(a.stdev)}</td>${cpkCell(a.cpk)}`;
-    if (legacy) return base + `</tr>`;
-    const sdRed = (r.stdev_delta_pct != null && th.stdev_delta_pct != null &&
-                   Math.abs(r.stdev_delta_pct) >= th.stdev_delta_pct) ? "gl-gap-red" : "";
-    const sdNs = _cmpIsNs(r.p_stdev, th.alpha), msNs = _cmpIsNs(r.p_mean, th.alpha);
-    const msTip = _cmpPTip("평균차", r.p_mean, th.alpha, a.n, b.n);
-    return base +
-      `<td class="num${msNs ? " cmp-ns" : ""}"${msTip ? ` title="${esc(msTip)}"` : ""}>` +
-      `${_cmpNum(r.meanshift_sigma)}</td>` + ratioCell(r.cpk_ratio_pct) +
-      _cmpDeltaCell(r.stdev_delta_pct, 2, [sdRed, sdNs ? "cmp-ns" : ""].filter(Boolean).join(" "),
-                    _cmpPTip("산포차", r.p_stdev, th.alpha, a.n, b.n)) +
-      `<td class="num">${_cmpNum(r.median_shift)}</td>` + distCell(r.subject) + `</tr>`;
-  }).join("");
-  return toolbar + pager +
-    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table cmp-dist-table">${head}<tbody>${body}</tbody></table></div>` +
-    pager;
-}
-
-// 산포 비교 섹션만 부분 재렌더 — renderCompare 전체 재호출은 Plotly Map 재그리기·goodlog
-// 리바인딩을 유발하므로 필터/페이지 전환 시엔 이 섹션 innerHTML 만 교체한다.
-function renderCmpDistSection(panel) {
-  const sec = panel.querySelector("#cmp-dist-section");
-  if (!sec) return;
-  cmpDistPurgeCells(sec);
-  const cmp = DATA.web_report && DATA.web_report.compare;
-  sec.innerHTML = cmpDistSectionHtml(cmp && cmp.dist_shift);
-  cmpDistObserveCells(sec);
-}
-
 // ── 동일성 검증 — 항목별 Grade 판정 (Before pool vs After pool) ─────────────
 // Grade1: AVG차(%) ≤ 5 / Grade2: 5 초과 & 양쪽 CPK ≥ 5 / Grade3: 그 외(판정 불가 포함).
 // 판정 규칙·임계값은 서버(compare.py build_equivalence)가 정본이고 여기서는 표시만 한다.
@@ -852,7 +666,6 @@ function renderCompare() {
         <div class="cmp-subtabs distseg-group">
           <button class="distseg active" data-cmpsub="map">Map 비교</button>
           <button class="distseg" data-cmpsub="log">Log 비교</button>
-          <button class="distseg" data-cmpsub="dist">산포 비교</button>
           <button class="distseg" data-cmpsub="ttime">Test Time 비교</button>
           <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
         </div>
@@ -880,10 +693,6 @@ function renderCompare() {
       <div class="cmp-subpanel" data-cmppanel="log">
         <div id="cmp-log-section"></div>
       </div>
-      <div class="cmp-subpanel" data-cmppanel="dist">
-        <h3 class="compare-h">산포 비교 (공통 항목 · MeanShift σ 큰 순 · 그룹 전체 die · Bin1 기준)</h3>
-        <div id="cmp-dist-section"></div>
-      </div>
       <div class="cmp-subpanel" data-cmppanel="ttime">
         <h3 class="compare-h">Test Time 비교</h3>
         <div class="placeholder">Test Time 데이터가 아직 없습니다.<br>
@@ -897,18 +706,8 @@ function renderCompare() {
     </div>`;
 
   drawCompareCommonMap(cm, sources);
-  cmpDistPage = 1;
-  renderCmpDistSection(panel);
   renderGoodlogSection(panel);
   // 필터/페이지 토글 — wrapper 에 위임 1회 바인딩(innerHTML 교체에도 리스너 유지).
-  const distSec = panel.querySelector("#cmp-dist-section");
-  if (distSec) distSec.addEventListener("click", e => {
-    if (e.target.closest("#cmpDistFocusBtn")) { cmpDistFocusOnly = !cmpDistFocusOnly; cmpDistPage = 1; }
-    else if (e.target.closest(".cmp-page-prev")) { if (cmpDistPage <= 1) return; cmpDistPage--; }
-    else if (e.target.closest(".cmp-page-next")) cmpDistPage++;
-    else return;
-    renderCmpDistSection(panel);
-  });
   const logSec = panel.querySelector("#cmp-log-section");
   if (logSec) logSec.addEventListener("click", e => {
     if (e.target.closest(".gl-fbtn-diff")) glDiffOnly = !glDiffOnly;

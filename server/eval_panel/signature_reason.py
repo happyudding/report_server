@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 # Issue Table row_key 접두 — 정본은 web_report/service.py `_ISSUE_KEY_PREFIXES` 와
 # static/webreport/sheets.js `issueRowKey`. 저장 키라 바꾸면 안 된다(CLAUDE.md 규칙 12).
+# Compare 탭 접두(CMPDIST|·CMPETC|)는 여기 없다 — 그 시트에는 Signature 컬럼 자체가
+# 없어(엔진이 Before/After 비교를 평가하지 않는다) 근거를 물을 행이 생기지 않는다.
 KEY_PREFIXES = ("Yield|", "CPK|", "TEMP|", "ETC|")
 
 # 근거를 못 얻은 사유 → 화면 문구. 어떤 값이든 룰 기준은 함께 내려간다.

@@ -610,8 +610,10 @@ function syncIssueHeadRowHeight(panel) {
 const ISSUE_MENU_LABEL = "☑ Issue Item 추가/변경/삭제";
 function issueToolbarHtml(panelId) {
   const isTemp = panelId === ISSUE_PANEL_TEMP;
+  const isCmp = panelId === ISSUE_PANEL_CMP;
   const ui = issueUi(document.getElementById(panelId || ISSUE_PANEL_MAIN));
-  const searchId = isTemp ? "issueTempSearchInput" : "issueSearchInput";
+  const searchId = isTemp ? "issueTempSearchInput"
+    : (isCmp ? "issueCmpSearchInput" : "issueSearchInput");
   // 수정모드 액션(ISSUE ITEM 추가 · 선택 모드 · 선택/전체 Status · 삭제)은 버튼을 가로로
   // 늘어놓지 않고 드롭다운 메뉴 버튼 하나로 묶는다(사용자 요청 2026-08-10 — 오른쪽으로 쭉
   // 펼쳐지면 직관적이지 않다). 항목 정의·열기는 issueActionMenuHtml / toggleIssueMenu.
@@ -623,12 +625,21 @@ function issueToolbarHtml(panelId) {
   // 'TNO 전체 펼치기' 는 툴바에서 빼고 Yield 섹션 헤더의 Step 열 아래 작은 ▼ 아이콘으로
   // 옮겼다(2026-08-10 사용자 요청 — sheets.js issueSectionHeadRowsHtml). 동작·핸들러
   // (data-issue-act="toggle-all")는 그대로다.
-  const jumpAndToggle = isTemp ? "" :
-    `<span class="issue-jump-group" title="섹션으로 이동">` +
-      `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
-      `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
-      `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
-    `</span>`;
+  // Compare 패널은 카테고리가 4개다 — 위 2개(Distribution/ETC)는 이 표의 섹션이라
+  // 섹션 키로 점프하고, 아래 2개(Bin Transition/Log)는 표 뒤에 붙는 **별도 표**라
+  // 앵커 id 로 점프한다(data-issue-anchor).
+  const jumpAndToggle = isTemp ? "" : (isCmp
+    ? `<span class="issue-jump-group" title="카테고리로 이동">` +
+        `<button type="button" class="btn-sm" data-issue-jump="CMPDIST">Distribution</button>` +
+        `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-bin">Bin Transition</button>` +
+        `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-log">Log</button>` +
+        `<button type="button" class="btn-sm" data-issue-jump="CMPETC">ETC</button>` +
+      `</span>`
+    : `<span class="issue-jump-group" title="섹션으로 이동">` +
+        `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
+        `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
+        `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
+      `</span>`);
   // Issue Table Temp 안내문 — 문구를 그대로 두면 툴바가 길어져(줄바꿈·버튼 밀림) 표가
   // 아래로 내려가고 하단 가로 스크롤바가 화면 밖으로 나간다(사용자 요청 2026-08-06).
   // 아이콘 하나로 줄이고 설명 전문은 hover(title) 로만 남긴다.
@@ -640,7 +651,10 @@ function issueToolbarHtml(panelId) {
     sheetSearchHtml(searchId, ui.search, "Item / comment 검색") +
     editBtns +
     tempNote +
-    `<button type="button" class="btn-sm issue-excel-btn" data-issue-act="excel" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
+    // Excel 내보내기는 Issue Table 시트 전용 서버 경로다 — Compare 표는 컬럼 구성이
+    // 달라 그 시트로 나갈 수 없어 버튼을 빼둔다.
+    (isCmp ? "" :
+      `<button type="button" class="btn-sm issue-excel-btn" data-issue-act="excel" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>`) +
     `</div>`;
 }
 
@@ -918,8 +932,15 @@ function bindIssueColResize(panel) {
   });
 }
 
-// Issue 표 렌더 본체 — Issue Table / Issue Table Temp 두 패널과 조회/편집 모드가 공유한다.
+// Issue 표 렌더 본체 — Issue Table / Issue Table Temp / Issue Table Compare 세 패널과
+// 조회/편집 모드가 공유한다.
 // opts.edit=true 면 comment 두 열만 편집 가능(ISSUE_COMMENT_COLS).
+// opts.extraHtml: 표 **뒤에 형제로** 붙일 마크업(Compare 탭의 Bin Transition/Log 표).
+//   ⚠ 표를 감싸는 요소를 추가하면 .sheet-wrap.kind-issue 의 sticky 기준 부모가 바뀌어
+//   헤더 고정이 깨진다 — 형제로만 붙인다(sheets.js renderSheetTable 주석).
+//   그 안의 표에는 .sheet-table.kind-issue 클래스를 쓰지 말 것(아래 fill 대상 질의가
+//   첫 표를 잡아야 한다 + 후처리가 전부 패널 전역 질의다).
+// opts.afterFill: 본문 채우기가 끝난 뒤 부를 추가 후처리.
 // 표 위 안내문(구 opts.intro)은 하단 가로 스크롤바를 화면 밖으로 밀어내 폐지했다 —
 // Temp 탭 안내는 sticky 툴바의 .issue-toolbar-note 로 옮겼다(issueToolbarHtml).
 function renderIssueTableInto(panel, rows, opts) {
@@ -941,7 +962,7 @@ function renderIssueTableInto(panel, rows, opts) {
   panel.innerHTML = issueToolbarHtml(panel.id) +
     // 상단 프록시 가로 스크롤바는 조회 모드 전용(편집 모드는 종전대로 없다).
     (opts.edit ? "" : `<div class="issue-hscroll"><div class="issue-hscroll-spacer"></div></div>`) +
-    table.html;
+    table.html + (opts.extraHtml || "");
   table.fill(panel.querySelector(".sheet-table.kind-issue tbody"), () => {
     syncIssueHeadRowHeight(panel);
     syncIssueStickyOffsets(panel);
@@ -954,6 +975,7 @@ function renderIssueTableInto(panel, rows, opts) {
     const ui = issueUi(panel);
     if (ui.search.trim()) applyIssueSearch(ui.search, panel);   // 검색어 유지
     if (ui.hideClose || ui.hideOpen) applyIssueStatusFilter(panel);   // Status 필터 유지
+    if (opts.afterFill) opts.afterFill(panel);
   });
 }
 

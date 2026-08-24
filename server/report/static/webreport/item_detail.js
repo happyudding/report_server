@@ -712,7 +712,8 @@ function distRenderCdf(data) {
   // 재렌더(제외/강조 편집) 시 이전 plot 을 해제 — scattergl 의 WebGL 컨텍스트 누적 방지
   // (SVG 에도 무해). newPlot 이 이어서 새로 초기화한다.
   if (cdfDiv.data) { try { Plotly.purge(cdfDiv); } catch (e) { /* no-op */ } }
-  const useGl = !!DIST.CDF_GL;   // 렌더 방식 토글 — distribution.js DIST 상수 참조
+  // 렌더 방식 토글(distribution.js DIST 상수) — WebGL 불가 PC 는 SVG 폴백(core.js webglOk)
+  const useGl = !!DIST.CDF_GL && webglOk();
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
   const unit = data.units || "";
@@ -1052,6 +1053,9 @@ function distBindPanel() {
       restoreDistSearch(q);
       return;
     }
+    // Distribution composite — 분석하기 버튼/메뉴/카드 ✎✕/합성 카드 클릭.
+    // 합성 카드도 .distg-card 라 **아래 일반 카드 분기보다 먼저** 가려야 한다.
+    if (typeof dcPanelClick === "function" && dcPanelClick(e)) return;
     const card = e.target.closest(".distg-card");
     if (card) { openItemDetail(card.dataset.subject, distFiltered.map(r => r.subject)); return; }
   });

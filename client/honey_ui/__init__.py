@@ -8,12 +8,13 @@ from .dialogs import (
     UploadDialog,
 )
 from .errors import show_error, show_exc
-from .progress import ElapsedProgress, wait_for_future
+from .progress import ElapsedProgress, OperationCancelled, wait_for_future
 
 __all__ = [
     "ColorEditorDialog",
     "ElapsedProgress",
     "FileOrderDialog",
+    "OperationCancelled",
     "OptionsDialog",
     "ReportSettingsDialog",
     "SHEET_OPTIONS",

@@ -16,8 +16,8 @@ product_type 별 규칙 (정본은 아래 ``_SOURCE_NAME_RULES`` 표):
   PDDI      ``stdf_[LOTID]_[STEP]_[WFNO]_[PARTID]…`` **고정 위치** → ``LOTID_WFNO``.
             STEP(L1/L2)이 달라도 같은 legend 가 나온다(= 병합 대상).
   PMIC ·    LOT 헤더 + WF 토큰 → ``602XX2_3``. 세 product_type 이 같은 규칙을 쓴다
-  SECURITY  (2026-08-11 — 종전에는 PMIC 전용이었다).
-  TCON
+  SECURITY  (2026-08-11 — 종전에는 PMIC 전용이었다). **.csv 만** 화이트리스트 실패 시
+  TCON      6x/8x 전 조합을 헤더로 인정하는 확장 폴백이 있다(``_LOT_CSV_RE``, 2026-08-24).
 
 동결 규칙이 PMIC 파일명에서 빗나가던 지점 3가지를 여기서 닫는다(LOT+WF 규칙의 존재 이유).
 
@@ -50,6 +50,20 @@ from pathlib import Path
 # 대소문자를 무시하지 않는다 — 소문자 '6z…' 까지 잡으면 무관한 토큰을 LOT 으로 오인한다.
 _LOT_RE = re.compile(r"(?:^|[_\-.])((?:6[0128AZ]|8[012Z])[^_\-.]*)")
 
+# .csv 전용 확장 헤더: 6/8 + 대문자 영숫자 1자 — csv 는 화이트리스트 밖 조합(8A·88 등)도
+# LOT 으로 인정한다(사용자 요청 2026-08-24). **화이트리스트가 먼저**고, 그게 실패했을 때만
+# 이 규칙으로 떨어지므로 기존 csv 매칭 결과는 바뀌지 않는다. 소문자 배제는 _LOT_RE 와
+# 같은 이유이고, .std 등 다른 확장자는 여전히 화이트리스트만 쓴다.
+_LOT_CSV_RE = re.compile(r"(?:^|[_\-.])([68][0-9A-Z][^_\-.]*)")
+
+
+def _lot_match(name):
+    """파일명에서 LOT 헤더 매치 — 화이트리스트 우선, .csv 만 확장 규칙 폴백."""
+    m = _LOT_RE.search(name)
+    if m is None and name.lower().endswith(".csv"):
+        m = _LOT_CSV_RE.search(name)
+    return m
+
 # WF 번호: LOT 바로 다음 토큰이 (선택적 W) + 숫자 1~3자리 **전체**일 때만 인정한다.
 # 'final' · 'wow' 같은 토큰을 배제하려면 부분 일치가 아니라 전체 일치라야 한다.
 _WF_RE = re.compile(r"^[Ww]?\d{1,3}$")
@@ -78,9 +92,10 @@ def lot_wf_source_name(filename) -> str | None:
         ``T2K_6Z1234_W03_260505.csv``                → ``6Z1234_W03``
         ``602XX2_final.std``                         → ``602XX2``  (final 은 WF 가 아니다)
         ``602XX2_3.csv``                             → ``602XX2_3`` (맨 앞 LOT 도 인정)
+        ``T2K_8A1234_W03.csv``                       → ``8A1234_W03`` (.csv 만 확장 헤더)
     """
     name = Path(str(filename)).name
-    m = _LOT_RE.search(name)
+    m = _lot_match(name)
     if not m:
         return None
     lot = m.group(1)
@@ -94,7 +109,7 @@ def lot_wf_source_name(filename) -> str | None:
 
 def lot_wf_lot_id(filename) -> str | None:
     """PMIC/SECURITY/TCON 파일명에서 LOT ID 토큰만 뽑는다. 규칙에 안 맞으면 None."""
-    m = _LOT_RE.search(Path(str(filename)).name)
+    m = _lot_match(Path(str(filename)).name)
     return m.group(1) if m else None
 
 

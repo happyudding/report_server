@@ -43,6 +43,7 @@ from honey_ui import folder_intake
 from honey_ui import (
     ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
+    OperationCancelled as _OperationCancelled,
     OptionsDialog,
     ReportSettingsDialog,
     SHEET_OPTIONS,
@@ -1009,7 +1010,16 @@ class HoneyMainWindow(QMainWindow):
         self.panel_progress = QProgressBar(container)
         self.panel_progress.setTextVisible(True)
         self.panel_progress.hide()
-        v.addWidget(self.panel_progress)
+        # 진행 취소 버튼 — Web Report 흐름이 도는 동안만 보인다(_begin_op_cancel).
+        # 클릭은 플래그만 세우고, 각 단계의 wait_for_future(cancelled=)가 받아 중단한다.
+        self.btn_panel_cancel = QPushButton("취소", container)
+        self.btn_panel_cancel.hide()
+        self.btn_panel_cancel.clicked.connect(self._on_op_cancel)
+        prog_row = QHBoxLayout()
+        prog_row.setSpacing(6)
+        prog_row.addWidget(self.panel_progress, 1)
+        prog_row.addWidget(self.btn_panel_cancel, 0)
+        v.addLayout(prog_row)
 
         self.slide_controls = SlideInPanel(
             self.browser_panel, container, "입력 파일 / 설정", width=620)
@@ -2043,19 +2053,30 @@ class HoneyMainWindow(QMainWindow):
             QApplication.processEvents()
 
             stage_q = queue.Queue()
+            # with(=shutdown(wait=True)) 를 쓰지 않는다 — 취소 시 실행 중인 파싱이 끝날
+            # 때까지 갇혀 "바로 취소" 가 안 된다. 파싱은 읽기 전용이라 버려도 무해하다.
+            ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    fut = ex.submit(self._parse_group_core, list(paths),
-                                    self.product_type(), warn, stage_q.put)
-                    self.group, issues = _wait_for_future(
-                        fut, progress, poll_cb=_parse_progress_poll(progress, stage_q))
+                fut = ex.submit(self._parse_group_core, list(paths),
+                                self.product_type(), warn, stage_q.put)
+                self.group, issues = _wait_for_future(
+                    fut, progress, poll_cb=_parse_progress_poll(progress, stage_q),
+                    cancelled=self._op_cancel_requested)
+            except _OperationCancelled:
+                ex.shutdown(wait=False, cancel_futures=True)
+                progress.fail("취소됨: 파일 로드 취소")
+                self._status("취소됨")
+                self.group = None
+                return False
             except Exception as exc:
+                ex.shutdown(wait=False, cancel_futures=True)
                 progress.fail(f"실패: 파일 로드 실패 - {exc}")
                 _show_exc(self, "파일 로드 실패", exc,
                           prefix="선택한 파일을 읽지 못했습니다.")
                 self._status("파일 로드 실패")
                 self.group = None
                 return False
+            ex.shutdown(wait=False)
 
             progress.success(f"완료: {n_files}개 파일 전처리 완료", value=n_files)
 
@@ -2197,10 +2218,58 @@ class HoneyMainWindow(QMainWindow):
                 self._pt_radios[pt].setChecked(True)
             self._status("옵션 저장됨")
 
+    # ── Web Report 진행 취소 (패널 진행바 옆 취소 버튼) ────────────────────
+    # 스레드는 죽일 수 없으므로 "대기 중단 + 결과 폐기" 방식이다 — 각 단계 계산은
+    # 읽기 전용이라 버려도 부작용이 없다(선행 인코딩 취소와 같은 전제). 버튼이 숨겨져
+    # 있으면 플래그를 세울 방법이 없어 다른 흐름(Excel Report 등)은 종전과 동일하다.
+
+    def _begin_op_cancel(self):
+        """취소 버튼 노출 + 플래그 초기화 — Web Report 흐름 시작 시."""
+        self._op_cancelled = False
+        btn = getattr(self, "btn_panel_cancel", None)
+        if btn is not None:
+            btn.setEnabled(True)
+            btn.show()
+
+    def _end_op_cancel(self):
+        """취소 버튼 정리 — 성공/실패/취소 어느 경로로 끝나든 호출(여러 번 안전).
+
+        플래그도 함께 리셋한다 — 남겨두면 다음에 _rebuild_group 을 타는 다른 흐름
+        (Excel Report 등)이 시작하자마자 취소로 오판된다.
+        """
+        self._op_cancelled = False
+        btn = getattr(self, "btn_panel_cancel", None)
+        if btn is not None:
+            btn.hide()
+            btn.setEnabled(True)
+
+    def _on_op_cancel(self):
+        """취소 버튼 클릭 — 즉시 중단이 아니라 '요청'이다(다음 폴링에서 중단)."""
+        self._op_cancelled = True
+        btn = getattr(self, "btn_panel_cancel", None)
+        if btn is not None:
+            btn.setEnabled(False)
+        self._status("취소 요청됨 — 정리 중...")
+
+    def _op_cancel_requested(self):
+        """wait_for_future(cancelled=) 용 콜백."""
+        return bool(getattr(self, "_op_cancelled", False))
+
+    def _cancel_web_report(self, progress, prep_ex):
+        """_run_web_report 취소 확정 공통 처리 — 진행바 마감 + 워커 풀 폐기.
+
+        실행 중인 계산은 스레드라 즉시 죽지 않지만 결과는 버려진다(읽기 전용이라 무해).
+        버튼 숨김은 on_web_report 의 finally(_end_op_cancel)가 한다.
+        """
+        prep_ex.shutdown(wait=False, cancel_futures=True)
+        progress.fail("취소됨: Web Report 생성 취소")
+        self._status("Web Report 취소됨")
+
     def on_web_report(self):
         # 느린 파일 전처리(_prepare_web_report_context → _rebuild_group)가 시작되기 전에
         # 새 작업 진입점(실행 버튼·메뉴·사이드바·파일 인테이크)을 함께 잠근다.
         self._set_busy(True)
+        self._begin_op_cancel()
         try:
             ctx = self._prepare_web_report_context()
             if ctx is None:
@@ -2214,6 +2283,7 @@ class HoneyMainWindow(QMainWindow):
             # 배치창 취소·예외로 빠져나가도 선행 executor 가 남지 않게 한다. 정상 완료면
             # _run_web_report 가 이미 정리한 뒤라 no-op 다.
             self._abort_encode_prefetch()
+            self._end_op_cancel()
             self._set_busy(False)
 
     def _dialog_entries(self, names, paths=None, from_group=True):
@@ -2489,7 +2559,14 @@ class HoneyMainWindow(QMainWindow):
             QApplication.processEvents()
             try:
                 self.group, issues = _wait_for_future(
-                    fut, progress, poll_cb=_parse_progress_poll(progress, stage_q))
+                    fut, progress, poll_cb=_parse_progress_poll(progress, stage_q),
+                    cancelled=self._op_cancel_requested)
+            except _OperationCancelled:
+                # executor 정리는 아래 finally(handed_over=False)가 한다.
+                progress.fail("취소됨: 파일 로드 취소")
+                self._status("취소됨")
+                self.group = None
+                return None
             except Exception as exc:
                 progress.fail(f"실패: 파일 로드 실패 - {exc}")
                 _show_exc(self, "파일 로드 실패", exc,
@@ -2942,7 +3019,11 @@ class HoneyMainWindow(QMainWindow):
         # 못 보여준다.
         try:
             progress.set("parquet 인코딩 중...", value=10, status="parquet 인코딩 중...")
-            sources, parquet_items = _wait_for_future(fut_encode, progress)
+            sources, parquet_items = _wait_for_future(fut_encode, progress,
+                                                      cancelled=self._op_cancel_requested)
+        except _OperationCancelled:
+            self._cancel_web_report(progress, prep_ex)
+            return
         except Exception as exc:
             progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
             prep_ex.shutdown(wait=False, cancel_futures=True)
@@ -2956,15 +3037,23 @@ class HoneyMainWindow(QMainWindow):
         dist_pack = None
         try:
             progress.set("분포 데이터 생성 중...", value=30, status="분포 데이터 생성 중...")
-            dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage)
+            dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage,
+                                         cancelled=self._op_cancel_requested)
+        except _OperationCancelled:
+            self._cancel_web_report(progress, prep_ex)
+            return
         except Exception as exc:
             # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
 
         try:
             progress.set("데이터 분석 중... (Web Report)", value=38, status="데이터 분석 중...")
-            self.last_result = _wait_for_future(fut_analyze, progress)
+            self.last_result = _wait_for_future(fut_analyze, progress,
+                                                cancelled=self._op_cancel_requested)
             self._show_summary(self.last_result)
+        except _OperationCancelled:
+            self._cancel_web_report(progress, prep_ex)
+            return
         except Exception as exc:
             progress.fail(f"실패: 분석 실패 - {exc}")
             prep_ex.shutdown(wait=False, cancel_futures=True)
@@ -2991,6 +3080,10 @@ class HoneyMainWindow(QMainWindow):
         limits = _slim_temperature_limits(temperature)
         if limits:
             manifest["temperature_limits"] = limits
+
+        # 여기부터는 취소 불가 — 업로드는 비멱등이라 중간에 끊어도 서버가 계속 처리해
+        # 세션이 생길 수 있다(아래 실패 안내문과 같은 이유). 버튼을 내려 알린다.
+        self._end_op_cancel()
 
         _on_upload_progress, _drain_upload_progress = _upload_progress_channel(
             progress, "Web Report 업로드 중... ({pct}%)",

@@ -879,6 +879,9 @@ def web_report_issue_table_etc(session_id):
     """Issue Table ETC 섹션 item 추가/삭제 — 세션 편집 DB 갱신 (Bin/TNO/Distribution
     은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
 
+    body 의 `scope`: "main"(기본, Issue Table) | "compare"(Issue Table Compare 탭).
+    두 표는 카테고리 축이 달라 ETC 목록을 공유하지 않는다 — 저장 kind 자체가 갈린다.
+
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
@@ -897,6 +900,7 @@ def web_report_issue_table_etc(session_id):
         result = web_report_service.update_issue_etc_items(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             add=item if action == "add" else "", remove=item if action == "remove" else "",
+            scope=(body.get("scope") or "main"),
             client_ip=ip, user_agent=ua)
     except FileNotFoundError as exc:
         return artifact_missing(session_id, str(exc))
@@ -1144,6 +1148,37 @@ def web_report_compare_notes(session_id):
     except Exception:
         _log.exception("web_report compare_notes failed for session %s", session_id)
         abort(500, "compare_notes failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/dist_composites")
+def web_report_dist_composites(session_id):
+    """Distribution composite(합성 산포 차트) 정의 저장 — 세션 편집 DB(kind=dist_composite).
+
+    body: {"ops": [{"key": uuid, "value": {name,pairs,limit,colors}|null}]} — null 은 삭제.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_dist_composites(
+            session_id, ops, report_db=report_db, client_ip=ip, user_agent=ua)
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report dist_composites failed for session %s", session_id)
+        abort(500, "dist_composites failed")
     return jsonify(result)
 
 

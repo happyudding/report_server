@@ -102,6 +102,10 @@ const TAB_RENDERERS = {
   },
   // Temperature 전용 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표 (yield_issue.js).
   "issue-temp": () => renderIssueTempTab(),
+  // Compare 전용 — 산포 검출·신규 item·Bin Transition·Log 를 이슈 표로 (compare_issue.js).
+  // PLOTLY_TABS 에는 넣지 않는다 — 미니셀은 관측 후 lazy 렌더라 Plotly 도착 전에 그려도
+  // 빈 차트가 남지 않는다(Issue Table 과 같은 취급).
+  "issue-cmp": () => renderCompareIssueTab(),
   "cpk": renderCpk,
   "distribution": renderDistribution,
   "map-analysis": renderMapAnalysis,
@@ -256,7 +260,7 @@ document.querySelector(".content").addEventListener("click", e => {
     } else if (kind === "excel") {
       exportIssueExcel(issueRowsOf(actPanel),
                        actPanel.id === ISSUE_PANEL_TEMP ? ISSUE_TEMP_SHEET : "Issue Table");
-    } else if (kind === "etc-add") { openEtcItemModal(); }
+    } else if (kind === "etc-add") { openEtcItemModal(issueEtcScope(actPanel)); }
     else if (kind === "delmode") {
       const ui = issueUi(actPanel);
       ui.delMode = !ui.delMode;
@@ -282,6 +286,14 @@ document.querySelector(".content").addEventListener("click", e => {
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");
   if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump, issuePanelOf(jumpBtn)); return; }
+  // 표 **뒤에 붙는 별도 표**(Compare 탭 Bin Transition / Log)로의 점프 — 섹션 키가 아니라
+  // 앵커 id 를 쓴다. 그 표들은 이슈 시트 행이 아니라 compare payload 로 그린 형제 요소다.
+  const anchorBtn = e.target.closest("[data-issue-anchor]");
+  if (anchorBtn) {
+    const el = document.getElementById(anchorBtn.dataset.issueAnchor);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
   if (e.target.id === "yieldExcelBtn") { exportYieldExcel(); return; }
   if (e.target.id === "cpkExcelBtn") { exportCpkExcel(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
@@ -1345,18 +1357,34 @@ async function doDelete(pin) {
 // 조회 시점에 tables/yield_rows/distDataCache 에서 자동으로 다시 채워진다.
 let etcItemMeta = null;  // 전체 item 목록 캐시(rawDataMeta 있으면 그걸 재사용)
 
-function currentEtcItems() {
-  const rows = DATA && DATA.issue_table_text;
+// 이미 추가된 ETC 항목 목록 — 모달의 '(추가됨)' 표시용. scope 마다 표가 다르므로
+// 읽는 시트와 섹션 키도 함께 갈린다.
+function currentEtcItems(scope) {
+  const cmp = scope === "compare";
+  const rows = cmp ? (webReportSheets() || {})[ISSUE_CMP_SHEET]
+                   : (DATA && DATA.issue_table_text);
   if (!Array.isArray(rows)) return [];
-  const idx = rows.findIndex(r => r && r["Category"] === "ETC");
+  const sec = cmp ? "CMPETC" : "ETC";
+  const idx = rows.findIndex(r => r && r["Category"] === sec);
   if (idx === -1) return [];
   return rows.slice(idx + 1).map(r => r && r["Item"]).filter(Boolean);
 }
 
 function closeEtcItemModal() { document.getElementById("etcItemModal").classList.remove("show"); }
 
-async function openEtcItemModal() {
-  document.getElementById("etcItemModal").classList.add("show");
+// ETC 항목이 어느 표의 것인가 — 저장 kind(etc_item ↔ cmp_etc_item)와 row_key 접두
+// (ETC| ↔ CMPETC|)가 갈린다. Compare 표에서 추가한 항목이 메인 Issue Table 에 나타나면
+// 사용자는 지운 적 없는 항목이 늘어난 것으로 본다.
+function issueEtcScope(panel) {
+  return ((panel || activeIssuePanel()) || {}).id === ISSUE_PANEL_CMP ? "compare" : "main";
+}
+function etcKeyPrefix(scope) { return scope === "compare" ? "CMPETC" : "ETC"; }
+
+async function openEtcItemModal(scope) {
+  const modal = document.getElementById("etcItemModal");
+  modal.classList.add("show");
+  // 모달은 전역 1개라 어느 표에서 열었는지를 여기 실어 저장 시점에 읽는다.
+  modal.dataset.etcScope = scope || "main";
   document.getElementById("etcItemSearch").value = "";
   const engrName = document.getElementById("etcEngrName");
   const engrComment = document.getElementById("etcEngrComment");
@@ -1380,7 +1408,8 @@ function renderEtcItemList(filterText) {
   const host = document.getElementById("etcItemList");
   if (!host || !etcItemMeta) return;
   const q = String(filterText || "").trim().toLowerCase();
-  const already = new Set(currentEtcItems());
+  const already = new Set(currentEtcItems(
+    (document.getElementById("etcItemModal") || {}).dataset?.etcScope));
   const items = (etcItemMeta.items || []).filter(it => !q || it.name.toLowerCase().includes(q));
   host.innerHTML = items.length ? items.map(it => {
     const added = already.has(it.name);
@@ -1417,11 +1446,13 @@ async function addEtcEngrItem(name, comment, col) {
   col = col || "개발 comment";
   if (!name) { showToast("Item 명을 입력하세요."); return; }
   if (!(await flushPendingComments())) return;
+  // 어느 표에서 열린 모달인지 — 저장 kind 와 row_key 접두가 여기서 갈린다.
+  const scope = (document.getElementById("etcItemModal") || {}).dataset?.etcScope || "main";
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-      body: JSON.stringify({ password: verifiedPassword, action: "add", item: name }),
+      body: JSON.stringify({ password: verifiedPassword, action: "add", item: name, scope }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
@@ -1430,7 +1461,7 @@ async function addEtcEngrItem(name, comment, col) {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
         body: JSON.stringify({ password: verifiedPassword,
-          comments: [{ key: `ETC|${name}`, col, value: comment }] }),
+          comments: [{ key: `${etcKeyPrefix(scope)}|${name}`, col, value: comment }] }),
       });
       const cj = await cres.json().catch(() => ({}));
       if (!cres.ok) throw new Error(cj.error || `comment 저장 실패 (HTTP ${cres.status})`);
@@ -1450,7 +1481,8 @@ async function removeEtcItem(item, panel) {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-      body: JSON.stringify({ password: verifiedPassword, action: "remove", item }),
+      body: JSON.stringify({ password: verifiedPassword, action: "remove", item,
+                             scope: issueEtcScope(panel) }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
@@ -1530,7 +1562,8 @@ async function deleteSelectedIssueRows(panel) {
     }
     for (const item of etcItems) {
       await post(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`,
-                 { password: verifiedPassword, action: "remove", item });
+                 { password: verifiedPassword, action: "remove", item,
+                   scope: issueEtcScope(panel) });
       okEtc.push(item);
       done += 1;
     }

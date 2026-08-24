@@ -29,6 +29,9 @@ from web_report import edits as _edits
 # (eval_export.py:128 도 같은 방식으로 참조한다).
 SEP = _edits._SEP
 
+# Compare 탭 접두(CMPDIST|·CMPETC|, 2026-08-20)는 **일부러 빼 뒀다** — 챗봇은 세션의
+# 이슈 이력을 item 축으로 훑는 도구이고, Before/After 비교 행은 그 축에 얹으면 같은 item 이
+# 조건 없이 두 줄로 보인다. parse 가 None 을 돌려 조용히 지나가는 것이 현재 의도다.
 CATEGORIES = ("Yield", "CPK", "TEMP", "ETC")
 
 

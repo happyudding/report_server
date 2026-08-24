@@ -67,6 +67,7 @@ const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
   // 상세 CDF(item_detail.js distRenderCdf) 렌더 방식 토글 — true: scattergl(WebGL,
   // 대량 포인트 SVG 프리즈 방지) / false: 기존 SVG scatter 로 즉시 롤백.
   // 데이터·배열 생성 코드는 양쪽 동일하고 trace type 만 바뀐다 (다운샘플 없음).
+  // true 여도 WebGL 불가 PC(--disable-gpu 처방 등)는 core.js webglOk() 가드로 SVG 폴백.
   CDF_GL: true };
 const DIST_STATUS_BG = { fail: "#FDECEC", cpk_low: "#FEF9E7", ok: "#FFFFFF" };  // 연빨강 / 연노랑 / 흰
 const DIST_PLOT_BG = {
@@ -405,11 +406,9 @@ function refreshDistConsumers() {
   // Distribution 갤러리 — 화면에 보이는(관측 중) 카드 재큐잉
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]')
     .forEach(distQueueRender);
-  // Compare 산포 비교 표의 Distribution 미니셀 (compare.js — 로드 순서 무관하게 가드)
-  if (typeof cmpDistQueueRender === "function") {
-    document.querySelectorAll('#cmp-dist-section .cmp-dist-cell[data-visible="1"]')
-      .forEach(cmpDistQueueRender);
-  }
+  // (구 Compare '산포 비교' 서브탭의 미니셀 재큐잉은 2026-08-20 제거됐다 — 그 표는
+  //  Issue Table Compare 탭으로 옮겨졌고, 그 패널의 미니셀은 위 issuePanelsQueryAll
+  //  경로가 이미 함께 처리한다.)
 }
 
 // ── Bin1 only: 양품(BIN==1) ECDF — 전체 기준과 같은 배치 로더를 bin1 변형으로 쓴다. ──
@@ -1025,9 +1024,12 @@ function distDrawPoints(plot) {
   const order = distSourceFilter.size
     ? srcs.slice().sort((a, b) => (distSourceFilter.has(a) ? 1 : 0) - (distSourceFilter.has(b) ? 1 : 0))
     : srcs;
+  // pts 의 키는 보통 source 명이지만 Distribution composite 는 pairKey(source+U+001F+item)
+  // 라 색 해석기를 plot 에 주입한다(dist_composite.js). 미설정이면 종전과 완전히 동일.
+  const colorFor = plot._distColorFor || distActiveColorFor;
   order.forEach(src => {
     const xs = pts[src].xs, ys = pts[src].ys;
-    ctx.fillStyle = distActiveColorFor(src);
+    ctx.fillStyle = colorFor(src);
     ctx.beginPath();
     for (let i = 0; i < xs.length; i++) {
       const px = ox + xa.l2p(xs[i]), py = oy + ya.l2p(ys[i]);
@@ -1090,6 +1092,12 @@ function distGalleryReady() {
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
   if (cell.dataset.rendered === "1") return;
+  // Distribution composite 카드(사용자 합성 차트)는 데이터 축이 달라 전용 렌더러가 그린다.
+  // 준비상태도 자체 판단하므로 distGalleryReady() 보다 앞에서 가른다.
+  if (cell.dataset.compId) {
+    if (typeof dcRenderCompositeCell === "function") dcRenderCompositeCell(cell);
+    return;
+  }
   if (!distGalleryReady()) return;
   const subject = cell.dataset.subject;
   const status = cell.dataset.status || "ok";
@@ -1201,6 +1209,10 @@ function distToolbarHtml() {
     ? `<button class="distseg${distNewOnly ? " active" : ""}" data-seg="newitem" title="Before 에 없고 After 에만 있는 신규 Test Item 만 표시 (판정 기준: 그룹 전체 합집합)">신규항목보기 (${newItems.size})</button>`
     : "";
   const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 · 신규항목보기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
+  // "분석하기" — 합성 산포 차트(Distribution composite) 만들기 메뉴. 편집모드에서만
+  // 노출한다(Issue Table 액션 메뉴와 같은 정책). 만들어진 카드는 전원에게 보인다.
+  const analyzeBtn = (typeof MODE !== "undefined" && MODE === "edit"
+                      && typeof dcAnalyzeBtnHtml === "function") ? dcAnalyzeBtnHtml() : "";
   return `<div class="dist-toolbar">
     <div class="distseg-group">${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}${newBtn}</div>
     ${distTempFilterHtml()}
@@ -1209,6 +1221,7 @@ function distToolbarHtml() {
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>
     </div>
     ${selChip}
+    ${analyzeBtn}
     <span class="dist-count"></span>
   </div>`;
   // 범례는 툴바가 아니라 갤러리 **우측 세로 칸**(.dist-legend-side, distRenderGallery)에
@@ -1249,9 +1262,12 @@ function distRenderGallery() {
       <div class="distg-plot"></div>
     </div>`;
   }).join("");
+  // 사용자가 만든 합성 차트는 갤러리 **맨 앞**에 둔다 — 수백 장 일반 카드 뒤에 묻히면
+  // 찾을 수 없다. 세그먼트/검색 선택 필터의 대상이 아니라 항상 표시된다(distIndex 밖).
+  const compCards = (typeof dcCardsHtml === "function") ? dcCardsHtml() : "";
   panel.innerHTML = distToolbarHtml() +
     `<div class="dist-body">` +
-    (distFiltered.length ? `<div class="distg-grid">${cards}</div>`
+    ((distFiltered.length || compCards) ? `<div class="distg-grid">${compCards}${cards}</div>`
                          : `<div class="placeholder dist-body-main">해당 조건의 항목이 없습니다</div>`) +
     `<aside class="dist-legend-side">` +
     distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], DIST_LEGEND_VERT_CLS) +

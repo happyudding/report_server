@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS run_case (
     PRIMARY KEY (run_id, case_id)
 );
 -- test_condition = 측정 조건 축. '' = 일반/미상(기본), 'TEMP' = 온도 평가(Issue Table Temp
--- 시트 유래), 'FF'/'SS'/'FS'/'SF' = corner 예약(현재 채우는 경로 없음).
+-- 시트 유래), 'COMPARE' = Before/After 비교(Issue Table Compare 시트 유래, 2026-08-20),
+-- 'FF'/'SS'/'FS'/'SF' = corner 예약(현재 채우는 경로 없음).
 -- 같은 item 이 조건만 달리해 평가되면 별개 case 여야 한다 — 안 그러면 label 이 서로 덮인다.
 CREATE TABLE IF NOT EXISTS fail_case (
     case_id TEXT PRIMARY KEY, product_name TEXT NOT NULL, lot_id TEXT, wafer_number INTEGER,

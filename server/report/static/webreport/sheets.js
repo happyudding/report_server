@@ -705,6 +705,9 @@ function reorderYieldRows(rows, cols) {
 // manifest.issue_comments 키 규칙과 반드시 동일해야 한다:
 // Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", TEMP 행 "TEMP|<item>"
 // (Temperature 모드 전용), ETC 데이터 행 "ETC|<item>".
+// Compare 모드 전용 시트("Issue Table Compare", tabs/compare_issue.py)는 접두가 따로다:
+// 산포/신규 행 "CMPDIST|<item>", 수동 ETC 행 "CMPETC|<item>". 섹션 키(=서버가 Category
+// 셀에 싣는 값)도 같은 이름이라 아래 분기가 그대로 맞물린다.
 function issueRowKey(r, section) {
   const item = String((r && r["Item"]) ?? "");
   if (!item.trim()) return "";
@@ -712,6 +715,8 @@ function issueRowKey(r, section) {
   if (section === "CPK") return `CPK|${item}`;
   if (section === "TEMP") return `TEMP|${item}`;
   if (section === "ETC") return `ETC|${item}`;
+  if (section === "CMPDIST") return `CMPDIST|${item}`;
+  if (section === "CMPETC") return `CMPETC|${item}`;
   return "";
 }
 
@@ -728,6 +733,10 @@ function issueHideStatusKey(r, section) {
   if (section === "CPK") return item ? `CPK|${item}` : "";
   if (section === "TEMP") return item ? `TEMP|${item}` : "";
   if (section === "ETC") return item ? `ETC|${item}` : "";
+  // Compare 시트 — 두 섹션 모두 행이 곧 item 이라 comment 키와 같다.
+  // (숨김은 CMPDIST 만 서버가 허용한다 — CMPETC 는 항목 삭제로 지운다.)
+  if (section === "CMPDIST") return item ? `CMPDIST|${item}` : "";
+  if (section === "CMPETC") return item ? `CMPETC|${item}` : "";
   return "";
 }
 
@@ -740,6 +749,15 @@ const ISSUE_SECTION_LABELS = {
   CPK:   { group: "cpk",   avg: "cpk" },
   TEMP:  { group: "temp",  avg: "Avg" },   // Temperature 모드 전용 (RT limit 이탈 항목)
   ETC:   { group: "etc",   avg: "Avg" },
+  // Compare 모드 전용 시트. 이 표에는 {src}_yield 컬럼이 없어 그룹 헤더(colspan) 자체가
+  // 생기지 않지만, 섹션 키가 미등록이면 Yield 라벨로 폴백하므로 명시해 둔다.
+  CMPDIST: { group: "distribution", avg: "Avg" },
+  CMPETC:  { group: "etc",          avg: "Avg" },
+};
+// 섹션 키 → 화면에 보여줄 이름 (툴바 점프 버튼·섹션 제목). 저장 키와 분리된 표시 문구다.
+const ISSUE_SECTION_TITLES = {
+  Yield: "YIELD", CPK: "CPK", TEMP: "TEMP", ETC: "ETC",
+  CMPDIST: "Distribution", CMPETC: "ETC",
 };
 function issueSectionHeadRowsHtml(cols, sec) {
   const lab = ISSUE_SECTION_LABELS[sec] || ISSUE_SECTION_LABELS.Yield;
@@ -1185,9 +1203,10 @@ function renderSheetTable(rows, opts) {
           out += issueSectionHeadRowsHtml(cols, sec);
         }
         // 헤더 블록이 대체하는 divider 행(CPK 서브헤더 / TEMP·ETC 라벨행)은 데이터로 안 그린다.
+        // CMPETC(Compare 시트 ETC 라벨행)도 같은 divider 다 — 항목이 없어도 헤더는 나온다.
         if (isCpkSubheadRow(r)) continue;
         const catTxt = String((r && r["Category"]) || "").trim();
-        if (catTxt === "ETC" || catTxt === "TEMP") continue;
+        if (catTxt === "ETC" || catTxt === "TEMP" || catTxt === "CMPETC") continue;
       }
       out += renderDataRowTr(r, ri);
     }

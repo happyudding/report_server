@@ -9,6 +9,7 @@ from __future__ import annotations
 from . import build_log
 from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
+from .tabs.compare_issue import build_compare_issue_rows
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.temp_fail import build_temp_fail_rows
@@ -137,7 +138,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                          compare_groups=None, yield_basis=None,
                          temperature_groups=None, temperature_limits=None,
                          step_label="", compare_payload=None,
-                         compare_deferred=False) -> dict:
+                         compare_deferred=False, cmp_etc_items=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -172,7 +173,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     가져와 주입한다(2026-08-19) — payload 안에 박아 캐시하면 편집·스키마 bump 마다 전량
     재계산되기 때문. 안 주면 여기서 계산한다(구 호출부·테스트 호환).
     compare_deferred: True 면 미주입 시에도 계산하지 않고 `compare_pending` 만 세운다 —
-    사용자가 기다리는 콜드 빌드가 compare 를 백그라운드 잡에 미루는 모드."""
+    사용자가 기다리는 콜드 빌드가 compare 를 백그라운드 잡에 미루는 모드.
+    cmp_etc_items: Issue Table Compare 탭의 수동 ETC 항목 (edits.KIND_CMP_ETC_ITEM).
+    기존 etc_items(메인 Issue Table)와 저장 kind 가 분리돼 서로 섞이지 않는다."""
     _apply_step_label(tables, step_label)
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
@@ -304,6 +307,17 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                                             compare_groups=compare_groups)
         if compare_payload is not None:
             payload["compare"] = compare_payload
+            # Issue Table Compare 시트 — dist_shift focus/new_items 를 기존 Issue Table
+            # 형식(comment/Status/숨김 편집 경로 재사용)으로 굽는다. compare 가 pending
+            # 이면 키 자체가 없다(프런트가 "계산 중" 안내 → 잡 완료 후 재빌드에서 생성).
+            # perf-guard: allow S01-report-schema — Compare 모드 세션에만 시트가 늘고,
+            # 무효화는 전역 REPORT_SCHEMA_VERSION 이 아니라 그 모드 전용 세대
+            # cache_policy.COMPARE_REPORT_SCHEMA_VERSION 으로 한다(콜드 폭풍 회피).
+            with build_log.stage("tab:Issue Table Compare"):
+                payload["sheets"]["Issue Table Compare"] = build_compare_issue_rows(
+                    compare_payload, tables=tables, cpk_rows=cpk_rows,
+                    cmp_etc_items=cmp_etc_items, issue_comments=issue_comments,
+                    hidden_keys=issue_hidden, statuses=issue_status)
         else:
             # 최종본에는 이 키가 없다(프런트 하위호환: 플래그 부재 = 종전 렌더).
             payload["compare_pending"] = True

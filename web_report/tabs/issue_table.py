@@ -14,7 +14,8 @@ ETC 섹션은 ENGR 가 임의로 추가한 item(manifest.etc_items, service.upda
 PTE/개발 comment 는 manifest.issue_comments 에 row_key 단위로 저장된다
 (service.update_issue_comments 가 갱신, 여기서는 조회 시 채우기만 한다).
 row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", TEMP 행 "TEMP|<item>",
-ETC 행 "ETC|<item>".
+ETC 행 "ETC|<item>". (Compare 모드 전용 "CMPDIST|<item>"/"CMPETC|<item>" 는 이 모듈이
+아니라 tabs/compare_issue.py 소관이다 — 접두 화이트리스트만 service 에서 공유한다.)
 행 숨김/Status(edits.KIND_ISSUE_HIDDEN/KIND_ISSUE_STATUS) 키는 이슈 단위:
 Yield 는 bin 단위 "Yield|<bin>"(대표행+상세행 일괄), CPK/TEMP/ETC 는
 "CPK|<item>"/"TEMP|<item>"/"ETC|<item>".

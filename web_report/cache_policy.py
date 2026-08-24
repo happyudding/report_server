@@ -339,6 +339,15 @@ REPORT_SCHEMA_VERSION = 41
 #     (static/webreport/distribution.js distSpecLimits) 캐시된 옛 payload 를 쓰면 안 바뀐다.
 TEMPERATURE_SCHEMA_VERSION = 1
 
+# Compare 세션 **전용** payload 세대 — TEMPERATURE_SCHEMA_VERSION 과 같은 취지다.
+# ⚠ COMPARE_SCHEMA_VERSION(아래)과 혼동 금지:
+#   COMPARE_SCHEMA_VERSION        = compare **계산 결과**(build_compare_payload) 캐시 세대
+#   COMPARE_REPORT_SCHEMA_VERSION = 그 결과를 **report payload 에 어떻게 싣는지**의 세대
+#     (시트 구성·행 구조). compare 계산은 그대로 재사용하면서 report 만 다시 굽고 싶을 때.
+# v1: "Issue Table Compare" 시트 신설 (2026-08-20) — sheets 키가 늘어 옛 payload 를 쓰면
+#     탭이 빈 화면이 된다.
+COMPARE_REPORT_SCHEMA_VERSION = 1
+
 
 def _eval_rules_suffix() -> tuple:
     """eval 룰 상태 키 꼬리표 — report_key(ai 세션)와 ai_comment_key 가 공유.
@@ -368,6 +377,9 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
     # Temperature 세션만 갈리는 세대 — 그 외 모드의 기존 캐시는 종전 키 그대로 유효하다.
     if _mode(session) == "Temperature":
         key += (TEMPERATURE_SCHEMA_VERSION,)
+    # Compare 세션도 같은 방식으로 그 모드만 갈아끼운다 (Issue Table Compare 시트).
+    if _mode(session) == "Compare":
+        key += (COMPARE_REPORT_SCHEMA_VERSION,)
     # AI Comment 는 payload 안에 박혀 캐시되므로 eval 룰(threshold/signature)을 고치면
     # 이 키가 갈려야 재평가된다(/pe/eval 저장 시 rev +1). **ai_comment 옵션 세션에만**
     # 덧붙고 rev 파일이 없으면 빈 문자열이라, 그 외 세션의 기존 캐시는 그대로 유효하다.

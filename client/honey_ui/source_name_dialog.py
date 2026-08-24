@@ -52,7 +52,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QStyle,
@@ -592,7 +591,10 @@ class SourceNameDialog(QDialog):
             lines.append(
                 f"· Group 칸은 비워 두어도 됩니다. 한 행에 이름을 적으면 같은 그룹의 나머지"
                 f" 행과 source 이름 앞부분(_RT/_CT/_HT 제외)이 함께 바뀝니다"
-                f" (최대 {self._legend_max - 3}자). 다른 그룹과 같은 이름은 쓸 수 없습니다.")
+                f" (최대 {self._legend_max - 3}자).")
+            lines.append(
+                "· Group 칸 ▼ 드롭다운에서 다른 그룹을 고르면 그 행이 그 그룹으로"
+                " 이동합니다 (다른 그룹의 이름을 직접 적어도 같습니다).")
             lines.append(
                 "· Enter 는 입력 확정만 합니다 — 창은 아래 OK 를 눌러야 닫힙니다.")
         lines += [
@@ -669,23 +671,46 @@ class SourceNameDialog(QDialog):
         finally:
             self._rendering = False
 
-    def _group_edit(self, r, row):
-        """Group 칸 = **그냥 입력칸**이다 (드롭다운 아님, 2026-08-11 사용자 요청).
+    def _gids(self):
+        """지정된 그룹 번호 목록 — 표 등장 순서."""
+        gids = []
+        for row in self._rows:
+            if row.group and row.group not in gids:
+                gids.append(row.group)
+        return gids
 
-        그룹 **소속**은 자동 배치가 정하고 사용자는 **이름**만 적는다. 기본값은 빈 칸이고,
-        한 행에 적으면 같은 그룹 전원이 그 이름으로 채워진다(_on_group_text → _render).
-        어느 그룹인지는 placeholder(회색 "그룹 N")와 짝수 그룹 배경 띠로 구분한다.
+    def _group_display(self, gid):
+        """그룹 표시명 — 사용자가 붙인 이름이 없으면 기본 '그룹 N'."""
+        return self._group_names.get(gid) or f"그룹 {gid}"
+
+    def _group_edit(self, r, row):
+        """Group 칸 = 그룹 선택 드롭다운 + 이름 입력칸 (2026-08-24 요청으로 드롭다운 추가).
+
+        드롭다운에서 다른 그룹을 고르면 이 행이 **그 그룹으로 이동**한다 — 자동 배치가
+        잘못 묶은 source 를 '그룹 초기화 후 전부 다시' 없이 바로잡는 수단이다. 직접
+        타이핑은 종전과 같다: 이름을 적으면 같은 그룹 전원 일괄 개명, 다른 그룹의
+        이름을 적으면 그 그룹으로 이동, 미지정 행의 새 이름은 새 그룹 생성.
+        기본 표시는 빈 칸 + placeholder(회색 "그룹 N") — 이름 없는 그룹임을 보여준다.
         """
-        edit = QLineEdit()
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        combo.addItem(_NO_GROUP, 0)
+        for gid in self._gids():
+            combo.addItem(self._group_display(gid), gid)
+        combo.setCurrentIndex(-1)                 # 표시 텍스트는 아래에서 직접 넣는다
+        edit = combo.lineEdit()
         edit.setText(self._group_names.get(row.group, "") if row.group else "")
         edit.setMaxLength(self._legend_max - 3)   # 접미사(_RT 등 3자) 자리 확보
         edit.setPlaceholderText(f"그룹 {row.group}" if row.group else _NO_GROUP)
-        edit.setToolTip(
+        combo.setToolTip(
+            "▼ 드롭다운에서 그룹을 고르면 이 행이 그 그룹으로 이동합니다.\n"
             "그룹 이름을 입력하면 같은 그룹의 나머지 행과 source 이름이 함께 바뀝니다.\n"
             "Enter 는 입력 확정만 합니다(창은 닫히지 않습니다).")
+        combo.activated.connect(lambda idx, i=r, c=combo: self._on_group_pick(i, idx, c))
         # 엔터·포커스 아웃 모두 editingFinished 하나로 받는다 (엔터는 둘 다 발화).
         edit.editingFinished.connect(lambda i=r, e=edit: self._on_group_text(i, e))
-        return edit
+        return combo
 
     def _role_combo(self, r, row):
         combo = QComboBox()
@@ -740,14 +765,34 @@ class SourceNameDialog(QDialog):
         text = (item.text() or "").strip()[:self._legend_max]
         self._rows[item.row()].legend = text
 
-    def _on_group_text(self, r, edit):
-        """Group 칸에 적은 이름 — 개명(같은 그룹 전원 일괄) / 미지정 행의 그룹 편입 / 지우기.
+    def _on_group_pick(self, r, idx, combo):
+        """드롭다운에서 그룹 선택 = 이 행을 그 그룹으로 이동. (미지정) 은 그룹 해제.
 
-        **이미 그룹이 있는 행**이 다른 그룹의 이름을 적으면 거부한다(2026-08-11 요청) —
-        그룹 이름은 그룹을 가리키는 유일한 이름이어야 하고, 같은 이름 두 그룹은 리포트에서
-        구분되지 않는다. 반면 **미지정 행**이 기존 그룹 이름을 적는 건 "그 그룹에 넣어라"
-        라는 뜻이라 그대로 편입시킨다 — 자동 배치가 못 묶은 source 를 손으로 묶는 유일한
-        수단이다.
+        같은 그룹을 다시 고르면 소속은 그대로 두고 표시 텍스트만 원복한다(_render).
+        선택 직후 따라오는 editingFinished 는 표시 문자열 가드(_on_group_text)가 걸러낸다.
+        """
+        if self._rendering or r >= len(self._rows):
+            return
+        try:
+            gid = int(combo.itemData(idx) or 0)
+        except RuntimeError:                      # _render 가 위젯을 이미 파괴한 뒤
+            return
+        row = self._rows[r]
+        if gid == row.group:
+            self._render()
+            return
+        row.group = gid
+        if gid:
+            self._sync_group_name(gid, only_row=row)  # 이름 붙은 그룹이면 legend 도 맞춘다
+        self._render()
+
+    def _on_group_text(self, r, edit):
+        """Group 칸에 적은 이름 — 개명(같은 그룹 전원 일괄) / 다른 그룹으로 이동 / 지우기.
+
+        다른 그룹의 이름(사용자 지정 이름 또는 기본 표시 '그룹 N')을 적으면 **그 그룹으로
+        이동**한다 — 드롭다운 선택과 같은 뜻이다(2026-08-24 통일. 종전에는 그룹 있는 행이
+        적으면 중복 이름이라 거부했지만, 이동으로 해석하면 같은 이름 두 그룹이 생길 길
+        자체가 없다). 미지정 행이 새 이름을 적으면 새 그룹을 만든다.
         """
         if self._rendering:
             return
@@ -761,22 +806,19 @@ class SourceNameDialog(QDialog):
         current = self._group_names.get(row.group, "") if row.group else ""
         if text == current:
             return                                # 변화 없음 (포커스 아웃 포함)
+        # 드롭다운 표시 문자열이 텍스트로 남은 경우 — 이름 입력이 아니므로 원복만 한다.
+        if text == _NO_GROUP or (row.group and text == f"그룹 {row.group}"):
+            self._render()
+            return
         if not text:                              # 이름만 지운다 — 그룹 소속은 유지
             if row.group:
                 self._group_names.pop(row.group, None)
             self._render()
             return
-        owner = next((g for g, name in self._group_names.items()
-                      if name == text and g != row.group), 0)
-        if owner:
-            if row.group:
-                QMessageBox.warning(
-                    self, "그룹 이름 중복",
-                    f"'{text}' 는 이미 다른 그룹의 이름입니다.\n"
-                    "그룹마다 다른 이름을 지정해 주세요.")
-                self._render()                    # 입력값 원복
-                return
-            row.group = owner                     # 미지정 행 → 그 그룹으로 편입
+        owner = next((g for g in self._gids()
+                      if g != row.group and self._group_display(g) == text), 0)
+        if owner:                                 # 다른 그룹의 이름 → 그 그룹으로 이동/편입
+            row.group = owner
             self._sync_group_name(owner, only_row=row)
             self._render()
             return
@@ -1017,7 +1059,8 @@ class SourceNameDialog(QDialog):
         if not self._is_dut:                       # DUT 는 파일 열을 숨긴다
             width += _PATH_CHARS * unit_mono + 18
         if self._is_temp:
-            for col, w in ((2, 96), (3, 92)):
+            # Group 칸은 드롭다운 화살표(≈20px)가 폭을 먹는다 — 이름 자리 확보용으로 넓힌다.
+            for col, w in ((2, 118), (3, 92)):
                 self.table.setColumnWidth(col, w)
                 width += w
         self.table.setColumnWidth(self._color_col, 52)
@@ -1061,6 +1104,35 @@ class SourceNameDialog(QDialog):
                     f"Group {', '.join(map(str, bad))} 의 RT 가 1개가 아닙니다.\n"
                     "RT 는 Limit 판정 기준이라 그룹마다 정확히 1개여야 합니다.")
                 return
+            # 같은 그룹에 같은 Role 이 여러 개면 배치 오류다 (2026-08-24 요청) —
+            # RT 는 위에서 이미 '정확히 1개'를 강제했으므로 CT/HT 만 살핀다.
+            per = {}
+            for row in self._rows:
+                per.setdefault(row.group, []).append(row.role)
+            dup = [f"{self._group_display(gid)} 에 {role} {per[gid].count(role)}개"
+                   for gid in self._gids() for role in ("CT", "HT")
+                   if per[gid].count(role) > 1]
+            if dup:
+                QMessageBox.warning(
+                    self, "Temperature 배치",
+                    "같은 그룹에 같은 Role 이 여러 개 배치되어 있습니다:\n"
+                    + "\n".join(f"· {d}" for d in dup)
+                    + "\n\n그룹마다 RT/CT/HT 는 각각 1개까지만 배치할 수 있습니다.")
+                return
+            # 그룹별 Role 구성이 서로 다르면(예: 한 그룹만 HT 없음) 짝을 잘못 지었을
+            # 가능성이 크다 — 정말 파일이 없는 경우도 있으므로 차단하지 않고 확인만 받는다.
+            comp = {gid: tuple(role for role in ROLES if role in per.get(gid, []))
+                    for gid in self._gids()}
+            if len(set(comp.values())) > 1:
+                lines = [f"· {self._group_display(gid)}: {' + '.join(comp[gid])}"
+                         for gid in self._gids()]
+                if QMessageBox.question(
+                        self, "Temperature 배치",
+                        "그룹별 Role 구성이 서로 다릅니다 — 짝이 맞는지 확인해 주세요.\n"
+                        + "\n".join(lines) + "\n\n이대로 계속하시겠습니까?",
+                        QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                        QMessageBox.StandardButton.Cancel) != QMessageBox.StandardButton.Ok:
+                    return
             # OK 즉시 업로드로 넘어가지 않고 한 번 확인한다 (2026-08-11 요청) — 그룹/이름을
             # 만지다 무심코 OK(또는 Enter) 를 눌러 잘못된 배치로 생성되는 실수 방지.
             if QMessageBox.question(

@@ -6,6 +6,14 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 
+class OperationCancelled(Exception):
+    """사용자가 진행 중 작업을 취소했다 — 오류가 아니라 정상 종료 경로다.
+
+    호출부는 ``except Exception`` 오류 처리 **앞에** 이 예외를 따로 받아
+    오류 팝업 없이 조용히 정리해야 한다.
+    """
+
+
 class ElapsedProgress:
     """Status progress bar that continuously renders elapsed time.
 
@@ -121,8 +129,17 @@ class ElapsedProgress:
         QTimer.singleShot(ms, _hide_if_current)
 
 
-def wait_for_future(future, progress, poll_cb=None, timeout=0.1):
+def wait_for_future(future, progress, poll_cb=None, timeout=0.1, cancelled=None):
+    """future 완료까지 UI 를 살리며 대기한다.
+
+    cancelled: 선택. 참을 돌려주면 대기를 중단하고 ``OperationCancelled`` 를 올린다.
+    스레드는 죽일 수 없으므로 실행 중인 작업은 ``future.cancel()`` 로 결과만 버려진다
+    — 호출부가 executor 를 ``shutdown(wait=False, cancel_futures=True)`` 로 정리할 것.
+    """
     while True:
+        if cancelled is not None and cancelled():
+            future.cancel()
+            raise OperationCancelled()
         if poll_cb is not None:
             poll_cb()
         progress.update()

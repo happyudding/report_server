@@ -49,6 +49,24 @@ KIND_NOTE_TAG = "note_tag"
 # 사용자가 적은 코멘트가 다른 행에 붙는다. 값은 JSON 이 아니라 평문 문자열이다.
 # manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_COMPARE_NOTE = "compare_note"
+# 2026-08-20 추가 — Issue Table Compare 탭의 **수동 ETC 항목**(item_key=item 이름).
+# 기존 KIND_ETC_ITEM 과 분리한 이유: 두 표는 카테고리 축이 다르고(Yield/CPK/ETC vs
+# Distribution/ETC) 한 세션에서 동시에 존재하므로, 같은 kind 를 쓰면 한쪽에서 추가한
+# 항목이 다른 표에도 나타난다. comment/Status/숨김은 row_key 접두("CMPETC|<item>")로
+# 이미 갈리므로 기존 kind 를 그대로 쓴다.
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_CMP_ETC_ITEM = "cmp_etc_item"
+# 2026-08-24 추가 — Distribution composite(합성 산포 차트) 정의.
+#   item_key = 프런트 생성 UUID (**생성 후 불변** — CLAUDE.md 5-12. 이름 변경은 value 만
+#   수정한다. 행 인덱스·표시명을 키로 쓰면 필터/개명으로 사용자가 만든 차트가 유실된다.)
+#   value = JSON {"name": str, "pairs": [{"source","item"}...],
+#                 "limit": {"mode":"item"|"manual","item"?,"lo"?,"hi"?},
+#                 "colors": {"<source>"+U+001F+"<item>": "#rrggbb"}}
+#   pairKey 구분자는 issue_comment/compare_note 와 같은 U+001F — source/item 명에 어떤
+#   문자가 와도 안전하다. 색은 생성 시 배정해 저장한다(리로드에도 legend 색 불변).
+#   ECDF 데이터는 저장하지 않는다 — 조회 시 기존 distribution_batch 를 재사용한다.
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_DIST_COMPOSITE = "dist_composite"
 # 2026-07-23 추가 — 조회 전처리 옵션(item_key='spec', value=JSON: exclude_items/outlier).
 # 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되는 되돌릴 수 있는 편집 (preprocess.py).
 KIND_PREPROCESS = "preprocess"
@@ -73,8 +91,9 @@ YIELD_BASIS_AUTO = "auto"
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
 # compare_note 도 표 payload 빌드와 무관하다 — /full extras 로 별도 조회한다.
+# dist_composite 도 마찬가지 — /full extras 로 별도 조회(load_dist_composites)한다.
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
-                         KIND_YIELD_BASIS, KIND_COMPARE_NOTE)
+                         KIND_YIELD_BASIS, KIND_COMPARE_NOTE, KIND_DIST_COMPOSITE)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -135,11 +154,12 @@ def state_from_manifest(manifest: dict) -> dict:
         "etc_items": list(manifest.get("etc_items") or []),
         "trim_overrides": dict(manifest.get("trim_overrides") or {}),
         "summary_engr": dict(manifest.get("summary_engr") or {}),
-        # issue_hidden/issue_status/issue_signatures 는 manifest 에 없는 신규 kind —
-        # 빈 기본값만 보장.
+        # issue_hidden/issue_status/issue_signatures/cmp_etc_items 는 manifest 에 없는
+        # 신규 kind — 빈 기본값만 보장.
         "issue_hidden": [],
         "issue_status": {},
         "issue_signatures": {},
+        "cmp_etc_items": [],
     }
 
 
@@ -148,7 +168,8 @@ def load_edit_state(report_db, session_id: str) -> dict:
 
     etc_items 순서는 rowid(삽입) 순서 — get_webreport_edits 가 보장한다."""
     state = {"issue_comments": {}, "etc_items": [], "trim_overrides": {}, "summary_engr": {},
-             "issue_hidden": [], "issue_status": {}, "issue_signatures": {}}
+             "issue_hidden": [], "issue_status": {}, "issue_signatures": {},
+             "cmp_etc_items": []}
     for row in report_db.get_webreport_edits(session_id,
                                              exclude_kinds=_STATE_EXCLUDED_KINDS):
         kind, item_key, value = row["kind"], row["item_key"], row["value"]
@@ -158,6 +179,8 @@ def load_edit_state(report_db, session_id: str) -> dict:
                 state["issue_comments"].setdefault(row_key, {})[col] = value
         elif kind == KIND_ETC_ITEM:
             state["etc_items"].append(item_key)
+        elif kind == KIND_CMP_ETC_ITEM:
+            state["cmp_etc_items"].append(item_key)
         elif kind == KIND_ISSUE_HIDDEN:
             state["issue_hidden"].append(item_key)
         elif kind == KIND_ISSUE_STATUS:
@@ -236,6 +259,23 @@ def load_compare_notes(report_db, session_id: str) -> dict:
         out[row["item_key"]] = {"text": str(text),
                                 "updated_by": row.get("updated_by") or "",
                                 "updated_at": row.get("updated_at") or ""}
+    return out
+
+
+def load_dist_composites(report_db, session_id: str) -> dict:
+    """composite UUID → 정의 dict({name, pairs, limit, colors}). /full extras 조립용 —
+    kind 지정 조회라 note_sheet 등 다른 대용량 값을 끌어오지 않는다. (load_chart_notes 동형.)"""
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_DIST_COMPOSITE,)):
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            spec["updated_by"] = row.get("updated_by") or ""
+            spec["updated_at"] = row.get("updated_at") or ""
+            out[row["item_key"]] = spec
     return out
 
 

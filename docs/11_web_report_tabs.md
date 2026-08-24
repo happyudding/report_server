@@ -378,8 +378,10 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   그룹으로 나눈다(배치·업로드 순서는 [10](10_web_report_pipeline.md) 분석 모드 표). 그룹은
   `webreport_options.compare` → `validation.webreport_compare_groups` → `build_compare_payload`
   로 흐르고, 옵션이 없으면 `after=[s0], before=[s1]` 로 폴백해 **기존 세션 화면이 바뀌지 않는다**.
-  서브탭 5개 = `Map 비교` / `Log 비교` / `산포 비교` / `Test Time 비교` / `동일성 검증`
+  서브탭 4개 = `Map 비교` / `Log 비교` / `Test Time 비교` / `동일성 검증`
   ([compare.js](../server/report/static/webreport/compare.js)).
+  **구 `산포 비교` 서브탭은 2026-08-20 제거**됐다 — 그 표는 아래 **Issue Table Compare**
+  탭으로 옮겨졌다(`dist_shift` payload 계산·`_dist_focus` 판정은 그대로다).
   `Test Time 비교` 는 **자리만 있는 빈 화면**이다(2026-08-20) — 입력 계약(7-meta
   honeyform)에 시간 컬럼이 없고 STDF 는 서버가 파싱하지 않아 원천 데이터가 없다.
   - **표의 Before/After 열 순서**(2026-08-20): Log 비교·산포 비교·Bin Yield 비교는
@@ -436,17 +438,9 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     `ks_d` 는 2026-07-28 사용자 요청으로 표에서 뺐다. **payload 에는 그대로 남는다**
     (median_shift 의 분모 IQR·p_stdev 의 정렬배열을 어차피 계산하므로 지우는 이득이 없고,
     되살릴 때 서버를 안 건드려도 된다).
-  - **Distribution 열 + 페이지 넘김**(산포 비교, 2026-07-28): 행마다 Distribution 탭 갤러리
-    카드와 같은 ECDF 미니차트를 **1/2 크기**(200×132px, `.cmp-dist-cell`)로 붙인다.
-    데이터는 Distribution 탭·Issue Table 미니셀과 **같은 `distDataCache`(전체 die 기준)**
-    이고 표시점 계산(`distDisplayPoints`)·canvas 점 렌더(`distPaintPoints`)도 공용 경로라
-    규칙 #5(다운샘플 금지/markers 전용)를 그대로 따른다. 셀은 IntersectionObserver 로 보이는
-    것만 rAF 2칸/프레임으로 그리고, 아직 안 받은 항목은 `distRequestSubject` 배치 요청 후
-    `refreshDistConsumers` 가 다시 그린다(그 훅에 Compare 셀 셀렉터를 추가했다).
-    표는 **한 페이지 20행**(`CMP_DIST_PAGE_SIZE`) — 미니차트가 붙어 전량 렌더가 무겁다.
-    페이지 전환·필터 토글 시 `renderCmpDistSection` 이 이전 셀을 `Plotly.purge` 하고 다시
-    관측을 건다(인스턴스 누수 방지). 소스 색은 Distribution 탭과 같은 `distColorFor` 라
-    표 상단에 source 색 범례를 함께 띄운다.
+    ⚠ **화면은 2026-08-20 부터 Issue Table Compare 탭**이다(아래) — 구 산포 비교 서브탭의
+    페이지 넘김(`CMP_DIST_PAGE_SIZE`)·전용 미니셀(`cmpDistRenderCell`)은 삭제됐고, 미니
+    ECDF 는 Issue Table 과 같은 `renderIssueMiniDist` 경로를 쓴다. 서버 계약은 무변경.
   - **유의성 검정 + 노이즈 게이트**(2026-07-28, [significance.py](../web_report/tabs/significance.py)):
     `p_mean`(Welch t — 표시된 avg/stdev/n 을 그대로 써 화면 값과 어긋나지 않게) ·
     `p_stdev`(**Brown-Forsythe** = `|x−median|` 에 대한 Welch t). scipy 없이 `math.lgamma`
@@ -468,8 +462,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     노이즈와 구분되지 않아 오경보가 된다. n 이 수천인 보통의 pool 에서는 게이트가 사실상
     무동작이고, 작은 n(수율 낮은 항목·outlier 마스킹 후)에서만 일한다. p 를 낼 수 없으면
     (n<3·양쪽 고정값) 종전대로 효과크기만 본다.
-    화면 기본값은 "관심 항목만" ON(버튼으로 ALL 전환, 라벨=현재 적용 값 — cpk.js 관례),
-    `N/M 항목` 카운트 표시. 정렬은 `meanshift_sigma` 내림차순(None 최하단, tie `|Δσ%|`).
+    정렬은 `meanshift_sigma` 내림차순(None 최하단, tie `|Δσ%|`).
     임계값은 `thresholds` 로 내려 프런트가 하드코딩하지 않는다(동일성 검증과 같은 패턴).
   - **동일성 검증**(`build_equivalence`): 항목별 `AVG차 = |After−Before|`,
     `AVG차(%) = |After−Before| / |Before| × 100` (**둘 다 절대값** — Grade1 이 "5% 이하"라
@@ -489,6 +482,57 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     유효숫자 3자리까지 자리수 확장 — 원값은 CPK Limit 역산이 계속 쓰므로 불변).
     회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py)
     (`test_single_source_group_matches_cpk_sheet` 이 average/stdev/cpk + limit 을 CPK 시트와 대조).
+- **Issue Table Compare 탭 (Compare 모드 전용, 2026-08-20 신설)**: Compare 결과를 **기존
+  Issue Table 형식**(comment / Status / 숨김)으로 정리한 표. 탭 노출 규칙은 Compare 탭과
+  같다(`tabs_topbar.syncTabVisibility`, `modeNow === "Compare"`). 카테고리 4개인데
+  **출처가 둘로 갈린다**:
+  | 카테고리 | 출처 | 코멘트 채널 |
+  |---|---|---|
+  | Distribution | 시트 `sheets["Issue Table Compare"]` — `dist_shift` 의 **focus 행 전부** + `new_items`(구분="신규") | `issue_comment` (`CMPDIST\|<item>`) |
+  | ETC | 같은 시트 — ENGR 수동 추가(`edits.KIND_CMP_ETC_ITEM`) | `issue_comment` (`CMPETC\|<item>`) |
+  | Bin Transition | `compare.bin_matrix` 를 프런트가 **별도 표**로 | `compare_note` (`bm:<x>,<y>`) |
+  | Log | `compare.goodlog` 중 **추가/삭제/Limit 변경 행만** | `compare_note` (`gl:…`) |
+
+  아래 2개를 시트에 합치지 않은 이유는 축이 다르기 때문이다 — Bin Transition 은 die 좌표
+  단위, Log 는 Before/After limit 쌍이라 item 한 줄 구조에 안 들어간다. 그래서 이슈 표
+  **뒤에 형제로** 붙인다(`renderIssueTableInto` 의 `opts.extraHtml`).
+  ⚠ 표를 **감싸는 래퍼를 추가하면** `.sheet-wrap.kind-issue` 의 sticky 기준 부모가 바뀌어
+  헤더 고정이 깨진다. 하단 표에 `.sheet-table.kind-issue` 를 붙여도 안 된다(후처리가
+  패널 전역 질의라 첫 표를 잡아야 한다).
+  - **Log 는 "변경 행만"** 이다(사용자 확정) — Gap% 만 큰 행은 이슈가 아니라 값 차이 관찰이라
+    Compare 탭 > Log 비교에서 본다. 분류는 `goodlogRowType` **재사용**(사본 금지).
+  - **코멘트가 두 채널로 갈린다**: 위 2개는 Issue Table 과 같은 `issue_comment`(PTE/개발
+    2열 + Status), 아래 2개는 `compare_note` 라 **Map 비교·Log 비교 서브탭과 같은 키를
+    공유**한다(한쪽에서 적으면 다른 쪽에도 즉시 보인다 — `DATA.compare_notes` 한 벌).
+  - **row_key(저장 키, 불변)**: `CMPDIST|<item>` / `CMPETC|<item>`. 숨김·Status 키도 같다
+    (행이 곧 item). 숨김은 **CMPDIST 만** 허용한다(CMPETC 는 항목 자체를 지운다 — 기존 ETC
+    와 같은 취급, `service._ISSUE_HIDABLE_PREFIXES`). 서버가 Category 셀에 **섹션 키를
+    그대로** 싣고(`tabs/compare_issue.py`) 프런트가 그 값을 상속해 접두를 만든다
+    (`sheets.js issueRowKey`) — 화면 표시 이름은 `ISSUE_SECTION_TITLES` 가 따로 갖는다.
+    Category 에 "ETC" 같은 표시 문구를 넣으면 메인 시트 섹션 키와 충돌해 저장 키가
+    `ETC|<item>` 이 된다(= 메인 Issue Table 코멘트를 덮어쓴다).
+  - **패널 일반화 재사용**: `core.js` 의 `ISSUE_PANEL_SEL` 에 `#panel-issue-cmp` 를 넣는
+    것만으로 편집·검색·Status 필터·미니셀·삭제 모드가 전부 함께 돈다(Temperature 개편이
+    터놓은 길). 새 Issue 계열 표를 또 만들 일이 있으면 이 상수부터 보라.
+  - **ETC scope 분리**: ETC 항목 목록은 `etc_item`(메인) ↔ `cmp_etc_item`(Compare) 으로
+    kind 자체가 갈린다. 라우트는 하나이고 body 의 `scope`("main"|"compare")로 고른다
+    (`POST .../web_report/issue_table/etc`). 프런트는 모달 dataset 에 scope 를 실어
+    저장 시점에 읽는다(`edit_mode.issueEtcScope`).
+  - **Summary 합류**: Compare 요약 카드(산포 검출/신규·삭제 item/Limit 변경/Bin 불일치 —
+    수치는 서버 payload 를 그대로 읽는다) + Issue Status 카드의 `Compare` 행(CMPDIST+CMPETC
+    합산) + ENGR Comment 의 `compare` 칸. compare 가 pending 이면 카드가 "계산 중" 을 낸다.
+  - **캐시 세대**: 이 시트는 report payload 에 실리므로 구조를 바꾸면 전역
+    `REPORT_SCHEMA_VERSION` 이 아니라 **`COMPARE_REPORT_SCHEMA_VERSION`** 을 올린다
+    (Compare 세션만 무효화 — 콜드 폭풍 회피, `TEMPERATURE_SCHEMA_VERSION` 과 같은 취지).
+    compare **계산 결과** 캐시 세대인 `COMPARE_SCHEMA_VERSION` 과 혼동하지 말 것.
+  - **eval DB export**: CMPDIST/CMPETC 코멘트는 `fail_case.test_condition='COMPARE'` 로
+    나간다 — 같은 item 의 일반 코멘트(`''`)와 **다른 case** 라 서로 덮어쓰지 않는다
+    (TEMP 와 같은 규약 → [13 §row_key](13_eval_analyzer_integration.md)). bm:/gl: 는
+    `compare_note` kind 라 애초에 export 대상이 아니다.
+  - 회귀 고정: [tests/test_compare_issue_table.py](../tests/test_compare_issue_table.py)(서버) ·
+    [tests/test_compare_issue_js.py](../tests/test_compare_issue_js.py)(headless Edge — 저장 키·
+    Log 필터·요약 카드). 검증용 합성 데이터는
+    [tools/eval_testdata/make_compare_testdata.py](../tools/eval_testdata/make_compare_testdata.py).
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
   columnar, lazy 전용). `/distribution`(전량)과 `/distribution_batch`(항목 배치) 모두
@@ -518,6 +562,25 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - **전량 `/distribution` 라우트는 유지** — 클라 업로드 프리컴퓨트 dist blob 시딩
     (ingest)과 하위호환 폴백이 쓴다. 프런트가 더 이상 호출하지 않을 뿐이다.
   - 항목 상세(전 포인트 + serial/xpos/ypos hover 메타)는 종전대로 `/scatter/<subject>`.
+  - **Distribution composite (합성 산포 차트 — 2026-08-24)**: 툴바 우측 "분석하기 ▾"
+    (편집모드 전용) → 모달에서 source 복수 + TestItem 검색·체크 복수 선택 → 고른
+    **source × item 조합 각각이 legend 1개**(`<source>_<item>`)인 차트 1장을 갤러리 맨 앞에
+    추가한다. 카드 클릭 시 전용 상세 패널(`#panel-dist-composite-detail`)에서 ECDF 전량 CDF +
+    pair 별 통계표를 본다. 프런트 [dist_composite.js](../server/report/static/webreport/dist_composite.js).
+    - **서버 계산 추가 없음** — 기존 `distribution_batch` 응답의 `bySource` 에서 고른 source 만
+      골라 그린다. 저장하는 것은 **정의뿐**(`kind=dist_composite`, item_key=UUID 불변,
+      value=`{name, pairs, limit, colors}`). pairKey 구분자는 issue_comment 와 같은 U+001F.
+    - 색은 **생성 시 배정해 저장**한다(`distDefaultColor` 를 랜덤 오프셋부터 순차) — 리로드마다
+      바뀌면 사람이 기억한 legend 색이 무의미해진다. 수정 시 살아남은 pair 색은 유지.
+    - limit 은 ① 선택 항목 하나의 limit(표시 기준은 `distSpecLimits` = distribution_index)
+      또는 ② 직접 입력(lo/hi). 항목마다 단위가 달라 x축을 공유하므로 규격선은 이 기준 하나만 긋는다.
+    - ECDF 는 고유값+누적%라 die 수를 모른다 → 통계표는 Δp 가중 **모집단** 통계
+      (mean=Σx·Δp, σ, median, cpk)로 복원하고 각주로 밝힌다. scatter API 를 항목 수만큼
+      호출하지 않는 이유가 이것(비용 대비 정밀도 이득 없음).
+    - 카드는 `.distg-card.distg-comp` 라 IntersectionObserver·purge·rAF 큐를 그대로 재사용하고,
+      점 색만 `plot._distColorFor` 주입으로 pairKey 기준이 된다(미설정이면 기존 경로 그대로).
+    - 저장은 `POST .../web_report/dist_composites`(ops 배열, null=삭제) 단발. 응답이 권위본이라
+      `load(false)` 재로드를 하지 않는다 — kind 가 payload 중립이라 report 캐시가 살아 있다.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
@@ -749,14 +812,22 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
   ("저장은 됐는데 세션이 안 열리는" 상태). decode 에도 넣어 **이미 오염된 parquet 도
   마이그레이션 없이 구제**한다. item 컬럼명이 메타 컬럼명과 겹치는 것은 구조 검증
   (`validate_honeyform_df`)에서 거부한다 — 그런 파일은 지금도 컬럼이 밀려 깨지므로 회귀가 아니다.
-- `kind` 9종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
-  `chart_note` / `note_sheet` / `issue_hidden` / `issue_status` / `issue_signature`
-  ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
+- `kind` 15종: `issue_comment` / `etc_item` / `cmp_etc_item` / `trim_override` / `summary_engr` /
+  `chart_note` / `note_sheet` / `note_tag` / `compare_note` / `dist_composite` /
+  `issue_hidden` / `issue_status` / `issue_signature` / `preprocess` / `yield_basis`
+  ([edits.py](../web_report/edits.py) 규약 — 정본은 그 파일의 KIND_* 상수 주석).
+  편집마다 `rev` 가
   단조 증가해 캐시가 자연 무효화된다([12](12_web_report_cache.md)). dedup(동일 analysis_key)
   세션 간 편집 비공유. legacy 세션(rev==0)은 조회 시 manifest 폴백 + 첫 편집 직전 자동 시드
-  (chart_note/note_sheet/issue_hidden/issue_status/issue_signature 는 manifest 에 없던 신규
-  kind 라 시드 대상 아님). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시 숨김/Status
-  는 자연 리셋된다.
+  (manifest 에 있던 4종 — issue_comment/etc_item/trim_override/summary_engr — 만 시드 대상,
+  나머지는 신규 kind 라 해당 없음). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시
+  숨김/Status 는 자연 리셋된다.
+- **payload 중립 kind**: `chart_note` / `note_sheet` / `note_tag` / `dist_composite` 는
+  report payload 계산에 안 들어가므로 저장해도 `payload_rev` 가 오르지 않는다
+  ([webreport_edits.py](../server/database/webreport_edits.py) `PAYLOAD_NEUTRAL_KINDS`).
+  새 kind 를 만들 때 **여기에 넣는 것을 빠뜨리면 저장할 때마다 report 전체가 콜드 재빌드**
+  된다(2026-08-13 조회 급락 사건과 같은 기전). `/full` 응답 캐시는 전역 `rev` + extras
+  digest 로 정상 무효화되므로 화면은 즉시 갱신된다.
 
 ### 차트 주석 (chart_note — 2026-07-12)
 그래프 위 동그라미/사각형/선/텍스트 + 코멘트. Plotly 내장 draw(dragmode drawcircle 등,

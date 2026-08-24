@@ -255,12 +255,17 @@ function issueStatusCounts() {
   const counts = {
     Yield: { open: 0, close: 0 }, CPK: { open: 0, close: 0 },
     TEMP: { open: 0, close: 0 }, ETC: { open: 0, close: 0 },
+    // Compare 모드 전용 시트의 두 섹션 — 화면에는 "Compare" 한 줄로 합산해 보여준다.
+    CMPDIST: { open: 0, close: 0 }, CMPETC: { open: 0, close: 0 },
   };
-  // Issue Table + (Temperature 면) Issue Table Temp 두 시트를 같은 규칙으로 훑는다 —
-  // TEMP 섹션이 별도 시트로 빠졌으므로(2026-08-05) 여기서 합산해야 카드 값이 맞는다.
+  // Issue Table + (Temperature 면) Issue Table Temp + (Compare 면) Issue Table Compare 를
+  // 같은 규칙으로 훑는다 — 섹션이 별도 시트로 빠졌으므로 여기서 합산해야 카드 값이 맞는다.
+  // 시트마다 섹션 키가 달라(ETC ↔ CMPETC) 서로 섞이지 않는다.
   const sheets = [(DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : []];
   const temp = (webReportSheets() || {})["Issue Table Temp"];
   if (Array.isArray(temp) && temp.length) sheets.push(temp);
+  const cmp = (webReportSheets() || {})[ISSUE_CMP_SHEET];
+  if (Array.isArray(cmp) && cmp.length) sheets.push(cmp);
   sheets.forEach(rows => {
     let sec = "";
     rows.forEach(r => {
@@ -277,16 +282,26 @@ function issueStatusCounts() {
 // 진행률 = Close / (Open + Close) * 100 (소수 1자리). 이슈 행이 없는 카테고리는 "-".
 function issueStatusCardHtml() {
   const counts = issueStatusCounts();
-  const cats = (webReportMode() === "Temperature")
+  const mode = webReportMode();
+  const cats = (mode === "Temperature")
     ? ["Yield", "CPK", "TEMP", "ETC"] : ["Yield", "CPK", "ETC"];
+  // Compare 모드면 그 표의 두 섹션을 "Compare" 한 줄로 합쳐 잇는다.
+  if (mode === "Compare") {
+    counts.Compare = { open: counts.CMPDIST.open + counts.CMPETC.open,
+                       close: counts.CMPDIST.close + counts.CMPETC.close };
+    cats.push("Compare");
+  }
   const rows = cats.map(cat => {
     const c = counts[cat];
     const total = c.open + c.close;
     const prog = total ? (c.close / total * 100).toFixed(1) + "%" : "-";
-    // TEMP 행은 Issue Table 이 아니라 **Issue Table Temp** 탭에 있다 — 행 자체를 그 탭으로
+    // TEMP/Compare 행은 Issue Table 이 아니라 각자의 탭에 있다 — 행 자체를 그 탭으로
     // 보내는 점프 대상으로 만든다(카드 기본 점프는 issues 라 클릭해도 없는 표로 갔었다).
     const jump = (cat === "TEMP")
-      ? ` class="summary-jump" data-jump="issue-temp" title="Issue Table Temp 탭으로 이동"` : "";
+      ? ` class="summary-jump" data-jump="issue-temp" title="Issue Table Temp 탭으로 이동"`
+      : (cat === "Compare"
+        ? ` class="summary-jump" data-jump="issue-cmp" title="Issue Table Compare 탭으로 이동"`
+        : "");
     return `<tr${jump}><td class="iss-cat">${cat}</td>` +
       `<td class="iss-open${c.open ? "" : " st-empty"}">${c.open}</td>` +
       `<td class="iss-close${c.close ? "" : " st-empty"}">${c.close}</td>` +
@@ -297,6 +312,49 @@ function issueStatusCardHtml() {
     `<div class="iss-status-wrap"><table class="iss-status-table">` +
     `<thead><tr><th>구분</th><th>Open</th><th>Close</th><th>진행률</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div></div>`;
+}
+
+// Summary 의 Compare 요약 카드 (Compare 모드 전용) — 클릭 시 Issue Table Compare 탭 이동.
+// 수치는 전부 서버 payload 를 **그대로 읽는다**: focus 판정은 compare.py 가 정본이고
+// (dist_shift.summary.focus), Bin 불일치는 bin_matrix.counts.mismatch 다. Log 3종만
+// 표시 계층 집계(goodlogRowType — compare.js 의 이상 요약 칩과 같은 함수)를 쓴다.
+function compareSummaryCardHtml() {
+  if (webReportMode() !== "Compare") return "";
+  const wr = DATA.web_report || {};
+  const cmp = wr.compare;
+  const shell = inner =>
+    `<div class="summary-section-card summary-jump" data-jump="issue-cmp" ` +
+    `title="Issue Table Compare 탭으로 이동">` +
+    `<div class="section-title">Compare <span class="summary-jump-hint">▸ 탭 이동</span></div>` +
+    inner + `</div>`;
+  if (!cmp) {
+    return shell(`<div class="placeholder">${wr.compare_pending
+      ? "⏳ Compare 계산 중… 끝나면 자동으로 표시됩니다."
+      : "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)"}</div>`);
+  }
+  const focus = ((cmp.dist_shift || {}).summary || {}).focus || 0;
+  const total = ((cmp.dist_shift || {}).summary || {}).total || 0;
+  const mismatch = ((cmp.bin_matrix || {}).counts || {}).mismatch || 0;
+  const newN = (cmp.new_items || []).length;
+  let removed = 0, limitchg = 0;
+  ((cmp.goodlog || {}).rows || []).forEach(r => {
+    const t = goodlogRowType(r);
+    if (t === "removed") removed++;
+    else if (t === "limitchg") limitchg++;
+  });
+  const row = (label, value, sub) =>
+    `<tr><td class="iss-cat">${label}</td>` +
+    `<td class="iss-open${value ? "" : " st-empty"}">${value}</td>` +
+    `<td class="cmp-sum-sub">${sub}</td></tr>`;
+  return shell(
+    `<div class="iss-status-wrap"><table class="iss-status-table">` +
+    `<thead><tr><th>구분</th><th>건수</th><th>비고</th></tr></thead><tbody>` +
+    row("산포 검출", focus, `공통 항목 ${total}개 중`) +
+    row("신규 item", newN, "After 에만 있음") +
+    row("삭제 item", removed, "Before 에만 있음") +
+    row("Limit 변경", limitchg, "이름·규격 변경 포함") +
+    row("Bin 불일치", mismatch, "공통 좌표 die") +
+    `</tbody></table></div>`);
 }
 
 let summaryJumpBound = false;
@@ -330,6 +388,7 @@ function renderWebSummary() {
     `<div class="summary-section-card summary-jump" data-jump="yield" title="Yield 탭으로 이동">` +
     `<div class="section-title">Yield <span class="summary-jump-hint">▸ 탭 이동</span></div>` + majorFailBinsTableHtml() +
     `</div>` +
+    compareSummaryCardHtml() +
     issueStatusCardHtml() +
     `<div class="summary-section-card">` +
     `<div class="section-title">Engr Comment</div>` +
@@ -395,21 +454,34 @@ function renderEngrNoteJump() {
 }
 
 // Summary 탭 Engr Comment 칸 정의 (manifest.summary_engr 키와 일치).
-// TEMP 는 Temperature 모드에서만 — Issue Status 카드의 TEMP 행과 같은 기준이다
-// (webReportMode()). 상수가 아니라 함수인 이유: 모드는 DATA 가 온 뒤에야 안다.
+// TEMP 는 Temperature 모드에서만, Compare 는 Compare 모드에서만 — Issue Status 카드의
+// 해당 행과 같은 기준이다(webReportMode()). 상수가 아니라 함수인 이유: 모드는 DATA 가
+// 온 뒤에야 안다. **저장 키는 모드와 무관하게 서버가 다 받는다**(service._ENGR_KEYS) —
+// 모드가 바뀐 세션의 기존 값이 저장 불가로 막히지 않게.
 const ENGR_COMMENT_FIELDS = [
   { key: "yield", label: "Yield" },
   { key: "cpk", label: "CPK" },
   { key: "etc", label: "ETC" },
 ];
 function engrCommentFields() {
-  if (webReportMode() !== "Temperature") return ENGR_COMMENT_FIELDS;
-  return [
-    { key: "yield", label: "Yield" },
-    { key: "cpk", label: "CPK" },
-    { key: "temp", label: "TEMP" },
-    { key: "etc", label: "ETC" },
-  ];
+  const mode = webReportMode();
+  if (mode === "Temperature") {
+    return [
+      { key: "yield", label: "Yield" },
+      { key: "cpk", label: "CPK" },
+      { key: "temp", label: "TEMP" },
+      { key: "etc", label: "ETC" },
+    ];
+  }
+  if (mode === "Compare") {
+    return [
+      { key: "yield", label: "Yield" },
+      { key: "cpk", label: "CPK" },
+      { key: "compare", label: "Compare" },
+      { key: "etc", label: "ETC" },
+    ];
+  }
+  return ENGR_COMMENT_FIELDS;
 }
 
 // ── Engr Comment 서식(글자 크기·색) ──────────────────────────────────────────

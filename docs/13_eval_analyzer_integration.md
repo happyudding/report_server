@@ -294,6 +294,15 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
   | `CPK\|<item>` | 1 (PASS_BIN 관례) | `''` |
   | `TEMP\|<item>` | NULL | **`'TEMP'`** |
   | `ETC\|<item>` | NULL | `''` |
+  | `CMPDIST\|<item>` · `CMPETC\|<item>` | NULL | **`'COMPARE'`** (2026-08-20) |
+
+  `CMPDIST|`/`CMPETC|` 는 Compare 모드 **Issue Table Compare** 탭의 두 섹션이다
+  ([11](11_web_report_tabs.md)). 두 섹션을 같은 `'COMPARE'` 로 묶는 이유는 그 구분이
+  화면 배치일 뿐 판단 축이 아니기 때문이고, 조건을 붙이는 이유는 TEMP 와 같다 —
+  Before/After 비교는 엔진이 평가하지 않는 별개 축이라 같은 item 의 일반 코멘트와 한
+  case 로 모이면 서로 덮어쓴다. eval.db **DDL 은 안 바뀐다**(어휘만 추가 — `test_condition`
+  컬럼은 v8 부터 있다). Compare 탭 하단 별도 표(동일 좌표 Bin 비교 `bm:`, Log 비교 `gl:`)의
+  코멘트는 `compare_note` kind 라 애초에 이 경로로 오지 않는다.
 
   wafer_number=NULL(lot 수준 case). item/unit/limit 은 honeyform tables 에서,
   fail/total/cpk 통계는 best-effort (rawdata 에 없는 자유입력 ETC 항목은 코멘트만).

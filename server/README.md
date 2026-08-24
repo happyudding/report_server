@@ -328,8 +328,8 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 
 ### web_report 데이터/편집 (`/pe/report/session/<sid>/web_report/`)
 
-조회는 공개, 편집(`edit`/`overrides`/`etc`/`comments`/`engr`/`chart_notes`/`note`/
-`note_image`/`rawdata_replace`/`preprocess`)은 CSRF + 편집자 가드. 계약 상세는
+조회는 공개, 편집(`edit`/`overrides`/`etc`/`comments`/`engr`/`chart_notes`/`compare_notes`/
+`dist_composites`/`note`/`note_image`/`rawdata_replace`/`preprocess`)은 CSRF + 편집자 가드. 계약 상세는
 [../docs/11_web_report_tabs.md](../docs/11_web_report_tabs.md).
 
 | 메서드 | 경로 | 접근 | 설명 |
@@ -345,12 +345,13 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/trim_chart_batch?source=&group=A&group=B…` | 공개 | Trim 그룹 차트 **배치** (1~6개=산포 한 페이지, `group` 반복 param **순서 유지**) → `{"charts":[...]}` gzip. 각 chart 는 단일 `/trim_chart` 결과와 값 동일. 콜드면 컴퓨트 워커로 오프로드. **Trim 탭은 「분석 시작」 버튼을 눌러야 호출된다**(탭 진입만으로는 요청 0건) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
-| `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |
+| `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집. `/issue_table/etc` 는 body 의 `scope`("main" 기본 \| "compare")로 어느 표의 ETC 목록인지 고른다 — Issue Table Compare 탭(Compare 모드)은 저장 kind 가 분리돼 있다 |
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/issue_table/signature` | 편집자 | Issue 행의 **ENGR 확정 Signature** 저장 (kind=issue_signature, `{key, signatures:[id,…]}`, 빈 배열=해제). 카탈로그 id 또는 `UNKNOWN` 만·중복 불가·최대 8개. 저장 후 eval DB 로 비동기 동기화 ([docs/13 §6-3](../docs/13_eval_analyzer_integration.md)) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
 | `POST` | `/compare_notes` | 편집자 | **Compare 탭 행 코멘트** 저장 (kind=compare_note, `{ops:[{key,value}]}`, 빈 값/null=삭제). key 는 `gl:<after>U+001F<before>`(Log 비교 행) 또는 `bm:<x>,<y>`(동일 좌표 Bin 비교 행) — **고정 규약**(키가 바뀌면 기존 입력이 유실된다, CLAUDE.md §5-12). 응답에 권위본 `compare_notes` 동봉 |
+| `POST` | `/dist_composites` | 편집자 | **Distribution composite**(합성 산포 차트) 정의 저장 (kind=dist_composite, `{ops:[{key,value}]}`, null=삭제). key 는 프런트 생성 **UUID(불변)**, value 는 `{name, pairs:[{source,item}], limit:{mode:"item"\|"manual",…}, colors:{"<source>U+001F<item>":"#rrggbb"}}`. ECDF 데이터는 저장하지 않는다(조회는 `distribution_batch` 재사용). 응답에 권위본 `dist_composites` 동봉 |
 | `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB). 본문은 **객체 저장**(report_session_blob 포인터), 전환 기간에는 legacy 편집행에도 dual-write — 응답 형식·낙관적 잠금 `base` 는 불변 |
 | `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |

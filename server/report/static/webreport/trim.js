@@ -905,7 +905,7 @@ function drawTrimChart(div, chart, payload) {
   const phases = (payload && payload.phases) || ["INIT", "CODE", "TRIM", "VERIFY"];
   const n = chart.n || 0;
   const x = Array.from({ length: n }, (_, i) => i + 1);
-  const useGl = n > TRIM.GL_THRESHOLD;
+  const useGl = n > TRIM.GL_THRESHOLD && webglOk();   // WebGL 불가 PC 는 SVG 폴백(core.js)
   const custom = (chart.serial || []).map((s, i) =>
     [s, (chart.xpos || [])[i], (chart.ypos || [])[i]]);
   const traces = [];

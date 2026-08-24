@@ -206,6 +206,9 @@ def session_full(session_id):
         # Compare 탭 행 코멘트(Log 비교 / 동일 좌표 Bin 비교) — 값싼 kind 지정 조회.
         extras["compare_notes"] = web_report_service.get_compare_notes(
             session_id, report_db=report_db)
+        # Distribution composite(합성 산포 차트) 정의 — 정의만이고 ECDF 는 안 실린다.
+        extras["dist_composites"] = web_report_service.get_dist_composites(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).

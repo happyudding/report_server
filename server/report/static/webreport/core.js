@@ -63,6 +63,22 @@ function seedEmptyFrames() {
   }
 }
 
+// ── WebGL 가용성 probe (1회 캐시) ──────────────────────────────────────────────
+// scattergl(WebGL) trace 는 컨텍스트 생성 실패 시 Plotly 가 SVG 로 자동 폴백하지 않고
+// "WebGL is not supported by your browser" 안내만 그린다. --disable-gpu 처방 PC(깜빡임
+// 대응 honey_safe_gfx.bat)·원격데스크톱·드라이버 블록리스트 환경이 여기 해당한다.
+// scattergl 을 쓰는 쪽(item_detail.js distRenderCdf, trim.js drawTrimChart)은 렌더 전에
+// 이 함수로 판정해 SVG scatter 로 내려간다 — 데이터는 동일, trace type 만 갈린다.
+let _webglOk = null;
+function webglOk() {
+  if (_webglOk !== null) return _webglOk;
+  try {
+    const c = document.createElement("canvas");
+    _webglOk = !!(c.getContext("webgl") || c.getContext("experimental-webgl"));
+  } catch (e) { _webglOk = false; }
+  return _webglOk;
+}
+
 // CSRF: 서버가 /view 응답에 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
 // ── 응답 캐시 개수 상한 (per-item fetch 결과 무한 누적 방지) ──────────────────
 // STDF Map·Trim 그룹 차트·Distribution ECDF 는 항목/그룹 단위로 응답을 받아 객체에
@@ -434,18 +450,22 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
 })();
 
 
-// ── Issue Table 패널 공용 헬퍼 (Issue Table / Issue Table Temp) ────────────────
-// 2026-08-05 Temperature 개편으로 Issue 표 패널이 2개가 됐다. 편집·검색·미니셀 로직은
-// 두 패널이 공유하므로 "패널을 인자로 받되 기본값은 기존 #panel-issues" 규약으로 일반화한다
-// (인자를 안 주면 동작이 종전과 같다). 툴바 버튼은 고정 id 대신 data-issue-act 로 식별한다
-// — 같은 id 가 두 패널에 생기면 document.getElementById 가 엉뚱한 패널을 잡는다.
+// ── Issue Table 패널 공용 헬퍼 (Issue Table / Issue Table Temp / Issue Table Compare) ──
+// 2026-08-05 Temperature 개편으로 Issue 표 패널이 2개가 됐고, 2026-08-20 Compare 개편으로
+// 3개가 됐다. 편집·검색·미니셀 로직은 세 패널이 공유하므로 "패널을 인자로 받되 기본값은
+// 기존 #panel-issues" 규약으로 일반화한다 (인자를 안 주면 동작이 종전과 같다).
+// 툴바 버튼은 고정 id 대신 data-issue-act 로 식별한다
+// — 같은 id 가 여러 패널에 생기면 document.getElementById 가 엉뚱한 패널을 잡는다.
 const ISSUE_PANEL_MAIN = "panel-issues";
 const ISSUE_PANEL_TEMP = "panel-issue-temp";
-const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp";
+const ISSUE_PANEL_CMP = "panel-issue-cmp";
+const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp, #panel-issue-cmp";
 // Temp 패널이 읽는 시트 이름 — 백엔드 tabs/temp_fail.TEMP_SHEET 와 같아야 한다.
 const ISSUE_TEMP_SHEET = "Issue Table Temp";
+// Compare 패널이 읽는 시트 이름 — 백엔드 metrics.py 의 주입 키와 같아야 한다.
+const ISSUE_CMP_SHEET = "Issue Table Compare";
 
-// 현재 DOM 에 존재하는 Issue 표 패널들 (Temp 는 Temperature 세션에만 내용이 있다).
+// 현재 DOM 에 존재하는 Issue 표 패널들 (Temp/Compare 는 해당 모드 세션에만 내용이 있다).
 function issuePanelEls() {
   return [...document.querySelectorAll(ISSUE_PANEL_SEL)];
 }
@@ -453,7 +473,7 @@ function issuePanelEls() {
 function issuePanelOf(el) {
   return (el && el.closest) ? el.closest(ISSUE_PANEL_SEL) : null;
 }
-// 두 패널을 통틀어 선택자 매칭 (구 '#panel-issues .xxx' 전역 질의의 대체).
+// 전 패널을 통틀어 선택자 매칭 (구 '#panel-issues .xxx' 전역 질의의 대체).
 function issuePanelsQueryAll(sel) {
   const out = [];
   issuePanelEls().forEach(p => p.querySelectorAll(sel).forEach(el => out.push(el)));
@@ -461,15 +481,18 @@ function issuePanelsQueryAll(sel) {
 }
 // 인자 없는 호출의 기본 패널 — 활성 탭이 Issue 계열이면 그것, 아니면 기본 패널.
 function activeIssuePanel() {
-  return document.querySelector("#panel-issues.active, #panel-issue-temp.active")
+  return document.querySelector("#panel-issues.active, #panel-issue-temp.active, " +
+                                "#panel-issue-cmp.active")
     || document.getElementById(ISSUE_PANEL_MAIN);
 }
 // 그 패널이 그린 rows 배열 (저장 diff·낙관 반영의 기준 데이터).
 function issueRowsOf(panel) {
-  if (panel && panel.id === ISSUE_PANEL_TEMP) {
-    const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET];
+  const sheetOf = name => {
+    const rows = (webReportSheets() || {})[name];
     return Array.isArray(rows) ? rows : [];
-  }
+  };
+  if (panel && panel.id === ISSUE_PANEL_TEMP) return sheetOf(ISSUE_TEMP_SHEET);
+  if (panel && panel.id === ISSUE_PANEL_CMP) return sheetOf(ISSUE_CMP_SHEET);
   return Array.isArray(DATA && DATA.issue_table_text) ? DATA.issue_table_text : [];
 }
 // 패널별 UI 상태(검색어·선택 모드) — 전역 1개면 두 패널이 서로의 상태를 덮어쓴다.

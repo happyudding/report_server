@@ -3,6 +3,11 @@
 `make_eval_testdata.py` 는 **web_report 세션으로 바로 올릴 수 있는** 합성 데이터 한 벌을
 만든다. 목적은 하나 — "이 룰이 이 세기에서 뜨는가"를 **정답을 아는 상태로** 확인하는 것.
 
+> **Compare 모드 검증은 다른 스크립트다** — [make_compare_testdata.py](make_compare_testdata.py)
+> (before/after 쌍, 2026-08-20). 검출 정본이 eval_engine signature 룰이 아니라
+> `web_report/tabs/compare.py _dist_focus`(임계 4개)라 축이 완전히 다르다. 레벨도 L1~L5
+> 사다리가 아니라 **L1(미검출)/L2(검출)/L3(강검출)** 3단이다. 아래 §Compare 참조.
+
 ```
 # ① 7-meta CSV 1장 (직접 업로드용) — 파일이 있으면 _v2·_v3 … 로 자동 증가
 server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --single-csv data\eval_testdata_7meta.csv
@@ -454,3 +459,73 @@ PF 는 L1/L2 가 측정 통계를 전부 `None` 으로 비운다 = **어떤 값 
   거친다(eval_engine import 3곳 규약, docs/13 §2).
 - 생성 데이터는 **운영 DB 와 무관**하다. 업로드하면 당연히 실제 세션이 생기므로,
   운영 서버에 올릴 거면 lot_id(`--lot`)를 알아볼 수 있게 두고 확인 후 지울 것.
+
+---
+
+## 6. Compare 모드 검증 데이터 (`make_compare_testdata.py`, v1 / 2026-08-20)
+
+```
+server\.venv\Scripts\python.exe tools\eval_testdata\make_compare_testdata.py
+```
+
+산출물 4개 (`data/`):
+
+| 파일 | 내용 |
+|---|---|
+| `compare_testdata_v1_before.csv` | 7-meta honeyform (Before) |
+| `compare_testdata_v1_after.csv` | 7-meta honeyform (After) |
+| `compare_testdata_v1_answer.csv` | 정답표 — item·유형·레벨·목표 μ/σ·기대 검출·근거·임계값 |
+| `compare_testdata_v1_verify.csv` | **서버 코드로 직접 돌린** 실측 대조 (`ok=0` 이 불일치) |
+
+두 CSV 를 Honey 로 **Compare 세션**(Before/After 배치)으로 올리면 Issue Table Compare 탭의
+검출 결과가 정답표와 같아야 한다.
+
+### 6-1. 검출 정본은 eval_engine 이 아니다
+
+`web_report/tabs/compare.py` 의 `_dist_focus` 하나이고 임계가 4개뿐이다:
+
+| 조건 | 결과 |
+|---|---|
+| 양쪽 Cpk > 100 | 제외 (여유 과대) |
+| 양쪽 σ = 0/결측 | 제외 (고정값) |
+| 한쪽 Cpk < 1.33 | **검출** — 절대 품질 조건, 유의성 게이트 없음 |
+| \|stdev 증가율\| ≥ 15% **이고** p_stdev < 0.05 | **검출** |
+| 그 외 | 제외 |
+
+그래서 레벨이 **3단**이다: `L1` 차이 거의 없음(미검출) / `L2` 검출(임계 소폭 초과) /
+`L3` 심하게 검출.
+
+### 6-2. 구성 (item 200 · die 1,009)
+
+| 그룹 | 수 | 내용 |
+|---|---|---|
+| 산포 유형 × 레벨 | 150 | `mean_shift` 10 · `sigma_up` 10 · `sigma_down` 8 · `tail` 8 · `bimodal` 8 · `low_cpk` 6 case × L1/L2/L3 |
+| 정상 대조군 | 37 | before ≈ after (미검출 기대) |
+| 신규 item | 5 | After 에만 → `compare.new_items` |
+| 삭제 item | 5 | Before 에만 → goodlog `removed` |
+| Limit 변경 | 3 | HILIM / LOLIM / 둘 다 → `limit_change_map` |
+| Bin 전이 die | 20 | Bin1→5 ×10 · Bin3→1 ×5 · Bin3→7 ×5 (`bin_matrix.counts.mismatch`) |
+
+검출 경로가 유형마다 다르게 설계돼 있다 — `mean_shift`·`low_cpk` 는 **Cpk 경로**(σ 는
+그대로), 나머지는 **stdev 경로**. 한 경로만 고쳐도 나머지가 잡히는지 보려면 이 구분이 필요하다.
+
+### 6-3. 두 가지 결정적 제약 (고칠 때 반드시 지킬 것)
+
+1. **모집단은 Bin1(양품) die 뿐이다** (`compare._bin1_frame`). fail die 를 아무리 넣어도
+   dist_shift 통계는 변하지 않는다 — 산포 차이는 **Bin1 값 자체로** 만들어야 한다.
+   그래서 이 데이터는 값을 spec 안으로 클립해 대부분 die 를 Bin1 로 남긴다
+   (`make_eval_testdata` 의 "spec 밖 = fail" 법칙과 목적이 반대다).
+2. **표본 모멘트 재스케일**(`_rescale`) — z-score 정규화 후 목표 μ·σ 로 되돌린다.
+   난수를 그냥 뽑으면 표본 σ 가 ±3% 흔들려 "+18% 겨냥" 이 실측 14.9% 로 내려앉고 L2 가
+   검출되지 않는다. 모양은 유지하고 모멘트만 정확히 맞추는 장치다.
+
+### 6-4. 자체 검증
+
+생성 직후 `build_cpk_rows` → `build_dist_shift` / `build_goodlog` 를 **서버 코드 그대로**
+호출해 기대와 대조한다(재구현 검증 금지 — CLAUDE.md 규칙 #13). 불일치가 있으면
+`_verify.csv` 를 남기고 **exit 1**. v1 실측 요약:
+
+```
+공통 항목 190 · 검출 100 · 신규 5 · 삭제 5 · limit 변경 3
+L1 50건 전부 미검출 / L2·L3 100건 전부 검출 / 대조군 37 미검출
+```

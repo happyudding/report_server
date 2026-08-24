@@ -17,6 +17,8 @@ document.getElementById("tabs").addEventListener("click", e => {
   const tab = btn.dataset.tab;
   hideItemDetail();   // Item_detail 열려 있으면 닫고 해당 탭으로
   hideMapDetail();    // Map Detail 열려 있으면 닫고 해당 탭으로
+  // Distribution composite 상세 (dist_composite.js — 로드 전이면 no-op)
+  if (typeof hideDistCompositeDetail === "function") hideDistCompositeDetail();
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));
@@ -140,6 +142,9 @@ function syncTabVisibility() {
   const modeNow = web ? webReportMode() : "Normal";
   const compareBtn = document.querySelector('.tab[data-tab="compare"]');
   if (compareBtn) compareBtn.style.display = (modeNow === "Compare") ? "" : "none";
+  // Issue Table Compare 도 Compare 모드 전용 (산포 검출·Bin Transition·Log 를 이슈 표로).
+  const cmpIssBtn = document.querySelector('.tab[data-tab="issue-cmp"]');
+  if (cmpIssBtn) cmpIssBtn.style.display = (modeNow === "Compare") ? "" : "none";
   // Issue Table Temp 는 Temperature 모드 전용 (CT/HT 를 RT Limit 으로 재판정한 표).
   const tempBtn = document.querySelector('.tab[data-tab="issue-temp"]');
   if (tempBtn) tempBtn.style.display = (modeNow === "Temperature") ? "" : "none";

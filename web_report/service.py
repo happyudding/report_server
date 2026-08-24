@@ -471,6 +471,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 selected_items=manifest.get("selected_items") or [],
                                 sheets=manifest.get("sheets") or [],
                                 etc_items=edit_state["etc_items"],
+                                # Issue Table Compare 탭의 수동 ETC 목록(별도 kind).
+                                cmp_etc_items=edit_state["cmp_etc_items"],
                                 issue_comments=edit_state["issue_comments"],
                                 summary_engr=edit_state["summary_engr"],
                                 issue_hidden=edit_state["issue_hidden"],
@@ -904,9 +906,14 @@ def get_temp_map(session_id: str, *, report_db, upload_root: Path) -> dict:
 
 _EMPTY_TEMP_MAP = {"format": "temp-map-v1", "sources": []}
 
-# Issue Table 계열 row_key 접두 (tabs/issue_table.py + tabs/temp_fail.py 규약).
-# hidden/status/comment 검증이 공유한다 — 새 섹션을 만들면 여기에 추가한다.
-_ISSUE_KEY_PREFIXES = ("Yield|", "CPK|", "TEMP|", "ETC|")
+# Issue Table 계열 row_key 접두 (tabs/issue_table.py + tabs/temp_fail.py +
+# tabs/compare_issue.py 규약). hidden/status/comment/signature 검증이 공유한다 —
+# 새 섹션을 만들면 여기에 추가한다.
+# 숨김만 대상이 좁다: ETC 계열(ETC|·CMPETC|)은 숨김 대신 **항목 자체를 지운다**.
+# 종전에는 이 구분을 `_ISSUE_KEY_PREFIXES[:3]` 슬라이스로 했는데, 튜플에 접두를 하나
+# 덧붙이는 것만으로 그 접두가 조용히 숨김 불가가 되는 순서 의존이라 이름으로 갈랐다.
+_ISSUE_HIDABLE_PREFIXES = ("Yield|", "CPK|", "TEMP|", "CMPDIST|")
+_ISSUE_KEY_PREFIXES = _ISSUE_HIDABLE_PREFIXES + ("ETC|", "CMPETC|")
 
 
 def temp_map_payload(session, tables) -> dict:
@@ -1566,14 +1573,22 @@ def _check_edit_targets(edit_list, tables) -> None:
 
 
 def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
-                           add: str = "", remove: str = "",
+                           add: str = "", remove: str = "", scope: str = "main",
                            client_ip: str = "", user_agent: str = "") -> dict:
     """Issue Table ETC 섹션에 ENGR 가 임의로 추가/삭제한 item 이름을 세션 편집 DB
     (report_webreport_edit, kind=etc_item)에 반영한다. manifest 는 불변 스냅샷.
 
     Bin/TNO/Distribution 값 자체는 저장하지 않는다 — item 이름만 기억해두고, 조회할 때마다
     build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다.
+
+    scope="compare" 면 **Issue Table Compare 탭**의 ETC 목록(kind=cmp_etc_item)을 다룬다 —
+    두 표는 카테고리 축이 다르고 한 세션에 함께 존재하므로 목록을 공유하면 안 된다.
     """
+    scope = str(scope or "main").strip() or "main"
+    if scope not in ("main", "compare"):
+        raise ValueError(f"unknown scope: {scope!r}")
+    kind = edits.KIND_CMP_ETC_ITEM if scope == "compare" else edits.KIND_ETC_ITEM
+    state_key = "cmp_etc_items" if scope == "compare" else "etc_items"
     session = report_db.get_session(session_id)
     if not session:
         raise KeyError(session_id)
@@ -1589,15 +1604,15 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
     # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
     edits.ensure_seeded(report_db, session_id,
                         lambda: cache.load_manifest_cached(analysis_key, upload_root))
-    etc_items = edits.load_edit_state(report_db, session_id)["etc_items"]
+    etc_items = edits.load_edit_state(report_db, session_id)[state_key]
     changes = []
     if add and add not in etc_items:
         # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
         # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
-        changes.append((edits.KIND_ETC_ITEM, add, ""))
+        changes.append((kind, add, ""))
         etc_items.append(add)
     if remove and remove in etc_items:
-        changes.append((edits.KIND_ETC_ITEM, remove, None))
+        changes.append((kind, remove, None))
         etc_items = [it for it in etc_items if it != remove]
     if changes:
         report_db.apply_webreport_edits(session_id, changes,
@@ -1607,7 +1622,8 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"issue_table_etc_items(add={add!r},remove={remove!r})",
+            changed_fields=(f"issue_table_etc_items(scope={scope},add={add!r},"
+                            f"remove={remove!r})"),
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
@@ -1623,7 +1639,9 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             _log.warning("eval export 재적재 트리거 실패 — ETC 항목 편집 후 코멘트 "
                          "eval DB 동기화 누락 (session=%s)", session_id, exc_info=True)
 
-    return {"ok": True, "etc_items": etc_items,
+    # etc_items 키 이름은 scope 와 무관하게 유지한다 — 프런트는 "내가 보낸 scope 의
+    # 현재 목록" 으로 읽으면 되고, 기존 호출부(scope 미지정)의 응답 형태가 그대로다.
+    return {"ok": True, "etc_items": etc_items, "scope": scope,
             "storage": "db" if changes else "unchanged"}
 
 
@@ -1665,7 +1683,7 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
             k = str(k or "").strip()
             if not k or len(k) > 300:
                 raise ValueError(f"invalid row key: {k!r}")
-            if not k.startswith(_ISSUE_KEY_PREFIXES[:3]):   # ETC 는 숨김 대신 항목 제거
+            if not k.startswith(_ISSUE_HIDABLE_PREFIXES):   # ETC 계열은 숨김 대신 항목 제거
                 raise ValueError(f"row not hidable: {k!r}")
             if k not in want:
                 want.append(k)
@@ -1995,7 +2013,8 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
 # temp 는 Temperature 모드 세션에서만 화면에 뜨지만(map_select.js engrCommentFields),
 # 키 자체는 모드와 무관하게 받는다 — 모드 판정을 저장 경로에 넣으면 옵션이 바뀐 세션의
 # 기존 값이 저장 불가로 막힌다.
-_ENGR_KEYS = ("yield", "cpk", "temp", "etc")
+# compare 도 마찬가지로 Compare 모드 세션에서만 화면에 뜬다(2026-08-20 신설).
+_ENGR_KEYS = ("yield", "cpk", "temp", "etc", "compare")
 # 글자 크기·색 서식이 붙은 값은 제한 HTML(선두 마커 "<!--rich-->")이라 태그만큼 길어진다.
 # Issue comment 와 같은 2000자를 그대로 쓰면 평문 기준으로는 짧은 글이 저장 거부돼 사용자
 # 입력이 날아간다(§5-12) — Engr 칸만 상한을 따로 둔다.
@@ -2292,6 +2311,149 @@ def update_compare_notes(session_id: str, ops: list, *, report_db,
 def get_compare_notes(session_id: str, *, report_db) -> dict:
     """/full extras 조립용 — 행 키 → {text, updated_by, updated_at}."""
     return edits.load_compare_notes(report_db, session_id)
+
+
+# Distribution composite — 사용자가 고른 source×item 조합을 한 차트에 겹쳐 그리는 정의.
+# 키는 프런트 생성 UUID(불변), 값은 JSON 정의만이고 ECDF 데이터는 담지 않는다
+# (조회 시 기존 distribution_batch 재사용). 규약 정본은 edits.KIND_DIST_COMPOSITE 주석.
+_DC_KEY_RE = re.compile(r"^[0-9a-fA-F-]{8,40}$")
+_DC_MAX_OPS = 50
+_DC_MAX_PAIRS = 40           # distribution_batch 의 subjects 상한(40)과 맞춘 값
+_DC_NAME_MAX = 120
+_DC_SOURCE_MAX = 200
+_DC_ITEM_MAX = 300
+_DC_MAX_BYTES = 16 * 1024
+_DC_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+_DC_PAIR_SEP = "\x1f"
+
+
+def _dc_num(value):
+    """limit 스칼라 → float | None (빈 문자열·None 은 '한계 없음')."""
+    if value is None or value == "":
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"invalid limit value: {value!r}")
+    if num != num or num in (float("inf"), float("-inf")):
+        raise ValueError("limit value must be finite")
+    return num
+
+
+def _sanitize_dist_composite(value: dict) -> dict:
+    """composite 정의 검증·정리 — 화이트리스트 재조립(알 수 없는 키는 버린다).
+
+    item 이 현재 세션에 실재하는지는 검사하지 않는다. 전처리로 항목이 잠시 빠져도
+    정의는 남아야 하고(사용자 입력 불멸 — CLAUDE.md 5-12), 화면이 '데이터 없음'으로
+    알려주는 편이 정의를 지우는 것보다 안전하다."""
+    if not isinstance(value, dict):
+        raise ValueError("value must be an object or null")
+    name = str(value.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    if len(name) > _DC_NAME_MAX:
+        raise ValueError(f"name too long ({len(name)} > {_DC_NAME_MAX} chars)")
+
+    raw_pairs = value.get("pairs")
+    if not isinstance(raw_pairs, list) or not raw_pairs:
+        raise ValueError("pairs must be a non-empty list")
+    if len(raw_pairs) > _DC_MAX_PAIRS:
+        raise ValueError(f"too many pairs ({len(raw_pairs)} > {_DC_MAX_PAIRS})")
+    pairs, seen = [], set()
+    for p in raw_pairs:
+        if not isinstance(p, dict):
+            raise ValueError("pair must be an object")
+        source = str(p.get("source") or "").strip()
+        item = str(p.get("item") or "").strip()
+        if not source or not item:
+            raise ValueError("pair needs both source and item")
+        if len(source) > _DC_SOURCE_MAX or len(item) > _DC_ITEM_MAX:
+            raise ValueError("pair source/item too long")
+        key = source + _DC_PAIR_SEP + item
+        if key in seen:
+            continue
+        seen.add(key)
+        pairs.append({"source": source, "item": item})
+
+    raw_limit = value.get("limit") or {}
+    if not isinstance(raw_limit, dict):
+        raise ValueError("limit must be an object")
+    mode = str(raw_limit.get("mode") or "item")
+    if mode not in ("item", "manual"):
+        raise ValueError(f"invalid limit mode: {mode!r}")
+    if mode == "item":
+        limit_item = str(raw_limit.get("item") or "").strip()
+        if not limit_item or len(limit_item) > _DC_ITEM_MAX:
+            raise ValueError("limit item is required for item mode")
+        limit = {"mode": "item", "item": limit_item}
+    else:
+        limit = {"mode": "manual", "lo": _dc_num(raw_limit.get("lo")),
+                 "hi": _dc_num(raw_limit.get("hi"))}
+
+    raw_colors = value.get("colors")
+    colors = {}
+    if isinstance(raw_colors, dict):
+        for k, v in raw_colors.items():
+            key = str(k)
+            if key not in seen:          # pairs 밖 키는 버린다 (무한 증식 방지)
+                continue
+            color = str(v or "")
+            if not _DC_COLOR_RE.match(color):
+                raise ValueError(f"invalid color: {color[:20]!r}")
+            colors[key] = color
+    return {"name": name, "pairs": pairs, "limit": limit, "colors": colors}
+
+
+def update_dist_composites(session_id: str, ops: list, *, report_db,
+                           client_ip: str = "", user_agent: str = "") -> dict:
+    """Distribution composite 저장/삭제 — 세션 편집 DB(kind=dist_composite).
+
+    ops: [{"key": uuid, "value": {name,pairs,limit,colors} | null}] — null 은 삭제.
+    update_chart_notes 와 같은 규약(ops 배열 1회 = rev 1회 증가, 응답이 권위본)."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    if len(ops) > _DC_MAX_OPS:
+        raise ValueError(f"too many composite entries ({len(ops)} > {_DC_MAX_OPS})")
+
+    changes = []
+    for entry in ops:
+        entry = entry or {}
+        key = str(entry.get("key") or "")
+        if not _DC_KEY_RE.match(key):
+            raise ValueError(f"invalid composite key: {key[:80]!r}")
+        value = entry.get("value")
+        if value is None:
+            changes.append((edits.KIND_DIST_COMPOSITE, key, None))
+            continue
+        clean = _sanitize_dist_composite(value)
+        blob = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        if len(blob.encode("utf-8")) > _DC_MAX_BYTES:
+            raise ValueError(f"composite too large (> {_DC_MAX_BYTES} bytes)")
+        changes.append((edits.KIND_DIST_COMPOSITE, key, blob))
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"dist_composites({len(changes)} charts)",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "updated": len(changes), "rev": rev,
+            "dist_composites": edits.load_dist_composites(report_db, session_id)}
+
+
+def get_dist_composites(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 — composite UUID → {name,pairs,limit,colors,updated_by,updated_at}."""
+    return edits.load_dist_composites(report_db, session_id)
 
 
 def get_note_meta(session_id: str, *, report_db) -> dict:

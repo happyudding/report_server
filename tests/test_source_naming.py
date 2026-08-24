@@ -29,6 +29,7 @@ from honey_ui.source_naming import (apply_role_suffix,  # noqa: E402
                                     collapse_merged_names,
                                     guess_source_names,
                                     lot_id_for,
+                                    lot_wf_lot_id,
                                     lot_wf_source_name,
                                     resolve_source_names,
                                     role_of_name,
@@ -57,9 +58,24 @@ def test_lot_header_6a_added():
     # 기존 인정 토큰 유지
     for head in ("60", "61", "62", "68", "6Z", "80", "81", "82", "8Z"):
         assert lot_wf_source_name(f"T2K_{head}1234_W03.csv") == f"{head}1234_W03"
-    # 확장이 새지 않았다 — 6 계열 다른 문자와 8 계열 A 는 여전히 LOT 이 아니다
+    # 확장이 새지 않았다 — 비-csv 에선 6 계열 다른 문자와 8 계열 A 는 여전히 LOT 이 아니다
+    # (.csv 는 2026-08-24 확장 폴백 대상 — test_lot_header_csv_fallback)
     for head in ("63", "6B", "6Y", "8A", "88"):
-        assert lot_wf_source_name(f"T2K_{head}1234_W03.csv") is None
+        assert lot_wf_source_name(f"T2K_{head}1234_W03.std") is None
+
+
+def test_lot_header_csv_fallback():
+    """.csv 만 화이트리스트 실패 시 6x/8x 전 조합을 헤더로 인정한다(2026-08-24)."""
+    for head in ("63", "6B", "6Y", "8A", "88"):
+        assert lot_wf_source_name(f"T2K_{head}1234_W03.csv") == f"{head}1234_W03"
+        assert lot_wf_lot_id(f"T2K_{head}1234_W03.csv") == f"{head}1234"
+    # 파일명 맨 앞 토큰도 인정
+    assert lot_wf_source_name("8A99_3.csv") == "8A99_3"
+    # 화이트리스트가 먼저다 — 확장 토큰(8A)이 앞에 있어도 화이트리스트 토큰(6Z)이 이긴다
+    assert lot_wf_source_name("8A_6Z1234_W03.csv") == "6Z1234_W03"
+    # 소문자 배제·비-csv 확장자 배제는 그대로
+    assert lot_wf_source_name("t2k_8a1234_w03.csv") is None
+    assert lot_wf_source_name("T2K_8A1234_W03.std") is None
 
 
 def test_lot_wf_rule_covers_three_product_types():

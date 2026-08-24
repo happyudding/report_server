@@ -208,12 +208,17 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_sheet_data` — xlsx 추출 텍스트(summary/yield/issue_table). 텍스트는 여기에만 저장.
 - `report_audit_log` — upload/edit/delete 감사. 메타 스냅샷 + client_ip/user_agent/client_user
   (클라 신고 계정, 위조 가능) + result. best-effort. `/pe/admin-pte/` 대시보드에서 조회.
-- `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr/
-  chart_note(차트 주석)/compare_note(Compare 탭 행 코멘트)/note_sheet(Note 탭 Luckysheet
+- `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/cmp_etc(Issue Table
+  Compare 탭 ETC)/trim override/engr/
+  chart_note(차트 주석)/compare_note(Compare 탭 행 코멘트)/dist_composite(Distribution
+  합성 산포 차트 정의)/note_sheet(Note 탭 Luckysheet
   시트 JSON ≤10MB)/preprocess(조회 전처리
   spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
+  ⚠ report payload 계산에 안 쓰이는 kind(chart_note·note_sheet·note_tag·dist_composite)는
+  `PAYLOAD_NEUTRAL_KINDS`([database/webreport_edits.py](server/database/webreport_edits.py))에
+  등재해야 한다 — 빠뜨리면 저장할 때마다 report 전체가 콜드 재빌드된다.
   ⚠️ **note_sheet 본문만 객체 저장으로 나갔다**(2026-08-14) — 저장은 blob+legacy 행
   **dual-write**, 조회는 blob 우선 + legacy 폴백이라 이 표만 보는 기존 코드도 그대로
   동작한다. 낙관적 잠금 base(본문 sha1 16자) 의미는 불변.
@@ -429,7 +434,9 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 
     가장 흔한 소실 원인은 **저장 키 변경**이다. 아래 4종은 표시 문구만 바꾸고
     **저장 값은 고정**한다(화면 라벨 ≠ 저장 키):
-    - `row_key` 접두 — `Yield|<bin>|<item>` / `CPK|<item>` / `TEMP|<item>` / `ETC|<item>`.
+    - `row_key` 접두 — `Yield|<bin>|<item>` / `CPK|<item>` / `TEMP|<item>` / `ETC|<item>`
+      (+ Compare 모드 전용 `CMPDIST|<item>` / `CMPETC|<item>` — 2026-08-20 신설,
+      [tabs/compare_issue.py](web_report/tabs/compare_issue.py) 소관).
       **파서 사본이 4곳**이라 손대려면 전부 같이 고쳐야 한다:
       [issue_table.py](web_report/tabs/issue_table.py) 생성 ·
       [sheets.js](server/report/static/webreport/sheets.js) `issueRowKey`/`issueHideStatusKey` ·
@@ -438,12 +445,20 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     - comment 컬럼명 — `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 화면·Excel 헤더의
       "개발팀 Comment" 는 `COLUMN_DISPLAY_ALIAS` 표기일 뿐 **저장 키는 `"개발 comment"`**.
     - 행 숨김/Status 키 — Yield 는 **bin 단위** `Yield|<bin>`(대표행+상세행 일괄),
-      나머지는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`.
+      나머지는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`/`CMPDIST|<item>`/`CMPETC|<item>`.
+      **숨김은 ETC 계열(ETC|·CMPETC|)만 제외**한다(항목 자체를 지우는 편이 자연스러워서) —
+      허용 목록은 `service._ISSUE_HIDABLE_PREFIXES`, 전체는 `_ISSUE_KEY_PREFIXES`.
     - Compare 탭 행 코멘트 키 — `gl:<after_item>` + U+001F + `<before_item>`(Log 비교 행) /
       `bm:<x>,<y>`(동일 좌표 Bin 비교 행). **행 인덱스 금지** — 필터·접기로 순서가 바뀐다.
-    - 편집 `kind` 9종 이름과 item_key — `issue_comment`/`etc_item`/`trim_override`/
-      `summary_engr`/`chart_note`/`compare_note`/`note_sheet`/`issue_hidden`/`issue_status`
+    - Distribution composite 키 — item_key = **생성 UUID(불변)**, pairKey =
+      `<source>` + U+001F + `<item>`(색 맵의 키). 이름을 바꿔도 키는 그대로다 — 이름·표시명을
+      키로 쓰면 개명 한 번에 사용자가 만든 차트가 통째로 사라진다.
+    - 편집 `kind` 11종 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
+      `trim_override`/`summary_engr`/`chart_note`/`compare_note`/`dist_composite`/`note_sheet`/
+      `issue_hidden`/`issue_status`
       ([edits.py](web_report/edits.py) 규약). Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
+      `cmp_etc_item` 은 Issue Table Compare 탭의 ETC 목록으로 `etc_item` 과 **분리**돼 있다 —
+      한 세션에 두 표가 함께 있어 kind 를 공유하면 한쪽 추가가 다른 표에도 나타난다.
       legacy 세션(rev==0)의 manifest 폴백·자동 시드 경로도 함께 유지한다.
 
     불가피하게 바꿔야 하면 **고치기 전에 멈추고** 대상 키·영향 세션 수·마이그레이션 방법을
@@ -493,6 +508,8 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | Distribution 정렬 전가(pack) — 서버 최대 병목 제거 | [web_report/dist_pack.py](web_report/dist_pack.py) + [dist_pack_store.py](web_report/dist_pack_store.py) → [docs/12](docs/12_web_report_cache.md) |
 | 콜드 빌드에서 무거운 계산 떼어내기 (AI Comment·Compare) | 분리 캐시 키 [cache_policy.py](web_report/cache_policy.py) `ai_comment_key`/`compare_key` · 조회 [service.py](web_report/service.py) `_ai_comment_cached`/`_compare_cached` · 대기본 `report_pending_key(kinds)` · 백그라운드 잡 [compute.py](web_report/compute.py) `_ONDEMAND_JOBS` · 프런트 폴링 [boot.js](server/report/static/webreport/boot.js) → [docs/12](docs/12_web_report_cache.md). **분리 캐시 키에 sid·edits_rev 를 넣지 말 것** — 그게 편집마다 전량 재계산을 부른다(perf_guard S10·S12) |
 | 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` → [docs/11](docs/11_web_report_tabs.md) |
+| **Distribution composite (source×item 합성 산포 차트)** | 프런트 [dist_composite.js](server/report/static/webreport/dist_composite.js) · 훅 [distribution.js](server/report/static/webreport/distribution.js)(툴바/갤러리/셀/`_distColorFor`) · 저장 [service.py](web_report/service.py) `update_dist_composites` + kind [edits.py](web_report/edits.py) `KIND_DIST_COMPOSITE` → [docs/11](docs/11_web_report_tabs.md). **서버 계산 추가 없음** — `distribution_batch` 재사용, 정의만 저장 |
+| **Compare 검출을 이슈 표로 (Issue Table Compare)** | 시트 [tabs/compare_issue.py](web_report/tabs/compare_issue.py)(Distribution·ETC) + 프런트 [compare_issue.js](server/report/static/webreport/compare_issue.js)(Bin Transition·Log 별도 표) · 패널 일반화는 [core.js](server/report/static/webreport/core.js) `ISSUE_PANEL_SEL` · 캐시 세대 `COMPARE_REPORT_SCHEMA_VERSION` · 검증 데이터 [tools/eval_testdata/make_compare_testdata.py](tools/eval_testdata/make_compare_testdata.py) → [docs/11](docs/11_web_report_tabs.md) |
 | Temperature(PMIC·SECURITY RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
 | 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |

@@ -149,6 +149,7 @@ CREATE INDEX IF NOT EXISTS idx_fail_case_item ON fail_case(item_id);            
 |---|---|
 | `''` (기본) | 일반/미상. 조건을 알 수 없으면 **비워 둔다**(추측해서 채우지 않는다) |
 | `'TEMP'` | 온도 평가. report_server 의 `TEMP\|<item>` row_key(Issue Table Temp 시트) 유래 |
+| `'COMPARE'` | Before/After 비교. `CMPDIST\|<item>`·`CMPETC\|<item>` row_key(Issue Table Compare 시트) 유래 (2026-08-20). 엔진이 평가하지 않는 별개 축이라 TEMP 와 같은 이유로 case 를 가른다 |
 | `'FF'`/`'SS'`/`'FS'`/`'SF'` | corner 예약 — **현재 채우는 경로가 없다**(입력 UI 미도입, `ingest_run.corner` 도 NULL) |
 
 도입 이유: `TEMP|<item>` 과 `ETC|<item>` 이 둘 다 bin=NULL 로 붕괴해 case_id 가 겹쳤고,
@@ -392,7 +393,8 @@ outcome.result : recovered_normal | improved | false_fail | confirmed_defective
 category_major : TRIM | NON_TRIM
 value_type     : V | A | Hz | CODE | PF | Ohm | Sec
 corner         : NN | SS | FF | (기타 코너)  — ingest_run.corner(입력 전용, 현재 항상 NULL)
-test_condition : '' (일반/미상) | TEMP (온도 평가) | FF | SS | FS | SF (corner 예약, 미사용)
+test_condition : '' (일반/미상) | TEMP (온도 평가) | COMPARE (Before/After 비교) |
+                 FF | SS | FS | SF (corner 예약, 미사용)
                  fail_case 의 조건 축(§3). 판별할 수 없으면 '' — 추측해 채우지 않는다
 data_completeness : full | partial | low
 product_type   : MDDI | PDDI | PMIC | SECURITY | TCON

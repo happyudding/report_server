@@ -151,6 +151,13 @@ def _parse_row_key(row_key: str):
     TEMP|<item> → bin=None + condition='TEMP' (Temperature 모드 RT limit 이탈 항목).
       condition 은 **case_id 재료로 계속 쓴다** — 온도 재판정은 엔진이 평가하지 않는
       별개 축이라, 같은 item 의 일반 코멘트와 한 case 로 붕괴하면 서로 덮어쓴다.
+    CMPDIST|<item> / CMPETC|<item> → bin=None + condition='COMPARE'
+      (Compare 모드 Issue Table Compare 탭, 2026-08-20). TEMP 와 **같은 이유**로 조건을
+      붙인다 — Before/After 비교는 엔진이 평가하지 않는 별개 축이고, 같은 item 의 일반
+      코멘트와 한 case 로 모이면 둘이 서로 덮어쓴다. Distribution/ETC 두 섹션을 같은
+      'COMPARE' 로 묶는 이유는 그 구분이 화면 배치일 뿐 판단 축이 아니기 때문이다.
+      ※ Compare 탭 **하단 별도 표**(동일 좌표 Bin 비교 bm:, Log 비교 gl:)의 코멘트는
+        issue_comment 가 아니라 compare_note kind 라 애초에 이 경로로 오지 않는다.
     """
     if row_key.startswith("Yield|"):
         parts = row_key.split("|", 2)
@@ -170,6 +177,10 @@ def _parse_row_key(row_key: str):
         return (None, row_key[5:], "TEMP")
     if row_key.startswith("ETC|") and row_key[4:]:
         return (None, row_key[4:], "")
+    if row_key.startswith("CMPDIST|") and row_key[8:]:
+        return (None, row_key[8:], "COMPARE")
+    if row_key.startswith("CMPETC|") and row_key[7:]:
+        return (None, row_key[7:], "COMPARE")
     return None
 
 

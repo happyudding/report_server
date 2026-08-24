@@ -189,6 +189,16 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
   결과 `names` → `rename_sources`(중복은 `_2` 접미), 순서는 `order_index` 로 잇는다.
   정합 검증은 rename 전 이름(`source_names`)으로 비교한다 — `order` 로 비교하면 rename 한
   순간 항상 불일치가 되어 창이 두 번 뜬다.
+- **그룹 소속 변경 (2026-08-24)** — `Group` 칸이 편집 가능한 **드롭다운**이다. 다른 그룹을
+  고르면(또는 그 그룹의 이름을 직접 적으면) 그 행이 **그 그룹으로 이동**한다 — 자동 배치가
+  잘못 묶은 source 를 '그룹 초기화 후 전부 다시' 없이 바로잡는다(행 순서 이동 ↑/↓ 는 그룹
+  소속을 바꾸지 않는다 — 순서와 소속은 별개). 타이핑으로 그룹 이름을 적으면 종전대로 같은
+  그룹 전원이 일괄 개명된다(구 '다른 그룹 이름 중복 거부'는 이동 해석으로 대체 — 같은 이름
+  두 그룹이 생길 길이 없다). OK 시 **Role 짝 검증**: 같은 그룹에 같은 Role(RT/CT/HT) 2개
+  이상이면 차단(RT 는 종전부터 그룹당 정확히 1개), 그룹별 Role 구성이 서로 다르면(예: 한
+  그룹만 HT 없음) 구성 목록을 보여주고 계속할지 확인만 받는다(실제로 파일이 없는 경우가
+  있어 차단하지 않음). 검증은 [tests/test_source_group_dropdown.py](../tests/test_source_group_dropdown.py)
+  (⚠ pytest 아님 — PyQt6 offscreen 단독 실행, 11항목).
 - **자동 source 명 (product_type 별)** — 규칙의 정본은
   [client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py) 의
   `_SOURCE_NAME_RULES` 표 한 장이다(2026-08-11 — 종전에는 PMIC 전용이었다).
