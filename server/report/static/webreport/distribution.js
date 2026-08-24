@@ -1115,18 +1115,24 @@ function distRenderGallerySeqCell(plot, info, status, subject) {
   const traces = [];
   const sentinel = distSeqSentinelTrace(b);
   if (sentinel) traces.push(sentinel);
+  Plotly.newPlot(plot, traces, distSeqCellLayout(status, lo, hi, b), DIST_CFG_STATIC);
+  distPaintPoints(plot, pts, null);
+}
+
+// seq 미니셀 레이아웃 — 일반 항목 카드 · Distribution composite · Gap Chart **세 종류의
+// 카드가 공유**한다(같은 그림 규격을 한 곳에서 — 규칙 #13). 카드마다 따로 조립하면 축·여백·
+// 기준선이 조용히 갈라진다.
+function distSeqCellLayout(status, lo, hi, bounds) {
   // "Limit 안 Data만" 은 ECDF 에서 x 를 규격 창으로 클램프한다 — Serial 순에서 그 창은
   // **y**(측정값) 축이다. 계산식(distLimitRange)은 축과 무관한 산수라 그대로 재사용한다.
-  const yr = distLimitRange(lo, hi, b.yMin, b.yMax);
-  const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
+  const yr = distLimitRange(lo, hi, bounds.yMin, bounds.yMax);
+  return { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 9 }, rangemode: "tozero" },
     yaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 9 },
       ...(yr ? { range: yr, autorange: false } : {}) },
     shapes: distSeqSpecShapes(lo, hi), annotations: distSeqSpecAnnos(lo, hi, true),
     margin: { l: 40, r: 10, t: 8, b: 20 }, showlegend: false };
-  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
-  distPaintPoints(plot, pts, null);
 }
 
 // ── 미니셀 점 렌더: 축·그리드·스펙선은 Plotly, ECDF 점만 canvas 오버레이 ────────
@@ -1342,15 +1348,23 @@ function distQueueRender(cell) {
   distRenderQueue.push(cell);
   if (!distRafScheduled) { distRafScheduled = true; requestAnimationFrame(distFlushRender); }
 }
+// 다음 프레임 예약은 **finally** 에 둔다 — 셀 1장의 렌더가 예외를 던지면 여기서 흐름이
+// 끊기고, 큐에 남은 카드는 distQueueRender 의 중복 가드(includes)에 걸려 다시 예약되지도
+// 못한 채 영구히 멈춘다(그 카드들은 "분포 로딩 중…" 인 채로 남는다). 예외를 삼키지는
+// 않는다 — 그대로 위로 올려 error_beacon 이 서버에 보고하게 두고, 큐만 계속 돌린다.
+// 예외를 던진 셀은 이미 shift 되어 큐에서 빠졌으므로 같은 셀로 무한 재시도하지 않는다.
 function distFlushRender() {
   distRafScheduled = false;
   let n = 0;
   const perFrame = distPerFrame();
-  while (distRenderQueue.length && n < perFrame) {
-    const cell = distRenderQueue.shift();
-    if (cell.isConnected && cell.dataset.visible === "1") { distRenderGalleryCell(cell); n++; }
+  try {
+    while (distRenderQueue.length && n < perFrame) {
+      const cell = distRenderQueue.shift();
+      if (cell.isConnected && cell.dataset.visible === "1") { distRenderGalleryCell(cell); n++; }
+    }
+  } finally {
+    if (distRenderQueue.length) { distRafScheduled = true; requestAnimationFrame(distFlushRender); }
   }
-  if (distRenderQueue.length) { distRafScheduled = true; requestAnimationFrame(distFlushRender); }
 }
 
 // ── 툴바 + 갤러리 ─────────────────────────────────────────────────────────────

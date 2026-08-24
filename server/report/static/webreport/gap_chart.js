@@ -110,6 +110,10 @@ function gcValidate(tokens) {
 // 값은 서버 응답 그대로이고 ECDF({xs,ys})는 여기서 **한 번만** 만들어 보관한다.
 // distDisplayPoints 가 entry 객체를 WeakMap 키로 메모하므로 객체가 안정적이어야 한다
 // (매 렌더마다 새로 만들면 메모가 무의미해진다).
+// ⚠️ 캐시 키는 **bin1 축 3종 그대로**다 — Distribution "Serial 순" 토글이 생겼지만
+// `/gap_chart/<id>` 응답은 두 모드가 **같다**(서버는 order 를 모르고, 값은 이미 rawdata 행
+// 순서다). 프런트가 같은 응답에서 ECDF(entry)와 Serial 순(seqEntry) 두 그림을 만든다.
+// seq 키를 여기 넣지 말 것 — 아래 gcDropCache 의 키 목록과 어긋나면 수식을 고쳐도 옛 값이 남는다.
 const _gcCache = { all: {}, bin1: {}, rtbin1: {} };
 const _gcInflight = { all: new Set(), bin1: new Set(), rtbin1: new Set() };
 
@@ -117,10 +121,13 @@ function gcCacheFor(variant) { return _gcCache[distVariantKey(variant)] || _gcCa
 
 // cdf(정렬 결과 order 포함)와 원본 시리즈를 함께 들고 있는다 — Map 선택 좌표 마커가
 // "이 좌표의 gap 값과 그 누적%" 를 찾을 때 필요하다(gcChipHits).
+// seqEntry(Serial 순 표시용 원본 값 배열)도 **여기서 한 번만** 만든다 — distSeqDisplayPoints
+// 가 entry 객체를 WeakMap 키로 메모하므로 렌더마다 새로 만들면 메모가 무의미해진다.
 function gcBuildSeries(data) {
   return ((data && data.sources) || []).map(s => {
     const c = distCdfFromValues(s.values || []);
-    return { name: s.name, entry: { xs: c.x, ys: c.y }, cdf: c, src: s };
+    return { name: s.name, entry: { xs: c.x, ys: c.y }, seqEntry: { vs: s.values || [] },
+             cdf: c, src: s };
   }).filter(s => s.entry.xs && s.entry.xs.length);
 }
 
@@ -252,9 +259,25 @@ function gcRenderGapCell(cell) {
   }
   // 표시점 캡은 시리즈 수로 나눈다(일반 카드가 source 수로 나누는 것과 같은 규칙).
   const cap = distCapFor(series.length, DIST.CELL_BUDGET_CARD);
+  const { lo, hi } = gcLimitOf(chart);
+  // Serial 순 — 값이 이미 rawdata 행 순서라 seqEntry 를 표시 좌표로 바꾸기만 하면 된다
+  // (per_source = 그 source 의 행 순서 / explicit = 첫 참조 source 행 순서의 좌표 교집합).
+  // 선택 좌표 마커는 (값, 누적%) 좌표라 이 축에서 위치가 어긋나므로 붙이지 않는다 —
+  // 일반 항목 seq 미니셀이 chipMarkersFor 를 제외하는 것과 같은 규칙.
+  if (distSeqOnly) {
+    const seqPts = {};
+    series.forEach(s => { seqPts[s.name] = distSeqDisplayPoints(s.seqEntry, cap); });
+    const b = distSeqBounds(seqPts);
+    const seqSentinel = distSeqSentinelTrace(b);
+    Plotly.newPlot(plot, seqSentinel ? [seqSentinel] : [],
+                   distSeqCellLayout("ok", lo, hi, b), DIST_CFG_STATIC);
+    if (chart && gcModeOf(chart.tokens) === "explicit") plot._distColorFor = () => "#7C3AED";
+    distPaintPoints(plot, seqPts, null);
+    cell.dataset.rendered = "1";
+    return;
+  }
   const pts = {};
   series.forEach(s => { pts[s.name] = distDisplayPoints(s.entry, cap); });
-  const { lo, hi } = gcLimitOf(chart);
   const sentinel = distSentinelTrace(pts);
   // Map Analysis 선택 좌표 — 일반 카드와 같은 마커(값·누적%는 이 차트 곡선에서 읽는다).
   const cm = gcChipMarkers(hit, chart);

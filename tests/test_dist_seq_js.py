@@ -83,6 +83,12 @@ def run_probe(scripts, body_html, harness_js, name) -> str:
 
 
 DEPS = ["core.js", "distribution.js", "item_detail.js"]
+# 합성 카드(Distribution composite · Gap Chart)까지 얹는 조합. map_select.js 는
+# chipMarkersForPairs/mapSelChips 를 제공한다(seq 는 마커를 안 쓰지만 로드는 필요).
+DEPS_ALL = ["core.js", "map_select.js", "distribution.js", "item_detail.js",
+            "dist_composite.js", "gap_chart.js"]
+# Note 붙여넣기 폴백 검사용 — chart_notes.js 는 core+distribution+item_detail 위에서 돈다.
+DEPS_NOTE = ["core.js", "distribution.js", "item_detail.js", "chart_notes.js"]
 
 # ⚠ SESSION_ID 는 core.js 에서 const, MODE 는 let 이라 재선언하면 하네스가 통째로 죽는다.
 SETUP = (
@@ -369,6 +375,185 @@ def test_gallery_cell():
     print("  [browser] 갤러리 미니셀 seq 렌더 (수평 기준선 · 값 축) OK")
 
 
+def test_gap_and_composite_cards():
+    """(m)(n)(q) Gap·composite 카드 seq 렌더 + 세 카드가 **같은 레이아웃 함수**를 쓴다."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [];
+      window.Plotly = {{
+        newPlot: function(div, traces, layout) {{ calls.push({{t: traces, l: layout, d: div}}); }},
+        purge: function() {{}}
+      }};
+      MODE = 'view';
+      DATA.dist_composites = {{c1: {{name:'합성', pairs:[{{source:'WF1',item:'IT00'}},
+        {{source:'WF2',item:'IT00'}}], limit:{{mode:'manual', lo:-1, hi:1}},
+        colors:{{}}}}}};
+      DATA.gap_charts = {{g1: {{name:'Gap A', sources:['WF1'],
+        tokens:[{{t:'item',item:'IT00'}}], limit:{{mode:'manual', lo:-1, hi:1}}}}}};
+      distSeqOnly = true; distSeqReady = true;
+      // 일반 항목 seq 캐시 + composite 용 seq 캐시(같은 배치 응답 스키마)
+      var info = {{lower_limit:-1, upper_limit:1, units:'V', seq:true,
+        bySource: {{WF1: {{vs:[7,3,9,1,5]}}, WF2: {{vs:[2,4,6]}}}}}};
+      distSeqCache['IT00'] = info;
+      _dcCache['seq']['IT00'] = info;
+      // gap 은 서버 응답이 두 모드 공통 — gcBuildSeries 가 seqEntry 를 만든다.
+      var gdata = {{subject:'Gap A', sources:[{{name:'WF1', values:[7,3,9,1,5],
+        serial:['a','b','c','d','e'], xpos:[1,2,3,4,5], ypos:[1,1,1,1,1]}}],
+        matched_dies:5, missing:[]}};
+      _gcCache.all['g1'] = {{data: gdata, series: gcBuildSeries(gdata)}};
+
+      var cards = document.querySelectorAll('.distg-card');
+      distRenderGalleryCell(cards[0]);        // 일반 항목
+      var normal = calls[calls.length-1];
+      distRenderGalleryCell(cards[1]);        // composite
+      var comp = calls[calls.length-1];
+      distRenderGalleryCell(cards[2]);        // gap
+      var gap = calls[calls.length-1];
+      // 공용 레이아웃 함수 산출과 일반 카드 layout 이 정확히 같아야 한다(순수 추출 증명).
+      var expect = distSeqCellLayout('ok', -1, 1,
+        distSeqBounds({{WF1: distSeqDisplayPoints(info.bySource.WF1, 1500),
+                        WF2: distSeqDisplayPoints(info.bySource.WF2, 1500)}}));
+      var lay = function(c) {{ return {{
+        rangemode: c.l.xaxis.rangemode, ysuffix: c.l.yaxis.ticksuffix || "",
+        yrange: c.l.yaxis.range || null, shapes: (c.l.shapes||[]).length,
+        margin: c.l.margin, showlegend: c.l.showlegend }}; }};
+      distSeqOnly = false; distSeqCache = {{}}; _dcCache['seq'] = {{}};
+      _emit({{
+        n: calls.length,
+        normalLay: lay(normal), compLay: lay(comp), gapLay: lay(gap),
+        expectLay: {{rangemode: expect.xaxis.rangemode,
+                     ysuffix: expect.yaxis.ticksuffix || "",
+                     yrange: expect.yaxis.range || null,
+                     shapes: (expect.shapes||[]).length, margin: expect.margin,
+                     showlegend: expect.showlegend}},
+        compKeys: Object.keys(comp.d._distPts || {{}}),
+        compX: (comp.d._distPts || {{}})['WF1\\x1fIT00'].xs,
+        compY: (comp.d._distPts || {{}})['WF1\\x1fIT00'].ys,
+        compColorFn: typeof comp.d._distColorFor,
+        gapX: (gap.d._distPts || {{}}).WF1.xs, gapY: (gap.d._distPts || {{}}).WF1.ys,
+        compTraces: comp.t.length, gapTraces: gap.t.length,
+        rendered: [cards[0].dataset.rendered, cards[1].dataset.rendered, cards[2].dataset.rendered]
+      }});
+    </script>"""
+    body = ('<div id="panel-distribution">'
+            '<div class="distg-card" data-subject="IT00" data-status="ok">'
+            '<div class="distg-plot"></div></div>'
+            '<div class="distg-card distg-comp" data-comp-id="c1" data-status="ok">'
+            '<div class="distg-plot"></div></div>'
+            '<div class="distg-card distg-gap" data-gap-id="g1" data-status="ok">'
+            '<div class="distg-plot"></div></div></div>')
+    got = json.loads(run_probe(DEPS_ALL, body, js, "cards"))
+    assert got["n"] == 3, f"카드 3장이 렌더되지 않았다: {got['n']}"
+    assert got["rendered"] == ["1", "1", "1"], got["rendered"]
+    # (q) 세 카드가 같은 레이아웃 규격 — 공용 함수 산출과 일치
+    assert got["normalLay"] == got["expectLay"], (got["normalLay"], got["expectLay"])
+    assert got["compLay"] == got["expectLay"], "composite 카드가 다른 레이아웃을 쓴다"
+    assert got["gapLay"] == got["expectLay"], "gap 카드가 다른 레이아웃을 쓴다"
+    # (n) composite: pairKey 유지 + 색 해석기 주입 + 행 순서
+    assert got["compKeys"] == ["WF1\x1fIT00", "WF2\x1fIT00"], got["compKeys"]
+    assert got["compColorFn"] == "function", "pairKey 색 해석기(_distColorFor)가 빠졌다"
+    assert got["compX"] == [1, 2, 3, 4, 5] and got["compY"] == [7, 3, 9, 1, 5], got
+    # (m) gap: 행 순서 그대로 · chip 마커 없음(sentinel 1개뿐)
+    assert got["gapX"] == [1, 2, 3, 4, 5] and got["gapY"] == [7, 3, 9, 1, 5], got
+    assert got["compTraces"] == 1 and got["gapTraces"] == 1, \
+        f"seq 카드에 sentinel 외 trace 가 붙었다(chip 마커 의심): {got}"
+    print("  [browser] Gap·composite 카드 seq 렌더 + 공용 레이아웃 일치 OK")
+
+
+def test_composite_detail_stats():
+    """(o) composite 상세 — 차트는 seq, **통계표 숫자는 ECDF 모드와 동일**."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [];
+      window.Plotly = {{
+        newPlot: function(div, traces, layout) {{ calls.push({{t: traces, l: layout}}); }},
+        purge: function() {{}}
+      }};
+      DATA.dist_composites = {{c1: {{name:'합성', pairs:[{{source:'WF1',item:'IT00'}}],
+        limit:{{mode:'manual', lo:-1, hi:1}}, colors:{{}}}}}};
+      _dcDetailId = 'c1';
+      _dcCache['all']['IT00'] = {{lower_limit:-1, upper_limit:1, units:'V',
+        bySource: {{WF1: {{xs:[1,3,5,7,9], ys:[20,40,60,80,100]}}}}}};
+      _dcCache['seq']['IT00'] = {{lower_limit:-1, upper_limit:1, units:'V', seq:true,
+        bySource: {{WF1: {{vs:[7,3,9,1,5]}}}}}};
+      distSeqOnly = false;
+      dcRenderDetailCharts();
+      var ecdfStats = document.getElementById('dcDetailStats').innerHTML;
+      var ecdfChart = calls[calls.length-1];
+      distSeqOnly = true;
+      dcRenderDetailCharts();
+      var seqStats = document.getElementById('dcDetailStats').innerHTML;
+      var seqChart = calls[calls.length-1];
+      distSeqOnly = false; _dcDetailId = null;
+      _dcCache['all'] = {{}}; _dcCache['seq'] = {{}};
+      _emit({{
+        sameStats: ecdfStats === seqStats,
+        statsHasValue: ecdfStats.indexOf('WF1_IT00') >= 0,
+        ecdfX: ecdfChart.t[0].x, seqX: seqChart.t[0].x, seqY: seqChart.t[0].y,
+        seqType: seqChart.t[0].type, seqMode: seqChart.t[0].mode,
+        seqTraces: seqChart.t.length,
+        seqXTitle: seqChart.l.xaxis.title.text, seqYSuffix: seqChart.l.yaxis.ticksuffix || "",
+        seqShapes: (seqChart.l.shapes||[]).map(function(s){{ return [s.xref, s.y0]; }})
+      }});
+    </script>"""
+    body = ('<div id="dcDetailChart"></div><div id="dcDetailLegend"></div>'
+            '<div id="dcDetailStats"></div>')
+    got = json.loads(run_probe(DEPS_ALL, body, js, "dcdetail"))
+    assert got["statsHasValue"] is True, "통계표가 비었다 — 하네스 오류"
+    assert got["sameStats"] is True, \
+        "Serial 순에서 통계표 숫자가 달라졌다 (ECDF 기준 유지가 깨졌다 — 규칙 #13)"
+    assert got["ecdfX"] == [1, 3, 5, 7, 9], got["ecdfX"]
+    assert got["seqX"] == [1, 2, 3, 4, 5] and got["seqY"] == [7, 3, 9, 1, 5], got
+    assert got["seqMode"] == "markers", got["seqMode"]
+    assert got["seqTraces"] == 1, "seq 상세에 chip 마커 trace 가 붙었다"
+    assert "측정 순서" in got["seqXTitle"] and got["seqYSuffix"] == "", got
+    assert got["seqShapes"] == [["paper", -1], ["paper", 1]], got["seqShapes"]
+    print("  [browser] composite 상세: 차트만 seq · 통계표는 ECDF 기준 유지 OK")
+
+
+def test_dc_cache_and_url():
+    """(p) `_dcCache` 가 변형 6키 · composite 배치 URL 에 order=seq."""
+    js = f"""<script>
+      {SETUP}
+      var calls = [];
+      window.fetch = function(u) {{ calls.push(String(u)); return new Promise(function() {{}}); }};
+      var keys = Object.keys(_dcCache).sort();
+      var inflight = Object.keys(_dcInflight).sort();
+      dcEnsureItems(['IT00'], 'seq');
+      _emit({{keys: keys, inflight: inflight, calls: calls}});
+    </script>"""
+    got = json.loads(run_probe(DEPS_ALL, "", js, "dccache"))
+    want = sorted(["all", "bin1", "rtbin1", "seq", "seq-bin1", "seq-rtbin1"])
+    assert got["keys"] == want, f"_dcCache 키가 변형 6종이 아니다: {got['keys']}"
+    assert got["inflight"] == want, f"_dcInflight 키 불일치: {got['inflight']}"
+    assert len(got["calls"]) == 1 and "order=seq" in got["calls"][0], got["calls"]
+    print("  [browser] _dcCache 6키 + composite 배치 URL order=seq OK")
+
+
+def test_note_paste_fallback():
+    """(r) seq 로 처음 연 항목도 Note 붙여넣기가 차트를 찾는다 (_cnCharts 등록은 안 한다)."""
+    js = f"""<script>
+      {SETUP}
+      MODE = 'edit';
+      var toasts = [];
+      window.showToast = function(m) {{ toasts.push(String(m)); }};
+      window.Plotly = {{ toImage: function() {{ throw new Error('CAPTURE_REACHED'); }} }};
+      cnPasteToNote('IT00');
+      setTimeout(function() {{
+        _emit({{toasts: toasts, registered: !!_cnCharts['cdf:IT00']}});
+      }}, 200);
+    </script>"""
+    body = '<div id="distCdf"></div>'
+    got = json.loads(run_probe(DEPS_NOTE, body, js, "notepaste"))
+    joined = " | ".join(got["toasts"])
+    assert "준비되지 않았습니다" not in joined, \
+        f"#distCdf 폴백이 동작하지 않았다: {joined}"
+    assert "CAPTURE_REACHED" in joined, f"캡처 단계까지 못 갔다: {joined}"
+    assert got["registered"] is False, \
+        "_cnCharts 에 등록됐다 — seq 좌표가 주석 저장값을 덮어쓸 수 있다 (F-4)"
+    print("  [browser] Note 붙여넣기 #distCdf 폴백 · _cnCharts 미등록 OK")
+
+
 def main():
     print("[Distribution Serial 순 JS 회귀]")
     test_static_wiring()
@@ -382,6 +567,10 @@ def main():
     test_render_seq()
     test_batch_url()
     test_gallery_cell()
+    test_gap_and_composite_cards()
+    test_composite_detail_stats()
+    test_dc_cache_and_url()
+    test_note_paste_fallback()
     print("[통과] Serial 순 프런트 계약 정상")
 
 

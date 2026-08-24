@@ -62,8 +62,12 @@ function dcColorFor(comp, key) { return (comp && comp.colors && comp.colors[key]
 // distDataCache 계열은 LRU(DIST_BATCH.CACHE_MAX 300) 라 스크롤 중 축출된다. composite 가
 // 참조하는 항목은 카드가 화면에 남아 있는 한 계속 필요하므로 축출되지 않는 별도 맵에
 // 보유한다(정의 상한 50×40 이라 힙은 유계). 공용 캐시에도 함께 넣어 일반 카드가 재사용한다.
-const _dcCache = { all: {}, bin1: {}, rtbin1: {} };
-const _dcInflight = { all: new Set(), bin1: new Set(), rtbin1: new Set() };
+// 변형 키는 distribution.js 의 DIST_VARIANTS 를 그대로 따른다 — bin1 축 3종 × 정렬 축 2종
+// (기본 ECDF / "seq-" = Serial 순). 리터럴로 적으면 변형이 늘 때마다 여기가 조용히 빠져
+// `_dcCache[key]` 가 undefined 가 되고 합성 카드만 죽는다.
+const _dcCache = {};
+const _dcInflight = {};
+DIST_VARIANTS.forEach(k => { _dcCache[k] = {}; _dcInflight[k] = new Set(); });
 
 function dcCacheFor(variant) { return _dcCache[distVariantKey(variant)] || _dcCache.all; }
 
@@ -72,12 +76,18 @@ function dcEnsureItems(items, variant) {
   const key = distVariantKey(variant);
   const store = _dcCache[key], shared = distCacheFor(key), inflight = _dcInflight[key];
   const want = [];
+  let filled = false;                    // 공용 캐시에서 옮겨 담은 것이 있는가
   (items || []).forEach(it => {
     if (store[it]) return;
-    if (shared[it]) { store[it] = shared[it]; return; }
+    if (shared[it]) { store[it] = shared[it]; filled = true; return; }
     if (inflight.has(it) || !distHasData(it)) return;
     want.push(it);
   });
+  // ⚠ 옮겨 담기만 하고 끝나도 **재렌더를 예약해야 한다.** 호출자(dcRenderCompositeCell)는
+  // 바로 앞에서 "데이터 없음"으로 이미 리턴했고, 새로 fetch 하는 게 없으면 도착 콜백도
+  // 없다 → 예약이 없으면 셀이 "분포 로딩 중…"(.distg-plot:empty::before) 인 채로 영구히
+  // 남는다. 일반 카드 배치가 먼저 도착해 공용 캐시를 채워 두는 흔한 순서에서 매번 발생했다.
+  if (filled) dcRefresh();
   if (!want.length) return;
   for (let i = 0; i < want.length; i += DC_FETCH_CHUNK) {
     const chunk = want.slice(i, i + DC_FETCH_CHUNK);
@@ -87,7 +97,9 @@ function dcEnsureItems(items, variant) {
     fetch(url, { cache: "no-cache" })
       .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(j => {
-        const built = buildDistDataFromCompact(j);
+        // seq 변형은 응답 스키마가 다르다(값 배열 vs ECDF columnar) — 빌더를 함께 가른다.
+        const built = distVariantIsSeq(key) ? buildDistSeqFromCompact(j)
+                                            : buildDistDataFromCompact(j);
         Object.keys(built).forEach(s => {
           store[s] = built[s];
           distCachePut(key, s, built[s]);   // 공용 캐시와 공유(일반 카드가 재사용)
@@ -169,7 +181,8 @@ function dcRenderCompositeCell(cell) {
   const comp = dcGet(cell.dataset.compId);
   const plot = cell.querySelector(".distg-plot");
   if (!comp || !plot || typeof Plotly === "undefined") return;
-  const variant = distGalleryVariant();
+  // Serial 순 토글이 켜지면 seq 변형 캐시를 쓴다(distGalleryVariant 는 bin1 축만 준다).
+  const variant = distGalleryDataVariant();
   const store = dcCacheFor(variant);
   const items = dcItemsOf(comp);
   const missing = items.filter(it => !store[it] && distHasData(it));
@@ -178,12 +191,30 @@ function dcRenderCompositeCell(cell) {
   // pair 별 표시점 — 캡은 pair 수로 나눈다(일반 카드가 source 수로 나누는 것과 같은 규칙).
   const pairs = (comp.pairs || []);
   const cap = distCapFor(pairs.length, DIST.CELL_BUDGET_CARD);
+  const { lo, hi } = dcLimitOf(comp);
+  // Serial 순 — x = 각 pair 의 측정 순서, y = 측정값. 단위가 다른 항목을 겹치면 큰 값이 y축을
+  // 지배한다(ECDF 는 y가 0~100% 라 정규화 효과가 있었다) — 모달 안내대로 같은 단위끼리 고르는
+  // 것을 전제한 의도된 타협이다. 선택 좌표 마커는 (값, 누적%) 좌표라 이 축에서는 제외한다.
+  if (distSeqOnly) {
+    const seqPts = {};
+    pairs.forEach(p => {
+      const entry = (store[p.item] || { bySource: {} }).bySource[p.source];
+      if (entry) seqPts[dcPairKey(p.source, p.item)] = distSeqDisplayPoints(entry, cap);
+    });
+    const b = distSeqBounds(seqPts);
+    const seqSentinel = distSeqSentinelTrace(b);
+    Plotly.newPlot(plot, seqSentinel ? [seqSentinel] : [],
+                   distSeqCellLayout("ok", lo, hi, b), DIST_CFG_STATIC);
+    plot._distColorFor = k => dcColorFor(comp, k);
+    distPaintPoints(plot, seqPts, null);
+    cell.dataset.rendered = "1";
+    return;
+  }
   const pts = {};
   pairs.forEach(p => {
     const entry = (store[p.item] || { bySource: {} }).bySource[p.source];
     if (entry) pts[dcPairKey(p.source, p.item)] = distDisplayPoints(entry, cap);
   });
-  const { lo, hi } = dcLimitOf(comp);
   const sentinel = distSentinelTrace(pts);
   // Map Analysis 선택 좌표(mapSelChips) — 일반 카드와 같은 규칙으로 이 pair 들 위에 찍는다.
   const cm = chipMarkersForPairs(pairs);
@@ -588,7 +619,7 @@ function dcRenderDetail() {
     <div class="idet-body">
       <div class="idet-charts">
         <div class="idet-chart-block">
-          <div class="idet-chart-title">누적분포 CDF (합성)</div>
+          <div class="idet-chart-title">${esc(distSeqOnly ? "Serial 순 (측정 순서 · 합성)" : "누적분포 CDF (합성)")}</div>
           <div id="dcDetailChart" class="dist-chart"></div>
         </div>
       </div>
@@ -623,9 +654,19 @@ function dcActiveColor(comp, key) {
 function dcRenderDetailCharts() {
   const comp = dcGet(_dcDetailId);
   if (!comp) return;
+  // 통계표는 **항상 ECDF 기준**이다(dcPairStats 가 Δp 가중으로 복원한다) — Serial 순
+  // 모드에서도 이 store 로 계산해 같은 화면의 숫자가 모드에 따라 달라지지 않게 한다(규칙 #13).
+  // 따라서 seq 모드 상세는 ECDF·seq 두 캐시를 함께 확보한다(참조 항목 수십 개라 부하는 작음).
   const store = dcCacheFor(distGalleryVariant());
   const pairs = comp.pairs || [];
+  const items = dcItemsOf(comp);
   const missing = pairs.some(p => !store[p.item] && distHasData(p.item));
+  if (missing) dcEnsureItems(items, distGalleryVariant());
+  const seqVariant = distGalleryDataVariant();
+  const seqStore = distSeqOnly ? dcCacheFor(seqVariant) : null;
+  const seqMissing = seqStore
+    ? pairs.some(p => !seqStore[p.item] && distHasData(p.item)) : false;
+  if (seqMissing) dcEnsureItems(items, seqVariant);
   // legend·통계표는 순수 HTML 이라 Plotly 유무와 무관하게 먼저 그린다 — 차트 가드 안에
   // 두면 로드가 늦은 PC 에서 옆 칸과 표까지 통째로 비어 보인다.
   const legend = document.getElementById("dcDetailLegend");
@@ -641,6 +682,33 @@ function dcRenderDetailCharts() {
     ? pairs.slice().sort((a, b) => (_dcLegendFocus.has(dcPairKey(a.source, a.item)) ? 1 : 0) -
                                    (_dcLegendFocus.has(dcPairKey(b.source, b.item)) ? 1 : 0))
     : pairs;
+  // Serial 순 — x = 측정 순서, y = 측정값. 전량 렌더(다운샘플 없음)라 trace 방식을 ECDF 와
+  // 같게 유지한다(한 차트에 SVG/WebGL 을 섞으면 SVG trace 가 gl 캔버스 아래로 가린다).
+  // 선택 좌표 마커는 (값, 누적%) 좌표라 이 축에서는 제외한다.
+  if (seqStore) {
+    const seqTraces = [];
+    ordered.forEach(p => {
+      const entry = (seqStore[p.item] || { bySource: {} }).bySource[p.source];
+      if (!entry || !entry.vs) return;
+      const key = dcPairKey(p.source, p.item);
+      const xs = new Array(entry.vs.length);
+      for (let i = 0; i < entry.vs.length; i++) xs[i] = i + 1;
+      const t = { type: useGl ? "scattergl" : "scatter", mode: "markers",
+        name: dcPairLabel(p.source, p.item), x: xs, y: entry.vs,
+        marker: { color: dcActiveColor(comp, key), size: 5 },
+        hovertemplate: "%{fullData.name}<br>측정 순서 %{x}<br>측정값 %{y}<extra></extra>" };
+      if (!useGl) t.cliponaxis = false;
+      seqTraces.push(t);
+    });
+    Plotly.newPlot(div, seqTraces, { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",
+      xaxis: { title: { text: "측정 순서 (rawdata 누적 순)" }, showgrid: true,
+        gridcolor: IDET_GRID_MAJOR, zeroline: false, rangemode: "tozero", nticks: 10 },
+      yaxis: { title: { text: `측정값${units ? " [" + units + "]" : ""}` }, showgrid: true,
+        gridcolor: IDET_GRID_MAJOR, zeroline: false },
+      shapes: distSeqSpecShapes(lo, hi), annotations: distSeqSpecAnnos(lo, hi, false),
+      margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
+    return;
+  }
   // ECDF **전량** (표시용 다운샘플 없음 — 상세는 원본 그대로, 규칙 §5).
   const traces = [];
   ordered.forEach(p => {
@@ -721,7 +789,9 @@ function dcRenderStats(comp, store, missing) {
     `<thead><tr><th>Legend</th><th>고유값</th><th>min</th><th>median</th><th>max</th>` +
     `<th>mean</th><th>stdev</th><th>cpk</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<p class="dc-stats-note">※ ECDF(고유 측정값 + 누적%) 기반 모집단 통계 — die 수가 아니라 ` +
-    `고유값 개수를 표시합니다. Limit 은 이 차트에 설정된 기준을 씁니다.</p>`;
+    `고유값 개수를 표시합니다. Limit 은 이 차트에 설정된 기준을 씁니다. ` +
+    `<b>Serial 순으로 보는 중에도 이 표는 누적분포(ECDF) 기준</b>이라 모드에 따라 숫자가 ` +
+    `달라지지 않습니다.</p>`;
 }
 
 // ── 이벤트 (Distribution 패널 위임에서 호출 · 모달/상세는 문서 위임) ──────────

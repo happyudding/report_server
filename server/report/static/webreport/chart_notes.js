@@ -438,7 +438,13 @@ window.addEventListener("beforeunload", e => {
 // ── Note 붙여넣기: 현재 CDF 차트(주석 오버레이 포함) → PNG 업로드 → Note 시트 삽입 ──
 async function cnPasteToNote(subject) {
   const key = `cdf:${subject}`;
-  const info = _cnCharts[key];
+  // Serial 순 모드는 차트에 주석을 얹지 않으므로(좌표 의미가 달라 저장값을 덮어쓴다 —
+  // item_detail.js distRenderSeq 주석 참조) _cnCharts 에 등록되지 않는다. 그 항목을 seq 로
+  // 처음 열면 여기서 "준비되지 않았습니다" 로 막혀 원인을 알 수 없는 실패가 된다.
+  // 차트 DOM 노드는 어느 모드든 같은 #distCdf 이므로 없으면 그것으로 폴백한다(캡처 결과는
+  // 화면 그대로). **_cnCharts 에 등록하지는 않는다** — 등록하면 드래그가 주석을 seq 좌표로
+  // 되돌려 써서 기존 주석이 망가진다.
+  const info = _cnCharts[key] || { gd: document.getElementById("distCdf") };
   if (!info || !info.gd) { showToast("차트가 아직 준비되지 않았습니다."); return; }
   if (MODE !== "edit") { showToast("편집 권한이 있어야 Note 에 붙여넣을 수 있습니다."); return; }
   try {

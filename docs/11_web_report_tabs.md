@@ -597,6 +597,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       점 색만 `plot._distColorFor` 주입으로 pairKey 기준이 된다(미설정이면 기존 경로 그대로).
     - 저장은 `POST .../web_report/dist_composites`(ops 배열, null=삭제) 단발. 응답이 권위본이라
       `load(false)` 재로드를 하지 않는다 — kind 가 payload 중립이라 report 캐시가 살아 있다.
+    - **Serial 순 토글**이 켜지면 카드·상세가 run chart 로 바뀐다(단 통계표는 ECDF 기준 고정) →
+      아래 "Serial 순" 절.
   - **Gap Chart (사용자 수식 파생 분포 — 2026-08-24)**: 같은 "분석하기 ▾" 메뉴의 두 번째
     항목. 모달(좌우 2단 — 왼쪽 항목 목록 / 오른쪽 source 선택·수식)에서 `( ) + - * /` 로 식을
     조립하면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면 **기존 Item_detail
@@ -638,6 +640,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       카드 1장이 Item_detail 1개분 페이로드라 차트 수 상한이 실질 보호막이다.
     - `distUpdateCount()` 의 "N 개"에는 gap·composite 카드가 **포함되지 않는다**(distIndex
       밖이라 검색·세그먼트 필터 대상이 아니다) — composite 와 같은 기존 동작이다.
+    - **Serial 순 토글**이 켜지면 카드도 run chart 가 된다(상세는 Item_detail 재사용이라
+      자동으로 따라온다). 캐시는 늘리지 않는다 → 아래 "Serial 순" 절.
   - **Serial 순 (rawdata 누적 순 run chart — 2026-08-24)**: 툴바 **맨 앞** 버튼
     (`data-seg="seq"`, Item_detail 표시옵션에도 같은 버튼 `data-idet-seg="seq"`)으로
     갤러리 미니셀과 Item_detail CDF 자리를 **x = 각 source 의 측정 순서(1..n) · y = 측정값**
@@ -670,9 +674,32 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       before-limit 선도 같은 이유로 제외(누적% 축 전용), CDF x축 옵션 바도 비운다.
     - Issue Table 미니셀은 **전체 기준 ECDF 를 유지**한다(Bin1 토글과 같은 정책 — 그 표의
       숫자가 ECDF 기준이라 그림만 다른 축이 되면 표와 어긋난다).
+    - **사용자가 만든 카드 2종에도 적용된다** (2026-08-24 확장) — 갤러리가 한 모드로 보여야
+      "왜 어떤 카드만 안 바뀌지"가 없다. 서버는 **둘 다 무수정**이다:
+      - **Gap Chart**: `/gap_chart/<id>` 응답 값이 **이미 rawdata 행 순서**다(per_source = 그
+        source 의 행 순서 / explicit = 첫 참조 source 행 순서의 좌표 교집합, `gap_chart.py`
+        `_build_explicit`). 그래서 **변형 캐시를 늘리지 않는다** — `gcBuildSeries` 가 같은
+        응답에서 ECDF(`entry`)와 Serial 순(`seqEntry`) 두 표현을 한 번에 만든다.
+        seq 키를 `_gcCache` 에 넣으면 `gcDropCache` 의 키 목록과 어긋나 수식을 고쳐도 옛 값이
+        남으므로 넣지 말 것. explicit 모드의 순서는 좌표 교집합이라 **base source 행 순서의
+        부분수열**이고 x 는 1..m 으로 다시 매겨진다.
+      - **Distribution composite**: 기존 `distribution_batch` 를 `order=seq` 로 한 번 더 받는다
+        (`_dcCache`/`_dcInflight` 를 `DIST_VARIANTS` 6키로 생성 — 리터럴로 적지 말 것).
+        **상세는 차트만 seq 이고 통계표(`dcPairStats`)는 항상 ECDF 기준**이다: 그 함수가
+        ECDF 의 Δp 가중으로 모집단 통계를 복원하는 구조라 seq 배열로는 만들 수 없고, 원본값으로
+        다시 계산하면 같은 화면 숫자가 모드마다 달라진다(규칙 #13). 그래서 seq 상세는 ECDF·seq
+        **두 캐시를 함께 확보**한다.
+      - 두 카드 모두 미니셀 레이아웃은 공용 `distSeqCellLayout` 하나를 쓴다(축·여백·기준선이
+        갈라지지 않게). Map 선택 좌표 마커는 (값, 누적%) 좌표라 seq 축에서 제외한다.
+      - **y축 스케일 지배**: 단위·범위가 다른 항목을 겹치면 큰 값이 y축을 먹는다(ECDF 는 y가
+        0~100%라 정규화 효과가 있었다). 같은 단위끼리 고르는 것을 전제한 의도된 타협이다.
+    - **Note 붙여넣기 폴백**: seq 는 `chartNotesApply("cdf", …)` 를 부르지 않아 `_cnCharts` 에
+      등록되지 않는다 → `cnPasteToNote` 는 엔트리가 없으면 `#distCdf` 를 직접 집는다(화면
+      그대로 캡처). **등록은 하지 않는다** — 등록하면 드래그가 주석을 seq 좌표로 덮어쓴다.
     - 회귀 고정: [tests/test_dist_seq.py](../tests/test_dist_seq.py)(서버 6항목 — 행 순서·
       ETag 분리·bin1·`/scatter` 값 일치) · [tests/test_dist_seq_js.py](../tests/test_dist_seq_js.py)
-      (프런트 6항목 — 변형 분리·stride 캡·주석 미부착).
+      (프런트 12항목 — 변형 분리·stride 캡·주석 미부착·**세 카드 공용 레이아웃 일치**·
+      **composite 상세 통계표 불변**·`_dcCache` 6키·Note 폴백).
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
