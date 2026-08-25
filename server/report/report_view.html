@@ -547,13 +547,6 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.cpk-sheet.has-select thead th:nth-child(2) { z-index: 4; background: #e8eef4; }
 .sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #f7f9fb; }
 .sheet-table.cpk-sheet td.cpk-target { background: #e7f0ff; }
-/* 컬럼 리사이저 — 헤더 우측 가장자리 드래그로 폭 조절
-   (min~stdev 는 유효숫자 5자리 축약 표시라, 넓히면 원값 전체 표시로 전환 — cpk.js) */
-.cpk-col-resizer {
-  position: absolute; top: 0; right: 0; width: 7px; height: 100%;
-  cursor: col-resize; user-select: none;
-}
-.cpk-col-resizer:hover { background: rgba(31, 111, 235, .35); }
 .cpk-pager {
   display: flex; align-items: center; gap: 12px; margin: 4px 0 18px;
   font-size: 12px; color: #555;
