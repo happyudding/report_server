@@ -62,7 +62,7 @@ body {
      없어져 버튼이 내용 높이(42px)로 납작해진다. 종전 51px 을 하한으로 남긴다. */
   flex: 1 1 0; min-width: 150px; min-height: 51px; border: 2px solid var(--pt-color, #d0d5dd);
   border-radius: 8px; background: var(--pt-color, #fff); cursor: pointer;
-  font-size: 25px; font-weight: 800; color: #fff;
+  font-size: 38px; font-weight: 800; color: #fff;
   text-shadow: 0 1px 2px rgba(0,0,0,.20);
   transition: all .15s; opacity: .82;
 }
@@ -70,7 +70,8 @@ body {
 .pt-btn[data-pt="MDDI"]     { --pt-color: #4a90e2; }
 .pt-btn[data-pt="PDDI"]     { --pt-color: #1e3a8a; }
 .pt-btn[data-pt="PMIC"]     { --pt-color: #16a34a; }
-.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 20px; }
+/* SECURITY 만 8글자라 같은 크기로는 좁은 폭에서 넘친다 — 비율을 유지한 채 한 단계 낮춘다 */
+.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 26px; }
 .pt-btn[data-pt="TCON"]     { --pt-color: #0d9488; }
 .pt-btn:hover { opacity: 1; filter: brightness(1.07); }
 .pt-btn.active {
@@ -332,6 +333,12 @@ td.fname-cell .fname-txt {
   background: #4a90e2; animation: load-slide 1.1s infinite ease-in-out;
 }
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+
+/* 제품군 버튼은 남는 폭을 나눠 갖는 가변폭이라 화면이 좁으면 버튼도 같이 줄어든다.
+   8글자짜리 SECURITY 만 그때 글자가 넘치므로(1366px 에서 실측) 이 구간에서만 낮춘다. */
+@media (max-width: 1400px) {
+  .pt-btn[data-pt="SECURITY"] { font-size: 22px; }
+}
 
 /* ── 반응형: 좁은 폭에서 핵심 정보가 잘리지 않게 ─────────────────────────────
    >1360px: 기존 테이블 그대로. ≤1360px(= table 의 min-width): 가로 스크롤로 열 크러시
