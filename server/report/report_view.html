@@ -547,6 +547,13 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.cpk-sheet.has-select thead th:nth-child(2) { z-index: 4; background: #e8eef4; }
 .sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #f7f9fb; }
 .sheet-table.cpk-sheet td.cpk-target { background: #e7f0ff; }
+/* 접이식 컬럼(min~cp) — 기본 접힘, 헤더 이름 오른쪽 ▸/▾ 버튼으로 컬럼별 펼침/접기 (cpk.js) */
+.sheet-table.cpk-sheet th.cpk-col-collapsible { white-space: nowrap; }
+.cpk-col-toggle {
+  border: 0; background: none; cursor: pointer; padding: 0 2px; margin-left: 3px;
+  font-size: 11px; line-height: 1; color: #1f6feb; vertical-align: baseline;
+}
+.cpk-col-toggle:hover { color: #0b4dbb; }
 .cpk-pager {
   display: flex; align-items: center; gap: 12px; margin: 4px 0 18px;
   font-size: 12px; color: #555;
@@ -2601,6 +2608,8 @@ html[data-theme="dark"] .sheet-table.cpk-sheet.has-select td:nth-child(2) { back
 html[data-theme="dark"] .sheet-table.cpk-sheet.has-select thead th:nth-child(2) { background: #242c37; }
 html[data-theme="dark"] .sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #22262e; }
 html[data-theme="dark"] .sheet-table.cpk-sheet td.cpk-target { background: #1f2c44; }
+html[data-theme="dark"] .cpk-col-toggle { color: #7fb3ef; }
+html[data-theme="dark"] .cpk-col-toggle:hover { color: #a8ccf5; }
 html[data-theme="dark"] .cpk-pager { color: #9aa3b0; }
 html[data-theme="dark"] .cpk-toolbar input,
 html[data-theme="dark"] .cpk-toolbar select,

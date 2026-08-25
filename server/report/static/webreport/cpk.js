@@ -3,6 +3,12 @@ const CPK_COLUMNS = ["subject", "lower_limit", "upper_limit", "units", "source",
   "n", "min", "median", "max", "average", "stdev", "cpl", "cpu", "cp", "cpk"];
 const CPK_NUMERIC = new Set(["lower_limit", "upper_limit", "n", "min", "median", "max",
   "average", "stdev", "cpl", "cpu", "cp", "cpk"]);
+// 기본 접힘 컬럼 — 값 자리수가 길어 표가 옆으로 넓어지는 통계 컬럼은 접어 두고, 헤더
+// 이름 오른쪽 ▸ 버튼으로 컬럼별로 펼친다(▾ 로 다시 접기). 접혀도 셀(td)은 빈 채로
+// 렌더한다 — 컬럼을 아예 빼면 first/last-child 기준 sticky 고정이 어긋난다.
+// row 원값은 그대로라 Limit 역산 등 계산은 접힘과 무관하다.
+const CPK_COLLAPSIBLE_COLS = new Set(["min", "median", "max", "cpl", "cpu", "cp"]);
+let cpkColsExpanded = new Set();   // 펼쳐 둔 컬럼 이름 (기본: 전부 접힘)
 const CPK_WARN_THRESHOLD = 1.33;   // 기본 임계값 (item_detail/Issue Table 하이라이트는 이 고정값 사용)
 const CPK_PAGE_SIZE = 100;    // 페이지당 표시 행 수
 
@@ -202,7 +208,13 @@ function cpkTableHtml(rows) {
   const allSelected = cpkTargetMode && bodyRows.every(r => cpkSelected.has(r._key));
   const selTh = cpkTargetMode
     ? `<th class="cpk-sel-col"><input type="checkbox" id="cpkSelAll"${allSelected ? " checked" : ""}></th>` : "";
-  const head = "<thead><tr>" + selTh + displayCols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const head = "<thead><tr>" + selTh + displayCols.map(c => {
+    if (!CPK_COLLAPSIBLE_COLS.has(c)) return `<th>${esc(c)}</th>`;
+    const open = cpkColsExpanded.has(c);
+    return `<th class="cpk-col-collapsible">${esc(c)}` +
+      `<button type="button" class="cpk-col-toggle" data-cpk-col="${esc(c)}"` +
+      ` title="${open ? "컬럼 접기" : "컬럼 펼치기"}">${open ? "▾" : "▸"}</button></th>`;
+  }).join("") + "</tr></thead>";
   const body = "<tbody>" + pageRows.map(row => {
     const cpkVal = parseFloat(row.cpk);
     const isWarn = !isNaN(cpkVal) && cpkMatchThreshold(cpkVal);
@@ -215,6 +227,9 @@ function cpkTableHtml(rows) {
         const cls = tv === "" ? "st-empty" : "st-num cpk-target";
         return `<td class="${cls}">${esc(String(tv))}</td>`;
       }
+      // 접힌 컬럼은 값 없이 빈 셀만 (컬럼 자리는 유지 — sticky 고정 열 계산 보호)
+      if (CPK_COLLAPSIBLE_COLS.has(c) && !cpkColsExpanded.has(c))
+        return `<td class="cpk-col-closed"></td>`;
       const v = row[c];
       // stdev 만 서버가 반올림하지 않고 내려보내므로 표시할 때 유효숫자를 맞춘다(core.js).
       // row.stdev 원값은 그대로 남아 cpkComputeTargets 의 Limit 역산이 계속 쓴다.
@@ -420,6 +435,15 @@ function renderCpk() {
         cpkSourceFilter.clear();
         cpkPage = 1;
         renderCpk();
+        return;
+      }
+      // 접이식 컬럼 ▸/▾ 토글 — 표만 다시 그린다(검색창 포커스 유지).
+      const colBtn = e.target.closest("[data-cpk-col]");
+      if (colBtn) {
+        const c = colBtn.dataset.cpkCol;
+        if (cpkColsExpanded.has(c)) cpkColsExpanded.delete(c);
+        else cpkColsExpanded.add(c);
+        renderCpkTable();
         return;
       }
       const pb = e.target.closest("[data-cpk-page]");
