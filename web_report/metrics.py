@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import logging
+
 from . import build_log
 from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
@@ -17,6 +19,8 @@ from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              build_yield_step_groups, fail_counts_by_source,
                              resolve_source_basis, temperature_corner_sources,
                              yield_basis_payload, yield_overview)
+
+_log = logging.getLogger(__name__)
 
 
 def temperature_roles(groups):
@@ -56,6 +60,24 @@ def _temperature_context(tables, sources, mode, temperature_groups):
     """
     groups = (temperature_groups or {}).get("groups") if mode == "Temperature" else None
     if not groups:
+        # Temperature 모드인데 그룹이 하나도 없다 = 옵션의 RT 이름이 현재 source 이름과
+        # 안 맞아 validation.webreport_temperature_groups 가 전부 버린 것이다(그 함수는
+        # `rt not in present` 면 그룹을 통째로 스킵한다). 아래 `return ... tables` 는
+        # **전체 source 를 Yield 입력으로** 돌려주므로 CT/HT 가 RT 와 섞여 계산된다 —
+        # 에러가 아니라 "숫자가 조용히 틀린" 상태라, 두 이름 목록을 함께 남겨야 나중에
+        # 드리프트 출처를 역추적할 수 있다. 화면 경고는 프런트가 temp_corner 부재로
+        # 판정한다(payload 키를 늘리면 스키마 bump = 콜드 폭풍이라 싣지 않는다).
+        # (여기 오는 temperature_groups 는 이미 validation 을 통과한 결과라 **버려지기
+        #  전의 옵션 이름은 알 수 없다** — 원문은 report_session.webreport_options 참조.)
+        # perf-guard: allow S01-report-schema — 로그 한 줄만 추가했다. 반환값·payload 키·
+        # 계산이 전부 그대로라(경고는 프런트가 기존 temp_corner 부재로 판정) 캐시 세대를
+        # 올릴 이유가 없다. bump 는 전 세션 콜드 폭풍을 부른다(2026-08-13 실사례).
+        if mode == "Temperature":
+            _log.warning(
+                "temperature: no usable group — yield falls back to ALL sources "
+                "(CT/HT mixed in). current_sources=%r · check "
+                "report_session.webreport_options.temperature.groups[].rt",
+                [t.source for t in tables])
         return None, set(), tables
 
     role_of = temperature_roles(groups)

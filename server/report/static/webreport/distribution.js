@@ -624,6 +624,30 @@ let distTempFilterGroup = "";       // 그룹 인덱스 문자열 ("" = 미선�
 
 function tempIsMode() { return webReportMode() === "Temperature"; }
 
+// ── Temperature 그룹 해석 실패 감지 ──────────────────────────────────────────
+// 서버는 옵션의 RT 이름이 현재 source 이름과 안 맞으면 그룹을 통째로 버리고
+// (validation.webreport_temperature_groups 의 `rt not in present`), metrics.
+// _temperature_context 가 **전체 source** 를 Yield 입력으로 돌려준다 — CT/HT 가 RT 와
+// 섞여 계산되는데 에러도 경고도 없다("전체를 RT로 인식" 신고, 2026-08-25).
+//
+// 판정은 payload 에 이미 있는 것만 쓴다: `temp_corner` 는 _temperature_context 가
+// 그룹 해석에 **성공했을 때만** 붙이는 유일한 필드라, Temperature 모드인데 어느 source
+// 에도 없으면 곧 해석 실패다. 새 payload 키를 만들지 않으므로 REPORT_SCHEMA_VERSION
+// bump(=전 세션 콜드 폭풍)가 필요 없다.
+function tempGroupsBroken() {
+  if (!tempIsMode()) return false;
+  const list = (DATA.web_report && DATA.web_report.sources) || [];
+  return list.length > 0 && !list.some(s => s && s.temp_corner);
+}
+// 경고 배지 — Yield·Issue Table·Distribution 툴바가 같은 문구를 쓴다(사본 금지).
+function tempWarnHtml() {
+  if (!tempGroupsBroken()) return "";
+  return `<div class="temp-warn" role="status">⚠️ Temperature 그룹(RT/CT/HT)을 찾지 못해 ` +
+    `<b>전체 source 를 합쳐 계산</b>했습니다 — 아래 수율·이슈 숫자에 CT·HT 가 섞여 있고, ` +
+    `RT만/CT만/HT만 구분도 적용되지 않았습니다. Honey 업로드 창에서 그룹을 다시 지정해 ` +
+    `올리면 정상 계산됩니다.</div>`;
+}
+
 // payload.sources 의 temp_corner("RT"/"CT"/"HT")·temp_group(그룹 번호)로 이름 집합을 만든다.
 function tempFilterSources(kind, groupIndex) {
   const list = (DATA.web_report && DATA.web_report.sources) || [];
@@ -652,6 +676,12 @@ function tempGroupOptions() {
 
 function distTempFilterHtml() {
   if (!tempIsMode()) return "";               // 다른 모드는 DOM 자체를 만들지 않는다
+  // 그룹 해석이 실패했으면 필터 버튼은 눌러도 아무 것도 강조하지 못한다
+  // (tempFilterSources 가 temp_corner 로 고르는데 그게 안 붙어 있다) — 죽은 버튼을
+  // 남겨두는 편이 더 혼란스러우므로 자리를 경고로 바꾼다.
+  // `dist-temp-filter` 클래스는 유지한다 — distRenderTempFilters 가 이 선택자로 제자리
+  // 교체하므로, 배지가 그 클래스를 잃으면 이후 재렌더에서 자리를 못 찾는다.
+  if (tempGroupsBroken()) return `<div class="dist-temp-filter">${tempWarnHtml()}</div>`;
   const groups = ((DATA.web_report && DATA.web_report.temperature) || {}).groups || [];
   const btns = TEMP_FILTER_KINDS.map(([key, label, tip]) =>
     `<button class="distseg${distTempFilterKind === key ? " active" : ""}" ` +

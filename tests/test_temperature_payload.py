@@ -125,6 +125,41 @@ def test_option_parsing_and_fallbacks():
     assert webreport_temperature_groups(opts, ["ZZZ"]) is None
 
 
+def test_broken_groups_fall_back_and_are_detectable(caplog_list=None):
+    """그룹 이름이 현재 source 와 어긋나면 **전체 source 로 계산**되고, 그걸 화면이
+    감지할 수 있어야 한다 (2026-08-25 "전체를 RT로 인식" 신고).
+
+    옵션의 RT 이름이 안 맞으면 webreport_temperature_groups 가 None 을 주고,
+    metrics._temperature_context 가 `yield_tables = tables`(전체)로 폴백한다 —
+    Yield/Issue Table 이 CT/HT 를 포함한 채 계산되는데 에러가 없다.
+
+    **여기서 고정하는 계약은 `temp_corner` 부재다.** 프런트 경고 배지
+    (distribution.js `tempGroupsBroken`)가 "Temperature 모드인데 어느 source 에도
+    temp_corner 가 없다"로 판정하므로, 실패 시 이 필드가 붙어버리면 배지가 안 뜨고
+    사용자는 다시 틀린 숫자를 말없이 보게 된다. payload 에 별도 경고 키를 두지 않은
+    이유는 스키마 bump = 전 세션 콜드 폭풍이기 때문(cache_policy 주석).
+    """
+    tables = temp_tables()
+    # 옵션은 살아 있지만 이름이 전부 어긋난 상태 (드리프트 재현)
+    broken = webreport_temperature_groups(json.dumps({"temperature": GROUPS}), ["ZZZ"])
+    assert broken is None, broken
+
+    payload = build_report_payload(tables, mode="Temperature", temperature_groups=broken)
+
+    # (a) 프런트 판정 근거 — temp_corner 가 하나도 없어야 한다
+    assert all("temp_corner" not in s for s in payload["sources"]), payload["sources"]
+
+    # (b) 현재 폴백 동작을 명시적으로 고정 — Yield 가 CT/HT 까지 포함한다.
+    #     (자가 복구를 넣게 되면 이 단언이 깨지며 변경을 알린다 — 의도된 감지선이다.)
+    yield_cols = set().union(*(set(r) for r in payload["sheets"]["Yield"])) \
+        if payload["sheets"].get("Yield") else set()
+    assert any("WF1_CT" in c for c in yield_cols), sorted(yield_cols)
+
+    # (c) 정상 그룹이면 temp_corner 가 붙어 배지가 뜨지 않는다 (거짓 경고 방지)
+    ok = build_report_payload(tables, mode="Temperature", temperature_groups=GROUPS)
+    assert any(s.get("temp_corner") for s in ok["sources"]), ok["sources"]
+
+
 def test_temp_sheet_sources_and_denominator():
     """Temp 시트 — 컬럼은 CT/HT 만, 분모는 강제된 test die 수, 구 corner 키는 없다."""
     payload = build_report_payload(temp_tables(), mode="Temperature", gross_die=200,
@@ -232,6 +267,7 @@ def main():
     for fn in (test_mode_accepted, test_force_test_basis_for_members,
                test_payload_marks_roles_and_forces_denominator,
                test_option_parsing_and_fallbacks,
+               test_broken_groups_fall_back_and_are_detectable,
                test_temp_sheet_sources_and_denominator,
                test_temp_sheet_absent_for_other_modes,
                test_member_roles_and_temp_corner,

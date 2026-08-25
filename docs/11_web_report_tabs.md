@@ -164,6 +164,20 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     종전과 **완전히 동일**해 기존 캐시가 그대로 유효하다.
   - `sources[]` 의 `temp_corner`(`"RT"|"CT"|"HT"`)·`temp_group` 과 `payload.temperature`
     는 그대로다(Distribution 소스 그룹 필터·Map legend·Temp 시트 렌더가 쓴다).
+  - ⚠️ **그룹 해석이 실패하면 조용히 "전체 source" 로 계산된다.** 그룹은 세션 옵션에
+    **이름**으로 저장되는데([validation.py](../web_report/validation.py)
+    `webreport_temperature_groups`), 그 이름이 현재 manifest 의 source 이름과 안 맞으면
+    `rt not in present` 로 그룹을 버리고 결국 `None` 이 된다 → [metrics.py](../web_report/metrics.py)
+    `_temperature_context` 가 `yield_tables = tables`(전체)로 폴백해 **Yield·Issue Table 에
+    CT/HT 가 섞여 계산**되고 RT만/CT만/HT만 필터도 무력해진다. 에러가 아니라 "숫자가 조용히
+    틀린" 상태라 발견이 늦는다(2026-08-25 신고).
+    → 서버는 `_log.warning` 을 남기고, 화면은 **`temp_corner` 부재**로 판정해 경고 배지를
+    띄운다([distribution.js](../server/report/static/webreport/distribution.js)
+    `tempGroupsBroken`/`tempWarnHtml` — Yield·Issue Table·Distribution 툴바 공용).
+    **payload 에 경고 키를 넣지 말 것** — 스키마 bump = 전 세션 콜드 폭풍이라 일부러
+    기존 필드만으로 판정한다. 회귀 고정: [tests/test_temp_warn_js.py](../tests/test_temp_warn_js.py)
+    (프런트) + [tests/test_temperature_payload.py](../tests/test_temperature_payload.py)
+    `test_broken_groups_fall_back_and_are_detectable`(서버 계약).
 
 - **Yield STEP 분리 (2026-07-14 분모 전체 기준으로 통일 / 2026-07-21 STEP 요약만 누적 차감)**: Yield 탭은 STEP(P1/P2/P3)별로
   표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행

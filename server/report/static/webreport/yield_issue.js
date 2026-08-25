@@ -540,7 +540,11 @@ function bindYieldColResize(panel) {
 // ── Yield (read) ──────────────────────────────────────────────────────────────
 function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
-  const overview = yieldOverviewHtml();
+  // Temperature 그룹 해석이 실패하면 이 표가 CT/HT 를 포함한 전체 source 로 계산된다
+  // (metrics._temperature_context 폴백) — 틀린 숫자를 말없이 보여주지 않도록 맨 위에
+  // 경고를 얹는다. 정상 세션에서는 빈 문자열이라 마크업이 종전과 동일하다.
+  // overview 에 합쳐 두면 아래 두 분기(STEP 분리 표 / 폴백)가 모두 자동으로 얹는다.
+  const overview = tempWarnHtml() + yieldOverviewHtml();
   // 접기 토글 위임은 STEP 표가 없는 폴백에서도 필요하다 — Temp Corner 표가 Bin 그룹
   // 토글(.yield-toggle)을 쓰기 때문(2026-08-11). 중복 호출은 가드로 no-op.
   bindYieldPanel();
@@ -980,8 +984,15 @@ function renderIssueTableInto(panel, rows, opts) {
 }
 
 function renderIssues(issue_table_text) {
-  renderIssueTableInto(document.getElementById(ISSUE_PANEL_MAIN), issue_table_text,
-                       { edit: false });
+  const panel = document.getElementById(ISSUE_PANEL_MAIN);
+  renderIssueTableInto(panel, issue_table_text, { edit: false });
+  // Yield 와 같은 경고 — Temperature 그룹 해석이 실패하면 이 표의 Yield 섹션도 CT/HT 를
+  // 포함한 전체 source 로 계산된다(ctx.yield_rows 를 그대로 소비하므로 두 표는 항상 같은
+  // 목록이다 — CLAUDE.md 규칙 13). 표를 그린 **뒤** 얹는다: renderIssueTableInto 가
+  // innerHTML 을 통째로 교체하므로 먼저 넣으면 지워진다. 정상 세션에선 빈 문자열이라 no-op.
+  // Temp 탭(renderIssueTempTab)에는 붙이지 않는다 — 그룹이 없으면 그 표 자체가 비어 있다.
+  const warn = tempWarnHtml();
+  if (warn && panel) panel.insertAdjacentHTML("afterbegin", warn);
 }
 
 // Temperature 전용 탭 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표.

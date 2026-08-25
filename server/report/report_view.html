@@ -1196,6 +1196,15 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .idet-formula .gc-tok:hover { background: transparent; outline: none; }
 .idet-formula-meta { flex: 0 0 auto; margin-left: auto; font-size: 11.5px; color: #6b7280; }
 .idet-formula-warn { flex: 0 0 auto; font-size: 11.5px; color: #b42318; }
+/* Temperature 그룹 해석 실패 경고 (distribution.js tempWarnHtml) — Yield·Issue Table·
+   Distribution 툴바가 공유한다. 표 셀이 아니라 블록이라 zebra/hover 특이도 싸움
+   (cpk-warn 계열의 !important 처방)과 무관한 독립 클래스로 둔다. */
+.temp-warn {
+  margin: 0 0 10px; padding: 9px 12px; border-radius: 8px;
+  border: 1px solid #f0c26b; background: #fff8e6; color: #6b4e0f;
+  font-size: 12.5px; line-height: 1.55;
+}
+.temp-warn b { color: #b42318; }
 .dc-chip-x { border: none; background: transparent; cursor: pointer; color: #b42318;
   font-size: 11px; padding: 0 2px; flex: 0 0 auto; }
 .dc-summary { flex: 0 0 auto; margin-top: 8px; font-size: 12.5px; color: #344054; }
@@ -2750,6 +2759,8 @@ html[data-theme="dark"] .idet-formula { background: #1b1e24; border-color: #333a
 html[data-theme="dark"] .idet-formula-label,
 html[data-theme="dark"] .idet-formula-meta { color: #8b94a3; }
 html[data-theme="dark"] .idet-formula-warn { color: #f88b83; }
+html[data-theme="dark"] .temp-warn { border-color: #6b551f; background: #2a2415; color: #e8d9a8; }
+html[data-theme="dark"] .temp-warn b { color: #f88b83; }
 /* 원래 배경이 투명이라 다크가 비치는 차트 블록 — 흰 카드로 명시 고정 */
 html[data-theme="dark"] .distg-card { background: #fff; }
 html[data-theme="dark"] .dist-chart-block,
