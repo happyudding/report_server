@@ -2116,38 +2116,41 @@ td.issue-sig-cell .sig-chip { max-width: 104px; overflow: hidden; text-overflow:
 /* Summary 의 Compare 요약 카드 비고 열 — 숫자가 아니라 설명이라 좁게·연하게. */
 .iss-status-table td.cmp-sum-sub { color: #667085; font-size: 11px; font-weight: 400; }
 
-/* ── 세부 데이터 글자 크기 ×1.5 (Summary / Yield / CPK 탭) — 사용자 요청 2026-08-25 ──
-   표 안 값처럼 10~13px 로 손튜닝돼 있던 "작은 글씨"만 1.5배로 올린다. 제목
-   (.section-title / .yield-step-title / .yield-corner-title)과 이미 큰 대표값
-   (.yo-pct 30px · .yo-num 17px · .mfb-yield 20px)은 요청대로 건드리지 않는다.
+/* ── 세부 데이터 글자 크기 ×1.25 (Summary / Yield / CPK 탭) — 사용자 요청 2026-08-25 ──
+   표 안 값처럼 10~13px 로 손튜닝돼 있던 "작은 글씨"만 1.25배로 올린다(처음 1.5배로 넣었다가
+   너무 크다는 요청으로 낮춤). 제목(.section-title / .yield-step-title / .yield-corner-title)과
+   이미 큰 대표값(.yo-pct 30px · .yo-num 17px · .mfb-yield 20px)은 요청대로 건드리지 않는다.
    패널 스코프(#panel-*)로 한정하는 이유: 같은 클래스(.sheet-table.kind-yield,
    .mfb-table)를 Issue Table 탭·Item detail 도 쓰기 때문에 전역으로 올리면 그쪽에
    따로 손튜닝된 값 폰트(15~21px)와 어긋난다.
+   ⚠️ **표를 키울 땐 th 를 반드시 함께 적는다.** 전역 `th{font-size:11px}`(요소 선택자)가
+   th 에 직접 걸려 있어 부모 table 의 font-size 를 올려도 헤더는 11px 에 남는다 — 값만
+   커지고 컬럼명은 그대로여서 "컬럼명이 작아졌다"로 보인다(2026-08-25 실제 신고).
    열 폭은 함께 손대지 않는다 — .sheet-table 은 auto table-layout 이라 colWidth() 는
    힌트일 뿐이고(내용이 넓으면 그만큼 열이 늘어난다) 넘치는 폭은 .sheet-wrap 의 가로
    스크롤이 받는다. */
-#panel-summary .mfb-table { font-size: 18px; }              /* 12 → 18 (.mfb-yield 20px 유지) */
-#panel-summary .iss-status-table { font-size: 19.5px; }     /* 13 → 19.5 */
-#panel-summary .iss-status-table td.cmp-sum-sub { font-size: 16.5px; }   /* 11 → 16.5 */
+#panel-summary .mfb-table,
+#panel-summary .mfb-table th { font-size: 15px; }            /* 12 → 15 (.mfb-yield 20px 유지) */
+#panel-summary .iss-status-table,
+#panel-summary .iss-status-table th { font-size: 16.25px; }  /* 13 → 16.25 */
+#panel-summary .iss-status-table td.cmp-sum-sub { font-size: 13.75px; }   /* 11 → 13.75 */
 
-/* th 는 전역 `th{font-size:11px}` 가 잡고 있어(.sheet-table th 에는 크기 지정이 없다)
-   표 본문과 함께 명시해야 같이 커진다. */
 #panel-yield .sheet-table,
-#panel-yield .sheet-table th { font-size: 16.5px; }          /* 11 → 16.5 */
-#panel-yield .ybs-table { font-size: 16.5px; }
+#panel-yield .sheet-table th { font-size: 13.75px; }         /* 11 → 13.75 */
+#panel-yield .ybs-table { font-size: 13.75px; }
 #panel-yield .ybs-table th,
 #panel-yield .ybs-table .ybs-step .ybs-step-avg,
-#panel-yield .temp-rt { font-size: 15px; }                   /* 10 → 15 */
+#panel-yield .temp-rt { font-size: 12.5px; }                 /* 10 → 12.5 */
 /* 표가 커진 만큼 7행 스크롤 상한도 같은 비율로 — 안 올리면 종전보다 적은 행만 보인다. */
-#panel-yield .yield-by-source.ybs-scroll { max-height: 264px; }
-#panel-yield .yield-by-step.ybs-scroll { max-height: 267px; }
+#panel-yield .yield-by-source.ybs-scroll { max-height: 220px; }
+#panel-yield .yield-by-step.ybs-scroll { max-height: 223px; }
 #panel-yield .yield-overview .yo-label,
-#panel-yield .yield-overview .yo-basis { font-size: 16.5px; }
-#panel-yield .yield-overview .yo-cap { font-size: 15px; }
+#panel-yield .yield-overview .yo-basis { font-size: 13.75px; }
+#panel-yield .yield-overview .yo-cap { font-size: 12.5px; }
 
 #panel-cpk .sheet-table,
-#panel-cpk .sheet-table th { font-size: 16.5px; }            /* 11 → 16.5 */
-#panel-cpk .cpk-pager { font-size: 18px; }                   /* 12 → 18 */
+#panel-cpk .sheet-table th { font-size: 13.75px; }           /* 11 → 13.75 */
+#panel-cpk .cpk-pager { font-size: 15px; }                   /* 12 → 15 */
 
 /* Issue Table 컬럼명(헤더) — 값 셀이 15~21px 인데 헤더만 11px 이라 읽기 어렵다는 요청
    (2026-08-25). 헤더 밑 부기(.th-note 9px)는 안내문이라 그대로 둔다. */

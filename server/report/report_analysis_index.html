@@ -60,7 +60,7 @@ body {
 .pt-btn {
   /* 한 줄 배치라 높이를 고정한다. (종전 2행 구조에서는 align-items:stretch 로 오른쪽
      컬럼 높이를 따라가야 해서 height 를 주면 안 됐다 — 그 전제는 사라졌다.) */
-  flex: 0 0 auto; min-width: 92px; height: 34px; padding: 0 12px;
+  flex: 0 0 auto; min-width: 78px; height: 30px; padding: 0 10px;
   border: 1px solid var(--pt-color, #d0d5dd);
   border-radius: 6px; background: var(--pt-color, #fff); cursor: pointer;
   font-size: 17px; font-weight: 800; color: #fff;
@@ -94,7 +94,7 @@ body {
    / T=Temperature). 흰 글자 대비를 위해 배경은 파스텔이 아닌 포화 톤을 쓴다. */
 .mode-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; border-radius: 50%;
+  width: 20px; height: 20px; border-radius: 50%;
   font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap;
   vertical-align: middle;
 }
@@ -116,7 +116,7 @@ body {
 /* 별표+배지가 줄바꿈되어 행이 두 줄 높이가 되지 않게 한 줄 고정 */
 td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip {
-  flex: 0 0 auto; height: 34px; padding: 0 12px;
+  flex: 0 0 auto; height: 30px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
   font-size: 16px; font-weight: 600; color: #475569; cursor: pointer;
   white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis;
@@ -129,7 +129,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip.needs-pin:hover { background: #d97706; border-color: #d97706; color: #fff; }
 
 .honey-dl-btn {
-  flex: 0 0 auto; height: 34px; padding: 0 14px;
+  flex: 0 0 auto; height: 30px; padding: 0 14px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
   background: #16a34a; color: #fff; font-size: 19px; font-weight: 600;
@@ -164,16 +164,16 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .search-group.top-search { position: relative; flex: 0 1 300px; min-width: 150px; }
 /* input 은 flex item 이 아니라 그 안의 자식이라 늘어나지 않는다 — 없으면 컨테이너만
    넓어지고 입력칸은 기본 폭(약 238px)에 머문다. */
-.top-search .filter-input { width: 100%; height: 34px; font-size: 17px; }
+.top-search .filter-input { width: 100%; height: 30px; font-size: 17px; }
 .mine-toggle {
-  height: 34px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  height: 30px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
   font-size: 16px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
 }
-.mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
+.mine-toggle input { width: 16px; height: 16px; cursor: pointer; }
 .filter-actions { margin-left: auto; }
 .filter-label { font-size: 18px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
-  height: 40px; padding: 0 10px; border: 1px solid #d0d5dd;
+  height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
   border-radius: 6px; font-size: 20px; outline: none;
   background: #fff;
 }
@@ -195,16 +195,16 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .suggest-sub { color: #777; margin-top: 2px; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
-  height: 40px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
+  height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
   background: #fff; color: #333; font-size: 20px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
 /* 상단바 안에서만 컨트롤을 낮춘다 — 전역 36px 은 모달·검색옵션 패널이 함께 쓰므로 유지. */
-.top-bar .btn-action { height: 34px; font-size: 17px; }
+.top-bar .btn-action { height: 30px; font-size: 17px; }
 /* 돋보기 조회 버튼 (구 '조회' 텍스트 버튼) */
 .icon-btn { flex: 0 0 auto; width: 40px; padding: 0; font-size: 22px; }
-.top-bar .icon-btn { width: 38px; font-size: 19px; }
+.top-bar .icon-btn { width: 34px; font-size: 19px; }
 /* 접이식 검색옵션 토글 — 뒤의 배지는 '기본값이 아닌 옵션 개수'다. 패널이 접혀 있어도
    필터가 걸려 있음을 알리는 유일한 단서라 지우지 말 것. */
 .opt-btn { font-size: 18px; padding: 0 12px; white-space: nowrap; }
@@ -227,11 +227,11 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .refreshing-badge { font-size: 14px; color: #aaa; font-weight: 400; }
 
 /* min-width 는 열 폭의 하한이다 — 이 값 미만으로 좁아지면 열을 뭉개는 대신 .table-wrap
-   가로 스크롤로 넘긴다. 1360px = colgroup 고정 7열 합계 1000 + File name 하한 360.
-   글자를 1.2배로 키우고 Product·LOT ID·Owner 를 "…" 안 나게 넓힌 결과라, 1366 화면은
-   이제 가로 스크롤이 난다(그쪽은 카드형·스크롤로 받는다 — 주 해상도는 1920). */
+   가로 스크롤로 넘긴다. 1300px = colgroup 고정 7열 합계 936 + File name 하한 364.
+   글자를 1.2배로 키우고 Product·LOT ID·Owner 를 "…" 안 나게 넓힌 결과라, 1400 미만
+   화면은 가로 스크롤이 난다(그쪽은 스크롤·카드형으로 받는다 — 주 해상도는 1920). */
 table {
-  width: 100%; min-width: 1360px; border-collapse: collapse;
+  width: 100%; min-width: 1300px; border-collapse: collapse;
   font-size: 18px; table-layout: fixed;
 }
 th, td {
@@ -292,7 +292,7 @@ td.fname-cell .fname-txt {
   margin-top: 8px; flex-wrap: nowrap;
 }
 .pager .pg-btn {
-  min-width: 34px; height: 32px; padding: 0 9px; font-size: 17px;
+  min-width: 30px; height: 28px; padding: 0 8px; font-size: 17px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
@@ -329,8 +329,7 @@ td.fname-cell .fname-txt {
 /* 로그인 모달만 버튼이 4개(Honey 다운로드/회원가입/취소/로그인)라 기본 크기로는
    modal-box 안쪽 폭을 넘겨 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄이고(14px·
    padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다.
-   (전역 글자를 1.2배 키운 뒤 460px 로 함께 넓혔다 — 실측 4버튼 합계 ≈420px) */
-#idModal .modal-box { width: 460px; }
+#idModal .modal-box { width: 420px; }
 #idModal .modal-actions { gap: 6px; }
 #idModal .modal-btn { font-size: 14px; padding: 8px 10px; white-space: nowrap; }
 /* ── 세션 로드 오버레이 ─────────────────────────────────────────────── */
@@ -351,7 +350,7 @@ td.fname-cell .fname-txt {
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 
 /* ── 반응형: 좁은 폭에서 핵심 정보가 잘리지 않게 ─────────────────────────────
-   >1360px: 기존 테이블 그대로. ≤1360px(= table 의 min-width): 가로 스크롤로 열 크러시
+   >1300px: 기존 테이블 그대로. ≤1300px(= table 의 min-width): 가로 스크롤로 열 크러시
    방지(핵심 정보 안 잘림). ≤1024px: 카드형으로 전환 — 세션 정보(파일명·Product·LOT)를
    위에, 보조 정보(모드·업로더·날짜)를 그 아래로 라벨과 함께 이동.
    데스크톱 열 구성은 그대로 둔다. */
@@ -396,7 +395,7 @@ td.fname-cell .fname-txt {
    기존 규칙은 수정하지 않고 html[data-theme="dark"] 스코프 규칙만 얹는다.
    배지(pt-badge/mode-badge)·HONEY 버튼은 포화 배경 + 대비 글자라 다크에서도 그대로 둔다. */
 .theme-toggle {
-  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
   font-size: 24px; line-height: 1; padding: 0; cursor: pointer;
 }
@@ -572,8 +571,9 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
          내용이 고정된 열까지 같은 비율로 넓어져 그 폭이 버려진다 — File name 의 width 를
          비워 두면 table-layout:fixed 의 잔여 폭 배분이 그 열 하나에 전부 간다.
          아래 px 는 글자 1.2배(데이터 18px) 기준으로 "…" 생략이 안 나게 잡은 값이다 —
-         Product·LOT ID·Owner 는 실제 값이 잘리던 열이라 특히 넉넉히 준다.
-         고정 7열 합계 = 1000px → table min-width 1360px(= 1000 + 파일명 하한 360).
+         Product·LOT ID·Owner 는 실제 값이 잘리던 열이라 특히 넉넉히 준다. Prod Type·액션
+         두 열은 폭을 줄이면 배지·아이콘이 잘린다(headless A/B 실측).
+         고정 7열 합계 = 936px → table min-width 1300px(= 936 + 파일명 하한 364).
          Family(Contactless) · Process 열은 세션 상세에서 보는 값이라 목록에서 뺐다. -->
     <colgroup>
       <col style="width:112px">   <!-- Prod Type : 별 2개 + 4글자 배지 -->
@@ -582,7 +582,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
       <col style="width:156px">   <!-- LOT ID    : 생략 안 나게 확대 + File name 과 간격 -->
       <col>                       <!-- File name : width 없음 = 남는 폭 전부 -->
       <col style="width:190px">   <!-- Owner     : '이름(ID)' 표기가 잘리지 않게 확대 -->
-      <col style="width:140px">   <!-- Date      : 260721_14:30 수용 -->
+      <col style="width:126px">   <!-- Date      : 260721_14:30 수용 -->
       <col style="width:96px">    <!-- 액션(자물쇠/삭제) -->
     </colgroup>
     <thead>
