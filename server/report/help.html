@@ -811,14 +811,16 @@
               <thead><tr><th>버튼·입력</th><th>동작</th></tr></thead>
               <tbody>
                 <tr><td>MDDI · PDDI · PMIC · SECURITY · TCON</td><td>Product Type으로 목록을 제한합니다.</td></tr>
-                <tr><td>분석 모드</td><td>Normal·Compare·DUT·Temperature 보고서로 제한합니다.</td></tr>
-                <tr><td>공개 범위</td><td>공개 또는 내 권한으로 볼 수 있는 비공개 보고서를 구분합니다.</td></tr>
-                <tr><td>시작일 / 종료일</td><td>업로드 날짜 범위를 지정합니다.</td></tr>
-                <tr><td>정렬</td><td>최신·오래된 순서 또는 Product·LOT 기준으로 정렬합니다.</td></tr>
+                <tr><td>검색하기</td><td>Product, LOT, Process, 파일명, 작성자에 포함된 문자를 검색합니다.</td></tr>
+                <tr><td>🔍</td><td>입력한 조건으로 검색을 실행합니다. 검색창에서 Enter를 눌러도 같습니다.</td></tr>
                 <tr><td>My Upload</td><td>현재 로그인 계정이 올린 보고서만 표시합니다.</td></tr>
-                <tr><td>통합 검색</td><td>Product, LOT, Process, 파일명, 작성자에 포함된 문자를 검색합니다.</td></tr>
-                <tr><td>Query</td><td>선택한 조건으로 검색을 실행합니다.</td></tr>
+                <tr><td>⚙ 검색옵션</td><td>자주 쓰지 않는 조건(아래 4줄)을 펼치거나 접습니다. 접힌 상태에서도 조건이 걸려 있으면 버튼에 개수가 표시되며, <span class="ui">옵션 초기화</span>로 그 조건만 되돌립니다.</td></tr>
+                <tr><td>⚙ 검색옵션 안: 분석 모드</td><td>Normal·Compare·DUT·Temperature 보고서로 제한합니다.</td></tr>
+                <tr><td>⚙ 검색옵션 안: 공개 범위</td><td>공개 또는 내 권한으로 볼 수 있는 비공개 보고서를 구분합니다.</td></tr>
+                <tr><td>⚙ 검색옵션 안: 시작일 / 종료일</td><td>업로드 날짜 범위를 지정합니다.</td></tr>
+                <tr><td>⚙ 검색옵션 안: 정렬</td><td>최신·오래된 순서 또는 Product·LOT 기준으로 정렬합니다.</td></tr>
                 <tr><td>표의 보고서 행</td><td>해당 Web Report를 엽니다.</td></tr>
+                <tr><td>옅은 노란색 행</td><td>현재 로그인 계정이 직접 업로드한 보고서입니다.</td></tr>
                 <tr><td>☆ / ★</td><td>자주 보는 보고서를 내 계정의 즐겨찾기에 추가·해제합니다.</td></tr>
                 <tr><td>중요 ★</td><td>리포트에서 설정한 개인 중요 표시입니다. 즐겨찾기와 별개이며 자동 정리 대상에서도 보호됩니다.</td></tr>
                 <tr><td>🔒 / 🔓</td><td>업로더가 공개·비공개를 전환합니다.</td></tr>
@@ -828,7 +830,7 @@
               </tbody>
             </table>
           </div>
-          <p class="note">목록은 페이지 단위로 표시되며 현재 필터·정렬·페이지가 URL에 저장됩니다. 새로고침하거나 URL을 공유해도 같은 검색 상태로 돌아옵니다.</p>
+          <p class="note">목록은 페이지 단위로 표시되며 현재 필터·정렬·페이지가 URL에 저장됩니다. 새로고침하거나 URL을 공유해도 같은 검색 상태로 돌아옵니다. 이때 <span class="ui">⚙ 검색옵션</span> 조건이 섞여 있으면 그 패널이 펼쳐진 채로 열립니다.</p>
           <p class="warn">휴지통 세션은 30일간 보관된 뒤 관리자가 영구 정리할 수 있습니다. 복원이 필요하면 세션 이름·Product·LOT·삭제 시각을 관리자에게 전달하십시오.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
