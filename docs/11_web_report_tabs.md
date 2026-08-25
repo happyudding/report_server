@@ -18,16 +18,24 @@
 | 탭 | 빌더 | 요지 |
 |----|------|------|
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
-| Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
+| Raw Data | `raw_data.py` | placeholder. ⚠ **프런트 탭은 없다**(2026-08 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'으로 이관). 시트만 남아 lazy 조회/편집 라우트가 쓴다 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`). **Temperature 는 RT source 만** 입력으로 받는다(metrics 가 결정) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값**. 유일한 예외 = Temperature 의 CT/HT(**RT Bin1 die × RT limit**, 2026-08-10) |
 | Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준, **Pass/Fail 단위·`OTP_`/`CHIP_ID`/`CHIPID` 이름 항목 제외** — `_cpk_skip_subject`, 2026-08-10) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
 | Issue Table Temp | `temp_fail.py` | **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정한 item 단위 행(다른 모드는 `[]`). row_key `TEMP\|<item>` |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
-| Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
+| Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩**. ⚠ 화면상으로는 최상위 탭이 아니라 **Characteristic 탭의 서브탭**이다(아래 절) |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
 | Note | — (클라 전용) | TAB_REGISTRY 밖 — 프런트 자체구성 Luckysheet 캔버스, 아래 "Note 탭" 절 |
+| Issue Table Compare | `compare_issue.py` | **TAB_REGISTRY 밖** — Compare 세션일 때 `metrics.py` 가 `sheets["Issue Table Compare"]` 에 직접 주입한다. 레지스트리만 보고 "탭 목록"을 세면 이게 빠지니 주의 |
+
+⚠️ **표의 이름 = 시트(sheets) 키이지 화면 탭 목록이 아니다.** 둘은 대체로 같지만 어긋나는
+곳이 셋 있다: `Raw Data`(시트만 있고 탭 없음) · `Trim Analysis`(Characteristic 의 서브탭) ·
+`Issue Table Compare`(탭은 있는데 레지스트리 밖). 실제 상단 탭 11개는
+[report_view.html](../server/report/report_view.html) 의 `data-tab` 이 정본:
+`summary` / `yield` / `cpk` / `issues` / `issue-temp` / `issue-cmp` / `distribution` /
+`map-analysis` / `characteristic` / `note` / `compare`.
 
 **lazy 탭 관례**: 대용량 payload(Distribution ECDF, Trim 매칭)는 `/full` 에 싣지 않고
 빈 시트로 두고 전용 라우트로 지연 로드한다. Map Analysis 는 하이브리드 — 범례·격자 틀이
@@ -1066,6 +1074,13 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
   새 kind 를 만들 때 **여기에 넣는 것을 빠뜨리면 저장할 때마다 report 전체가 콜드 재빌드**
   된다(2026-08-13 조회 급락 사건과 같은 기전). `/full` 응답 캐시는 전역 `rev` + extras
   digest 로 정상 무효화되므로 화면은 즉시 갱신된다.
+  ⚠️ 이 목록(5종)은 [edits.py](../web_report/edits.py) `_STATE_EXCLUDED_KINDS`(8종)와
+  **같지 않다** — `preprocess`·`yield_basis`·`compare_note` 는 편집 state dict 에서만 빠지고
+  payload_rev 는 올린다(실제로 payload 를 바꾸므로 올려야 맞다). 두 목록을 기계적으로 함께
+  채우지 말 것 — 판단 기준은 [CLAUDE.md](../CLAUDE.md) §5 규칙 16.
+- **`issue_status` 는 `"Close"` 만 저장한다** — 값이 없으면 Open 이다(기본값을 행마다 쓰지
+  않아 저장량이 행 수에 비례하지 않는다). 그래서 "Open 으로 되돌리기" 는 값 갱신이 아니라
+  **행 삭제**이고, 조회 코드가 `get(key) == "Open"` 을 기대하면 아무 행도 못 찾는다.
 
 ### 차트 주석 (chart_note — 2026-07-12)
 그래프 위 동그라미/사각형/선/텍스트 + 코멘트. Plotly 내장 draw(dragmode drawcircle 등,
@@ -1204,15 +1219,69 @@ Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — E
 
 ## 렌더 구조 (report_view.html + static/webreport)
 - 마크업+CSS 는 [report_view.html](../server/report/report_view.html), 탭별 JS 는
-  [static/webreport/](../server/report/static/webreport/) **17개 모듈**(boot / core / sheets /
-  tabs_topbar / yield_issue / cpk / issue_dist / distribution / item_detail / trim / compare /
-  map_select / wafer_charts / raw_data / chart_notes / note / edit_mode).
+  [static/webreport/](../server/report/static/webreport/) — 파일 **32개** 중 세션 상세가
+  **31개**를 로드한다(`old_client_notice.js` 만 랜딩·검색결과 전용).
 - **classic script 순서 로드(전역 스코프 공유)** — ES module 로 바꾸거나 로드 순서를 바꾸지
   말 것. 정적 서빙은 `GET /pe/report/static/webreport/<filename>`(화이트리스트).
+
+### 로드 순서 (report_view.html 하단이 정본)
+
+| # | 모듈 | 역할 |
+|--:|------|------|
+| 1 | `error_beacon.js` | 브라우저 JS 에러/rejection → `POST /api/client_error` |
+| 2 | `honey_hint.js` | Honey 전용 기능 안내(일반 브라우저에서만 노출) |
+| 3 | `user_name.js` | 사용자 실명 표기·입력창 (3페이지 공유, `UserName.uid()` 정규화) |
+| 4 | `core.js` | SESSION_ID·MODE·YIELD_COLS·표 골격·loadAuth 등 기반 |
+| 5 | `tabs_topbar.js` | 탭 전환 + 탭별 대용량 지연 데이터 트리거 |
+| 6 | `sheets.js` | grid model 렌더 + `issueRowKey`/`linkifyComment` |
+| 7 | `yield_issue.js` | Yield STEP별 Bin 접기 표 + Issue 표 렌더 본체 |
+| 8 | `sig_reason.js` | Signature 판정 근거 팝업(`?` 버튼) |
+| 9 | `wafer_charts.js` | wafer map + fail-bin 차트(Plotly) |
+| 10 | `stdf_map.js` | STDF Map(값 기반 웨이퍼 맵 서브모드) |
+| 11 | `compare.js` | Compare 모드 + 표 헬퍼·compare_note 바인딩 |
+| 12 | `compare_issue.js` | Issue Table Compare 탭 — **11·7 재사용이라 그 뒤** |
+| 13 | `map_select.js` | Map 좌표 선택(chip)·`mapSelMarkerTraces`·Summary 카드 |
+| 14 | `cpk.js` | CPK 탭 |
+| 15 | `distribution.js` | Distribution 갤러리·툴바 (`DIST` 상수·`DIST_VARIANTS`) |
+| 16 | `item_detail.js` | Item_detail(CDF+히스토그램 상세) |
+| 17 | `dist_composite.js` | 합성 산포 차트 — **15·16 재사용, `edit_mode.js` 앞** |
+| 18 | `gap_chart.js` | Gap Chart — **15·16·17 재사용, `edit_mode.js` 앞** |
+| 19 | `issue_dist.js` | Issue Table Map 미니셀 |
+| 20 | `trim.js` | Trim Analysis 화면 + loadExcelJS |
+| 21 | `characteristic.js` | Characteristic 탭(서브탭 6종 전환) |
+| 22 | `excel_export.js` | 탭별 Excel Down (vendored exceljs) |
+| 23 | `raw_data.js` | Raw Data lazy-load + `RAW_NUM_RE` |
+| 24 | `chart_notes.js` | 차트 주석 + `cnDetach`/`cnSyncFromChart`/`cnFlush` |
+| 25 | `note.js` | Note 탭 Luckysheet(iframe 격리) |
+| 26 | `edit_mode.js` | 편집 위젯 — **`MODE` 를 정의하므로 17·18 이 앞이어야 한다** |
+| 27 | `input_info.js` | Input File Information 모달(ℹ) |
+| 28 | `leave_guard.js` | 세션 이탈 확인(미저장 편집 보호) |
+| 29 | `chat.js` | 챗봇 위젯 — 독립(자체 DOM 주입) |
+| 30 | `admin_message.js` | 관리자 팝업 메시지 — 독립 |
+| 31 | `boot.js` | 로드 오버레이 + 부트스트랩 — **항상 마지막** |
+
+순서에 **의미가 있는 곳은 12·17·18·26 네 줄뿐**이다(재사용 대상이 먼저 와야 한다).
+나머지는 관례적 묶음이므로, 새 모듈은 재사용하는 모듈 뒤·`edit_mode.js` 앞에 넣는다.
+
 - 활성 탭만 즉시 렌더, 나머지는 dirty + idle 프리렌더. Distribution/Issue 미니셀은
   IntersectionObserver + rAF 로 보이는 셀만 그린다.
 - 모드별 탭 노출: `syncTabVisibility` 가 Compare/Commonality 탭을 해당 모드에서만 표시.
-  legacy(`source != "web_report"`) 세션은 web_report 전용 탭(Raw Data/CPK/Map)을 숨긴다.
+  legacy(`source != "web_report"`) 세션은 web_report 전용 데이터로만 채워지는 탭을 숨긴다 —
+  `WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis", "characteristic", "note"]`
+  ([tabs_topbar.js](../server/report/static/webreport/tabs_topbar.js)).
+
+## Characteristic 탭 (2026-08)
+
+상위 탭 1개(`data-tab="characteristic"`) 아래 **서브탭 6종**: Trim Analysis / Shmoo / BV /
+Analog Chart / TCB / DVO. **Trim Analysis 는 종전 최상위 탭이던 화면을 그대로 옮긴 것**이라
+렌더는 계속 [trim.js](../server/report/static/webreport/trim.js) 가 담당하고 컨테이너 id
+`#panel-trim-analysis` 도 그대로다 —
+[characteristic.js](../server/report/static/webreport/characteristic.js) 는 **서브탭 전환만**
+관리한다(`CHAR_SUB_RENDERERS`). 나머지 5개는 아직 화면이 없어 안내 문구만 보여준다.
+
+서브탭도 상위 탭과 **같은 lazy 규칙**이다 — 그 서브탭에 들어갈 때 처음 그린다
+(`charSubDirty` + `showCharSub`). 새 서브 화면을 붙일 때는 `CHAR_SUB_RENDERERS` 에
+렌더 함수 1개를 등록하는 것이 전부이고, 서버 계약(TAB_REGISTRY)은 건드리지 않는다.
 
 ## 불변 규칙
 - **Distribution 다운샘플 절대 금지** (프로젝트 CLAUDE.md §5 규칙 #5). 상세·통계는 전
@@ -1250,13 +1319,35 @@ Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — E
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형
   `line.shape:"hv"` 포함 금지 — x축 수평선은 UX 에 반함). 고유값이 적은 이산(code) 항목의
   성김은 동일값 구간을 세로 점으로 채우는 보간(`distPointsForDisplay` = `distFillVertical`
-  → `distDownsampleForDisplay` 순서)으로만 보정한다. 채움 간격(stepY)은 소스별 "단일 점
-  1개의 ECDF 증가량"(최소 양의 Δy, `distStepY`)을 시각 연속성 캡 `DIST.FILL_VISUAL_MAX_DY`
-  (0.3%)로 캡해 유도한다 — 표본이 작아 단일점 증가량이 0.3% 를 넘으면 단일점 riser 포함
-  모든 riser 를 0.3% 간격 세로 점으로 채워 썸네일 누적 0~100% 에 marker 빈 구간이 없게
-  한다(세로 방향 표시용 업샘플링, x값을 만들어내는 가로 보간은 금지). 조밀한 데이터
-  (stepY≤0.3%)는 캡이 no-op 라 기존과 픽셀 동일. 상세 CDF(`distRenderCdf`)는 원본 전
-  측정값을 값당 1점으로 그려 이미 세로 점기둥이 되므로 대상 외.
+  → `distDownsampleForDisplay` 순서)으로만 보정한다.
+- **채우는 점 개수 = 그 값의 실제 측정 개수** (2026-08-25). 채움 간격(stepY)은 서버가
+  응답에 함께 싣는 **소스별 표본 수 n** 으로 정한다 — `distStepY(ys, cap, n)` 이 `100/n`
+  을 돌려주고 성능 하한(`100/fillMax`, 기본 캡 1500 → 2250)으로만 클램프한다.
+  응답 필드는 `items[].sources[].n` 이며 [tabs/distribution.py](../web_report/tabs/distribution.py)
+  `build_distribution_compact` 와 [dist_pack.py](../web_report/dist_pack.py) `_ecdf_sources`
+  **두 경로가 같은 자리**에 낸다(정준 JSON 일치 계약 — `canon()` 이 sort_keys 를 쓰지 않아
+  삽입 순서가 곧 계약이다. `tests/test_dist_pack.py` 가 검사).
+  - 이 규칙 전까지는 최소 양의 Δy 를 `DIST.FILL_VISUAL_MAX_DY`(0.3%)로 캡했는데, 표본이
+    333 미만이면 **단일 관측 riser 까지 쪼개져** 실제보다 촘촘해졌다(n=100 이 400점).
+    최소 Δy 는 n 의 **상한 추정**일 뿐이라(모든 고유값이 2회 이상 중복이면 과대) 그 캡이
+    성김 보정으로 필요했던 것인데, n 이 오면 두 경우가 한 규칙으로 정리된다.
+    두 상수(`FILL_VISUAL_MAX_DY`/`FILL_STEP_Y`)는 **n 이 없는 옛 응답 폴백 전용**으로 남았다
+    (구버전 Honey 가 올린 dist blob·옛 캐시). perf_guard `R13-ecdf-fill-cap` 이 폴백 밖
+    사용을 차단한다.
+  - ⚠️ 채움 루프는 **누적 덧셈이 아니라 riser 균등 분할**이다 — `k = round(Δy/stepY)` 를
+    먼저 확정하고 `prevY + j*Δy/k` 로 배치한다. 서버가 y 를 `np.round(cum, 3)` 으로 내리기
+    때문에 stepY 가 굵어지면 누적 덧셈이 riser 끝과 미세하게 어긋나 없어야 할 점이 생긴다
+    (n=7 → stepY 14.285714… vs y[0] 14.286). 회귀 검사는
+    [tests/test_dist_fill_js.py](../tests/test_dist_fill_js.py).
+  - 캐시 세대는 `cache_policy.DIST_BATCH_SCHEMA_VERSION` 이다 — `dist_batch_key` 에만 넣고
+    `dist_key` 에는 **일부러 넣지 않았다**(그쪽은 Honey blob 시딩 자리라 무효화하면 콜드
+    dist 빌드가 되살아난다). 상세 [docs/12](12_web_report_cache.md).
+  - Excel 다운로드 포팅본(`client/excel_download/_charts.py` `_dist_step_y`/
+    `_dist_fill_vertical`)은 이 규칙의 사본이라 **같이 고친다**. sources 튜플의 표본 수는
+    **인덱스 7(ecdf_n)** 이다 — 인덱스 4 의 `n` 은 정규분포 곡선 전용(의도적 None)이라
+    자리를 나눴다.
+  세로 방향 표시용 업샘플링만 허용하고 x값을 만들어내는 가로 보간은 금지다. 상세 CDF
+  (`distRenderCdf`)는 원본 전 측정값을 값당 1점으로 그려 이미 세로 점기둥이므로 대상 외.
 - **tabs/ 통계·honeyform 변환 로직을 고칠 때 검증 기준은 "같은 세션 payload 의 정준 JSON
   완전 일치"** — 벡터화·리팩토링은 값을 바꾸지 않는다(정수 컬럼 int64 dtype 보존 포함).
 - Excel 내보내기는 vendored `exceljs.min.js` 를 브라우저에서 동적 로드해 생성(서버

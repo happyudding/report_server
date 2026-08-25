@@ -56,7 +56,9 @@ report_server/
 │   │   ├── report_extension.py  report_bp 정의 + DB init + web_report 저장 포트 주입
 │   │   ├── report_routes.py     라우트 집결자 — 구현은 security.py /
 │   │   │                        routes_session.py / routes_webreport.py / routes_misc.py
-│   │   ├── static/webreport/    세션 상세 JS 모듈 18개 (순서 로드, 전역 공유)
+│   │   ├── static/webreport/    JS 모듈 32개 — 세션 상세가 31개를 순서 로드(전역 공유),
+│   │   │                        old_client_notice.js 만 랜딩·검색결과 전용
+│   │   │                        (로드 순서 정본 = [docs/11](docs/11_web_report_tabs.md))
 │   │   ├── report_analysis_index.html  검색결과 페이지
 │   │   └── report_view.html     세션 상세 (마크업+CSS — JS 는 static/webreport/)
 │   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (외부 담당자·동결 — facade+_s3 전체, 진입점 계약 유지)
@@ -102,7 +104,8 @@ report_server/
 │   ├── client_identity.py      PC 계정/호스트 신고값
 │   └── config.py               SERVER_BASE_URL, CURRENT_VERSION
 ├── eval_analyzer/              독립 fail-item 평가 엔진 (자유 수정 — **이 repo 가 원본**, 외부 사본 동기화 없음)
-│                                서버 연결은 web_report/ai_comment.py + eval_export.py 2곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
+│                                서버 연결은 web_report/ai_comment.py + eval_export.py + eval_debug.py
+│                                3곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
 ├── d1/                         (외부 담당자·동결) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
 ├── d1_storage/                 (외부 담당자·동결) D1 로컬 검증 스토리지
 ├── tools/product_info_import/  기준정보 CSV(DRM) → product_info.db 오프라인 임포터
@@ -185,7 +188,7 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 **정본은 [server/database/core.py](server/database/core.py) 의 `SCHEMA`.** 전체 테이블·컬럼은
 [docs/03](docs/03_storage.md) 와 스냅샷 [DB/pe/report/report_README.md](DB/pe/report/report_README.md)
-참조. 테이블 25개 요지:
+참조. 테이블 27개 요지:
 
 - `report_session` — 세션 1건. `source`('xlsx_upload'|'web_report'), `mode`('Normal' 기본),
   `uploaded_by`·`client_host`(신원), `webreport_options` 컬럼 포함. `password`(4자리 PIN)는
@@ -341,13 +344,23 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      왜곡하고 사용자 경험에 반한다. 이산(code unit)값처럼 고유값이 적어 점이 성겨 보이는
      문제는, 동일값 구간(ECDF riser)을 y축 방향 세로 점기둥으로 채우는 보간
      (`distFillVertical`)으로만 해결하고 선으로 잇지 않는다. 보간은 표시용 다운샘플보다
-     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플). 채움 간격은
-     소스별 "단일 점 1개의 증가량"(최소 양의 Δy, `distStepY`)을 시각 연속성 캡
-     `FILL_VISUAL_MAX_DY`(0.3%)로 캡해 유도한다 — 표본이 작아 단일점 증가량이 0.3% 를
-     넘으면 단일점 riser 포함 모든 riser 를 0.3% 간격 세로 점으로 채워 썸네일 누적
-     0~100% 에 marker 빈 구간이 없게 한다(세로 방향 표시용 업샘플링 허용, x값을 만들어내는
-     가로 방향 보간은 계속 금지). 조밀한 데이터(stepY≤0.3%)는 캡이 no-op 라 기존과 동일.
+     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플).
+     - **채우는 점 개수는 그 값의 실제 측정 개수와 같아야 한다** (2026-08-25). 채움 간격은
+       서버가 응답에 함께 싣는 소스별 표본 수로 정한다 — `distStepY` 가 `100/n`
+       (성능 하한 `100/fillMax` 로만 클램프). n 은 `build_distribution_compact` 와
+       `dist_pack._ecdf_sources` **두 경로가 같은 자리**에 낸다(정준 JSON 일치 계약).
+       그래야 소량 데이터(n≤100)가 부풀지 않고 이산(code)값은 실제 중복 수만큼 채워진다.
+       ⚠️ **고정 상수로 간격에 상한을 걸지 말 것** — `FILL_VISUAL_MAX_DY`(0.3%)는 n 이 없는
+       옛 응답 폴백 전용이다. 폴백 밖에서 쓰면 표본<333 세션이 실제보다 촘촘해진다
+       (실제 회귀: n=100 이 400점). perf_guard `R13-ecdf-fill-cap` 이 차단한다.
+     - ⚠️ 채움 루프는 **누적 덧셈이 아니라 riser 균등 분할**이다(`k = round(Δy/stepY)`).
+       서버가 y 를 `round(cum, 3)` 으로 내리므로 stepY 가 굵어지면(=표본이 작으면) 누적
+       덧셈이 riser 끝과 어긋나 없어야 할 점이 생긴다(n=7 에서 실측).
+     - 세로 방향 표시용 업샘플링만 허용하고, **x값을 만들어내는 가로 방향 보간은 금지**다.
+       조밀한 데이터는 riser 가 관측 1개라 채움이 0 이다.
      상세 CDF(`distRenderCdf`)는 원본 전량 렌더 별도 경로로 채움·다운샘플 대상 외.
+     Excel 다운로드 포팅본(`client/excel_download/_charts.py` `_dist_step_y`/
+     `_dist_fill_vertical`)은 이 규칙의 사본이라 **같이 고친다**.
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
    편집으로 재저장하지 않는다. **예외는 둘뿐**이며 둘 다
    [rawedit.replace_sources](web_report/rawedit.py) 안에 있다:
@@ -471,10 +484,11 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
       둘 다 `_` 를 포함할 수 있어 `source_item` 분해도 못 한다 — 표시 문자열은 토큰에서
       만들고 **절대 되돌려 읽지 않는다**([web_report/gap_chart.py](web_report/gap_chart.py)).
       차트 주석 키는 `cdf:gap:<uuid>`(`note_subject`)로 갈라 동명 항목과 섞이지 않는다.
-    - 편집 `kind` 12종 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
+    - 편집 `kind` **16종** 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
       `trim_override`/`summary_engr`/`chart_note`/`compare_note`/`dist_composite`/`gap_chart`/
-      `note_sheet`/`issue_hidden`/`issue_status`
-      ([edits.py](web_report/edits.py) 규약). Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
+      `note_sheet`/`note_tag`/`issue_hidden`/`issue_status`/`issue_signature`/`preprocess`/
+      `yield_basis` (`KIND_*` 상수가 정본 — [edits.py](web_report/edits.py) 규약).
+      Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
       `cmp_etc_item` 은 Issue Table Compare 탭의 ETC 목록으로 `etc_item` 과 **분리**돼 있다 —
       한 세션에 두 표가 함께 있어 kind 를 공유하면 한쪽 추가가 다른 표에도 나타난다.
       legacy 세션(rev==0)의 manifest 폴백·자동 시드 경로도 함께 유지한다.
@@ -506,6 +520,58 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
       `cpk_rows` 재사용(`worst_cpk_by_subject`), Issue Table CPK 섹션도 같은 함수,
       Temperature 표/Map 은 `compute_temp_fail` 판정 1회분 공유.
 
+14. **스키마 버전은 "그 캐시 것만" 올린다 — 전역 bump 는 최후수단이다.**
+    [cache_policy.py](web_report/cache_policy.py) 에는 버전 상수가 **9개** 있고 각각 무효화
+    범위가 다르다. 응답 구조를 바꿨으면 **그 캐시의 상수만** 올린다. 전역
+    `REPORT_SCHEMA_VERSION` 을 올리면 **전 세션이 동시에 콜드 재빌드**돼 "어제부터 전체적으로
+    느림" 신고가 된다(2026-08-13 하루 3회 bump 로 실제 발생 — 조회 급락 1순위 용의자).
+    260824 커밋 8건이 Gap Chart·Distribution composite·Serial 순·Issue Table Compare 를
+    **전역 bump 없이** 넣은 것이 설계 의도다.
+
+    | 상수 | 무효화 범위 |
+    |------|-------------|
+    | `REPORT_SCHEMA_VERSION` | **전역 payload** — 전 세션 콜드 폭풍. `build_report_payload` 구조를 바꿀 때만 |
+    | `TEMPERATURE_SCHEMA_VERSION` | Temperature 세션 payload |
+    | `COMPARE_REPORT_SCHEMA_VERSION` | Compare 세션 payload **적재 방식** |
+    | `COMPARE_SCHEMA_VERSION` | compare **계산 결과**(`compare_key`) |
+    | `AI_COMMENT_SCHEMA_VERSION` | ai comment 반환 dict 구조 |
+    | `MAP_SCHEMA_VERSION` / `TEMP_MAP_SCHEMA_VERSION` | map rows 값 / temp_map 응답 구조 |
+    | `DIST_SEQ_SCHEMA_VERSION` | Serial 순 배치 응답 구조 |
+    | `GAP_SCHEMA_VERSION` | Gap Chart 응답 구조 (키·**ETag 양쪽**에 들어간다) |
+
+    ⚠️ `COMPARE_SCHEMA_VERSION`(계산) 과 `COMPARE_REPORT_SCHEMA_VERSION`(payload 적재)은
+    **다른 상수**다 — 헷갈려 반대쪽을 올리면 아무것도 안 갈리거나 필요 없는 재계산이 돈다.
+    현재 값·env·키 구성 표는 [docs/12](docs/12_web_report_cache.md) 가 정본.
+
+15. **서버와 JS 에 같은 상한값이 두 벌 있는 곳은 반드시 짝으로 고친다.**
+    입력 검증은 프런트(즉시 안내)와 서버(신뢰 경계) 양쪽에 있어야 해서 상수가 의도적으로
+    이중 정의돼 있다. 한쪽만 고치면 **에러가 아니라** "저장 버튼은 눌리는데 400" 또는
+    "서버는 받는데 화면이 막는다" 로 나타난다.
+
+    | 서버 | JS |
+    |------|-----|
+    | [gap_chart.py](web_report/gap_chart.py) `MAX_TOKENS`/`MAX_DEPTH`/`MAX_REFS` | `gap_chart.js` `GC_MAX_TOKENS`/`GC_MAX_DEPTH`/`GC_MAX_REFS` |
+    | [service.py](web_report/service.py) `_DC_MAX_PAIRS` / `_DC_PAIR_SEP`(U+001F) | `dist_composite.js` `DC_MAX_PAIRS` / `DC_SEP` |
+    | [routes_webreport.py](server/report/routes_webreport.py) `_DIST_SEQ_BATCH_MAX` | `distribution.js` `DIST.SEQ_SIZE` (서버 상한 이하) |
+
+    기계 검사는 [tests/test_dist_seq_js.py](tests/test_dist_seq_js.py) 의 배치 크기 하나뿐이다
+    — 나머지는 사람이 지켜야 한다. 상수를 새로 이중 정의하면 그 짝을 이 표에 추가할 것.
+    ([formula.py](web_report/formula.py) 는 `gap_chart.py` 파서의 확장 사본이며, 그쪽 드리프트는
+    `tests/test_formula_item.py` 의 동치 테스트가 막는다.)
+
+16. **편집 kind 의 두 제외 목록은 서로 다르다 — "동시 등재"가 아니라 각각 판단한다.**
+    - [edits.py](web_report/edits.py) `_STATE_EXCLUDED_KINDS`(**8종**) = 편집 **state dict**
+      에 싣지 않을 kind. 별도 라우트로 조회하는 것들.
+    - [database/webreport_edits.py](server/database/webreport_edits.py) `PAYLOAD_NEUTRAL_KINDS`
+      (**5종** = chart_note/note_sheet/note_tag/dist_composite/gap_chart) = 저장해도
+      `payload_rev` 를 올리지 **않을** kind. report payload 계산에 안 쓰이는 것들.
+
+    `preprocess`·`yield_basis`·`compare_note` 는 state 에서만 빠지고 payload_rev 는 올린다
+    (실제로 payload 를 바꾸므로 **올려야 맞다**). 새 kind 를 만들면 두 목록을 기계적으로
+    함께 채우지 말고 **"이 kind 가 report payload 숫자를 바꾸는가"** 로 판단할 것.
+    payload 중립인데 `PAYLOAD_NEUTRAL_KINDS` 에서 빠뜨리면 저장할 때마다 report 전체가
+    콜드 재빌드된다(규칙 14 와 같은 기전).
+
 ---
 
 ## 6. 코드 포인터
@@ -532,7 +598,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | **Compare 검출을 이슈 표로 (Issue Table Compare)** | 시트 [tabs/compare_issue.py](web_report/tabs/compare_issue.py)(Distribution·ETC) + 프런트 [compare_issue.js](server/report/static/webreport/compare_issue.js)(Bin Transition·Log 별도 표) · 패널 일반화는 [core.js](server/report/static/webreport/core.js) `ISSUE_PANEL_SEL` · 캐시 세대 `COMPARE_REPORT_SCHEMA_VERSION` · 검증 데이터 [tools/eval_testdata/make_compare_testdata.py](tools/eval_testdata/make_compare_testdata.py) → [docs/11](docs/11_web_report_tabs.md) |
 | Temperature(PMIC·SECURITY RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
-| 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |
+| 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (32모듈 — 로드 순서 정본은 [docs/11](docs/11_web_report_tabs.md)) |
 | 랜딩 UI (/pe) — 서버 첫 화면 | [server/landing/landing.html](server/landing/landing.html) + [landing/__init__.py](server/landing/__init__.py) · 데이터는 [routes_misc.py](server/report/routes_misc.py) `GET /api/landing` |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
@@ -545,7 +611,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | **콜드 빌드가 300초 걸렸다 — 어디서 멎었나** | 실행 중 체크포인트 [web_report/build_log.py](web_report/build_log.py) `stage/checkpoint/read_states` + 회수 [compute.py](web_report/compute.py) `_dead_worker_state` → 실패 레코드의 `last_stage`/`last_source` → [docs/20](docs/20_error_tracking.md) |
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
-| eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
+| eval_analyzer 연결 (AI Comment / 코멘트 export / 룰 트레이스) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) + [web_report/eval_debug.py](web_report/eval_debug.py) — eval_engine import **3곳** → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) (CLI) + [server/eval_panel/golden_io.py](server/eval_panel/golden_io.py) (패널 추가/실행) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
 | **LLM 배선 (붙이는 곳·나가는 곳)** | 정본 [docs/19](docs/19_llm_wiring.md) — 설정은 [server/env/server.env](server/env/server.env) `EVAL_LLM_*` 5줄, 확인은 `python tools/llm_check.py --ping`. 소비자 2개(AI Comment [점검제안] = [llm_client.complete](eval_analyzer/eval_engine/llm_client.py) / 챗봇 질문해석 = [planner._call_llm](server/chatbot/planner.py)), 둘 다 꺼져도 폴백 동작. **외부 담당자 전달용**은 [eval_analyzer/docs/LLM_WIRING_HANDOFF.md](eval_analyzer/docs/LLM_WIRING_HANDOFF.md) |

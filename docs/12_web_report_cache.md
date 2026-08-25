@@ -85,6 +85,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
 | _SCATTER_CACHE | (akey, chash[, prep], mode, subject) | raw_data 편집 / 전처리 / 세션 삭제 |
 | _GAP_CACHE | (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) | raw_data 편집 / 전처리 / **수식 수정(spec_digest)** / 세션 삭제 — **edits_rev·sid 무관**(남의 코멘트 저장으로 죽지 않게, ai_comment_key 와 같은 논리). 갤러리 카드와 Item_detail 이 이 한 엔트리를 공유한다 |
+| COMPARE_CACHE | (akey, chash[, prep], mode, opts, cmpver) | raw_data 편집 / 전처리 / 세션 삭제 — **sid·edits_rev 무관**(ai_comment_key 와 같은 논리: 코멘트 편집으로 재계산하지 않는다). 값에 common_map 이 있어 수 MB 라 개수(`WEB_REPORT_COMPARE_CACHE`)+바이트(`_MB`) **이중 상한** |
 
 공통 규약:
 - **모든 키의 첫 요소는 analysis_key** — `AKEY_CACHES` 무효화(`evict`/`invalidate`)의 전제.
@@ -100,8 +101,11 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   `service._payload_rev` → `get_webreport_edit_rev(payload=True)`). 같은 표의 rev 를
   그대로 쓰면 **Note 시트 한 글자·차트 주석 하나**를 고쳐도 report payload 가 통째로
   콜드가 됐다 — 그 편집들은 payload 계산에 안 들어가고 `/full` 조립에서만 붙는데도.
-  `payload_rev` 는 `webreport_edits.PAYLOAD_NEUTRAL_KINDS`(chart_note/note_sheet/
-  note_tag) **외의** kind 가 저장될 때만 오른다(모르는 kind 는 무효화하는 쪽으로 간주).
+  `payload_rev` 는 `webreport_edits.PAYLOAD_NEUTRAL_KINDS`(**5종** — chart_note/note_sheet/
+  note_tag/dist_composite/gap_chart) **외의** kind 가 저장될 때만 오른다(모르는 kind 는
+  무효화하는 쪽으로 간주). ⚠ 이 목록은 `edits._STATE_EXCLUDED_KINDS`(8종)와 **다르다** —
+  preprocess·yield_basis·compare_note 는 state 에서만 빠지고 payload_rev 는 올린다
+  (실제로 payload 를 바꾸므로 올려야 맞다). 판단 기준은 CLAUDE.md 규칙 16.
   `_FULL_CACHE`·`TRIM_CACHE` 는 종전대로 `rev` 를 쓴다 — /full 은 그 extras 를 담으므로
   빼면 Note 편집이 화면에 반영되지 않는다. 마이그레이션은 기존 행에 `payload_rev = rev`
   를 물려줘 배포 시 무효화도, 옛 캐시 부활도 없다(core.py 마이그레이션 주석).
@@ -121,6 +125,60 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   캐시·pack variant 가 배포 순간 통째로 무효화되지 않도록
   `tests/test_preprocess.py::test_legacy_spec_normal_form_is_frozen` 이 hex 를 박아 고정한다.
 - `selected_items` 는 analysis_key 산출에 포함되므로 어떤 키에도 따로 넣지 않는다.
+
+### 스키마 버전 상수 9개 — "그 캐시 것만" 올린다
+
+응답이나 계산 결과의 **구조**를 바꾸면 옛 캐시가 새 코드에 먹히지 않으므로 버전을 올려
+무효화한다. 상수마다 무효화 범위가 다르니 **바꾼 것에 해당하는 상수만** 올린다
+(판단 규칙은 [CLAUDE.md](../CLAUDE.md) §5 규칙 14).
+
+| 상수 | 현재 | 무효화 범위 | 언제 올리나 |
+|------|:----:|-------------|-------------|
+| `REPORT_SCHEMA_VERSION` | 41 | **전 세션 payload** — 콜드 폭풍 | `build_report_payload` 구조·탭 구성 변경 |
+| `TEMPERATURE_SCHEMA_VERSION` | 1 | Temperature 세션 payload | Temp 시트 구조 변경 |
+| `COMPARE_REPORT_SCHEMA_VERSION` | 1 | Compare 세션 payload **적재 방식** | payload 에 compare 결과를 싣는 방식 변경 |
+| `COMPARE_SCHEMA_VERSION` | 2 | compare **계산 결과**(`compare_key`) | dist_shift·equivalence 등 계산 변경 |
+| `AI_COMMENT_SCHEMA_VERSION` | 2 | ai comment 반환 dict | 반환 키 구조 변경 (룰 변경은 `.rules_rev` 몫) |
+| `MAP_SCHEMA_VERSION` | 2 | map rows 값 | die/bin 집계 결과 변경 |
+| `TEMP_MAP_SCHEMA_VERSION` | 1 | temp_map 응답 구조 | fail die 인덱스 응답 변경 |
+| `DIST_SEQ_SCHEMA_VERSION` | 1 | Serial 순 배치 응답 | `seq-columnar-v1` 페이로드 변경 |
+| `DIST_BATCH_SCHEMA_VERSION` | 1 | ECDF **배치** 응답(`dist_batch_key`) | `ecdf-columnar-v1` 응답 구조 변경 (`x`/`y`/`n`) |
+| `GAP_SCHEMA_VERSION` | 2 | Gap Chart 응답 | 응답 키 변경 — **캐시 키와 ETag 양쪽**에 들어간다 |
+
+⚠️ **`COMPARE_SCHEMA_VERSION`(계산) 과 `COMPARE_REPORT_SCHEMA_VERSION`(payload 적재)은 다른
+상수다.** 반대쪽을 올리면 아무것도 안 갈리거나 필요 없는 재계산이 돈다.
+
+⚠️ **`DIST_BATCH_SCHEMA_VERSION` 은 `dist_batch_key` 에만 있고 짝인 `dist_key`(전체 dist)에는
+일부러 없다** (2026-08-25). 같은 `ecdf-columnar-v1` 응답을 담는 두 캐시인데도 갈라 둔 이유는
+`dist_key` 가 **Honey 가 업로드 때 시딩한 dist blob 이 얹히는 자리**이기 때문이다
+([ingest.py](../web_report/ingest.py) `seed_client_dist_blobs`) — 무효화하면 그 시딩이 막아
+주던 수십 초 콜드 dist 빌드 + RAM 스파이크가 운영 세션마다 되살아난다. 웹 화면(갤러리
+카드·미니셀·composite·Gap)은 전부 배치 경로만 쓰고, 배치 재계산은 pack 이 있으면 덧셈뿐이라
+싸다. 전체 dist 캐시는 자연히 miss 될 때 pack 으로 재조립되며 그때 새 필드가 실린다.
+
+### 키 빌더의 설계 장치 3개 (되돌리지 말 것)
+
+- **`gap_key(..., spec_digest)` 의 `spec_digest` 는 기본값이 없는 필수 인자다.** 수식을
+  고쳤는데 옛 숫자가 나오는 것은 조용히 틀리는 종류라, 호출부가 빠뜨리면 **TypeError 로
+  즉시 터지게** 만들어 뒀다. 기본값을 주면 그 안전장치가 사라진다.
+- **`dist_chunk_key` 만 `validate_mode` 가 아니라 `str(mode or "Normal")` 로 정규화한다.**
+  이 키는 session dict 가 아니라 원시 인자를 받고, `dist_pack_store._gen_name` 의 세대
+  이름과 **문자 그대로 같아야** 하기 때문이다. 어긋나면 다른 세대의 pack 을 돌려준다.
+- **`report_pending_key` 는 ai 단독일 때 `("aipending",)` 꼬리를 유지한다.** 종전 형식과
+  같은 키라 이미 디스크에 있는 대기본이 계속 유효하다(롤백 안전). kinds 가 여럿이면
+  `("pending",) + sorted(kinds)` 로 간다.
+
+### 직렬화 포맷 문자열 4종
+
+payload 안에 `format` 필드로 실려 나가는 이름이다. **바꾸면 옛 캐시·pack 을 새 코드가
+거부**하므로, 구조를 바꿀 땐 이름에 `-v2` 를 붙이고 위 버전 상수도 함께 올린다.
+
+| 상수 | 값 | 정의 |
+|------|-----|------|
+| `dist_blob.DIST_BLOB_FORMAT` | `ecdf-columnar-v1` | Distribution ECDF compact |
+| `dist_pack.DIST_PACK_FORMAT` | `dist-pack-v1` | 클라 정렬 pack 본문 |
+| `dist_pack.DIST_PACK_INDEX_FORMAT` | `dist-pack-index-v1` | pack 청크 인덱스 |
+| `dist_seq.SEQ_FORMAT` | `seq-columnar-v1` | Serial 순 값 배열 |
 
 **무효화 두 종류**: `evict_akey_caches`(raw_data 편집 — content_hash 만 바뀌어 구 키가 안
 쓰이므로 메모리 회수용, manifest 캐시 유지) / `invalidate_caches`(세션 삭제 — manifest
@@ -358,6 +416,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | `WEB_REPORT_DIST_CHUNK_CACHE_MB` | `512` | 〃 비압축 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `8`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수. `_COMPUTE_WORKERS` 와 같은 값으로 유지 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
+| `WEB_REPORT_COMPARE_CACHE` | `4` | Compare 계산 결과 캐시 개수 (콜드 빌드의 34%를 차지하던 계산) |
+| `WEB_REPORT_COMPARE_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 값에 common_map 이 있어 세션당 수 MB |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE` | `64` | Trim 그룹 차트 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE_MB` | `256` | Trim 그룹 차트 gzip 바이트 상한 (개수와 이중 적용, 0=비활성). 차트 1건이 전 die 전 포인트라 개수 상한만으론 RAM 이 예측 불가 |

@@ -35,7 +35,12 @@
 ## 불변 규칙 (반드시 준수)
 1. **report_server 코드를 import 하지 않는다.** 필요한 계산은 직접 구현하거나 함수만 복사(vendor).
    알고리즘은 docs/CODE_TO_PORT.md 에 공식으로 있음. 의존 방향은 report_server → eval_analyzer 한 방향만.
-2. **자체 DB(eval.db, SQLite)를 직접 관리.** report.db 는 무시(전면 개편 예정).
+2. **자체 DB(eval.db, SQLite)를 직접 관리.** report.db 는 import 하지 않는다.
+   (옛 문서의 "report.db 전면 개편 예정" 전제는 **실현되지 않았다** — report.db 는 증분
+   확장됐고 지금도 report_server 소유다. 그 전제를 깐 `docs/REPORT_SERVER_CONTEXT.md` ·
+   `docs/HANDOFF_TO_REPORT_SERVER.md` 는 역사 문서로 읽을 것.)
+   - 서버는 `evaluate(..., persist=False)` 로 부르므로 **운영 eval.db 에 기록하지 않는다**.
+     서버가 쓰는 것은 별도 파일 `REPORT_EVAL_DB_PATH`(같은 스키마) 뿐이다 → ../docs/13.
    - ⚠ **eval.db 스키마 변경은 사용자 사전 승인 대상이다.** `store.py` 의 DDL·컬럼을
      추가/삭제/변경해야 하는 상황이면 바로 고치지 말고, **어떤 테이블·컬럼을 어떻게 바꾸고
      기존 데이터에 어떤 영향이 있는지 설명한 뒤 승인을 받고** 진행한다(운영 eval.db 에

@@ -239,6 +239,22 @@ ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하
   재판정으로 fail 을 다시 정하는데 엔진 평가는 저장된 FAILTNO 기준이라 두 판정이 어긋난다.
 - 캐시: `REPORT_SCHEMA_VERSION` 34 (UNKNOWN 명시 발화로 35 — §15).
 
+### 6-4. Signature 판정 근거 팝업 (`?` 버튼)
+
+Signature 값만 보여주면 사용자는 "왜 이게 나왔나" 를 알 수 없어 룰을 신뢰하지 못한다.
+Issue Table 의 Signature 셀 옆 `?` 를 누르면 **그 판정에 쓰인 지표·임계값·발화 규칙**을
+팝업으로 보여준다.
+
+- 조립: [server/eval_panel/signature_reason.py](../server/eval_panel/signature_reason.py)
+  — 라우트 `GET .../web_report/issue_table/signature_reason`, 화면
+  [sig_reason.js](../server/report/static/webreport/sig_reason.js)(로드 순서 8번).
+- **`ingested_by='eval-snapshot'` run 만 본다.** 같은 item 에 사람이 확정한
+  `web-signature` run 이 함께 있어도 그건 사람 라벨이지 룰 판정이 아니므로 근거가 될 수
+  없다 — 섞으면 "룰이 이렇게 판정했다" 는 설명이 거짓이 된다.
+- 룰 패널(`/pe/eval`)의 L0~L6 트레이스와 **같은 사실을 다른 독자에게** 보여주는 화면이다:
+  트레이스는 룰 담당자용 전체 경로, 이 팝업은 리포트를 읽는 엔지니어용 요약.
+- 스냅샷이 없는 세션(평가 전·ai_comment 옵션 꺼짐)은 근거가 없으므로 팝업이 안내만 띄운다.
+
 ## 7. 클라이언트 옵션 (Honey)
 
 - Web Report 그룹박스의 **"AI Comment" 체크박스** (honey_main.py). 현재

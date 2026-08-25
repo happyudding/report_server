@@ -311,11 +311,13 @@ def _ecdf_sources(sources: dict, *, bin1: bool, bin1_sources=None) -> dict:
         counts = np.asarray(raw, dtype=np.int64)
         n = int(counts.sum())
         if n <= 0 or not x:
-            out[source] = {"x": [], "y": []}
+            out[source] = {"x": [], "y": [], "n": 0}
             continue
         # 오늘 서버와 같은 연산 순서 — cumsum → n 으로 나눔 → *100 → round3.
+        # n 은 폴백 계산(build_distribution_compact)과 **같은 자리·같은 이름**으로 낸다 —
+        # 정준 JSON 비교가 sort_keys 없이 삽입 순서를 그대로 보므로 순서가 곧 계약이다.
         cum = np.cumsum(counts) / n * 100.0
-        out[source] = {"x": x, "y": np.round(cum, 3).tolist()}
+        out[source] = {"x": x, "y": np.round(cum, 3).tolist(), "n": n}
     return out
 
 

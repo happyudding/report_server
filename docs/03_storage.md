@@ -11,7 +11,7 @@
 - [server/config.py](../server/config.py) — DB 경로·S3 자격증명·키 prefix
 
 ## SQLite 테이블 (정본 [core.py `SCHEMA`](../server/database/core.py), 스냅샷 [report_README.md](../DB/pe/report/report_README.md))
-테이블 25개. 요지 (전체 컬럼은 스냅샷 참조):
+테이블 27개. 요지 (전체 컬럼은 스냅샷 참조):
 
 | 테이블 | 역할 | 핵심 컬럼 / UNIQUE |
 |--------|------|--------------------|
@@ -32,6 +32,9 @@
 | `report_usage_peak_daily` | 일별 Peak 동시 접속자(사람) 수 | `day`(PK), `peak_users`는 SQL `MAX` 라 **낮아지지 않음**(재시작 대비), `window_sec`=그때의 '동시' 판정 창. 적재는 [admin_panel/metrics.py](../server/admin_panel/metrics.py) `_record_user_peak` |
 | `report_user_important` / `report_user_favorite` | 개인 중요표시/즐겨찾기 | `PK(user_id,session_id)` |
 | `report_chatbot_log` | 웹 챗봇 질문/답변 + 부하 계측 (관리자 Chatbot 탭) | `created_at DESC` 인덱스, `total_ms`=`wait_ms`(동시실행 대기)+`llm_ms`+조회, `result`=`ok/busy/error:*` ([database/chatbot_log.py](../server/database/chatbot_log.py)) |
+| `report_user_profile` | 사용자 **실명**(표시용) | `user_id`(PK), `display_name`(한글 2~10자). `report_user` 와 별개 — 로그인 계정 없는 Honey 전용 사용자도 이름을 가져야 하기 때문 |
+| `report_client_version` | Honey 클라 **버전 대장**(사람 1명 = 1행) | `user_id`(PK), `version`/`prev_version`/`runs`. 입력은 `GET /honey/version` 의 UA `HoneyVer/<버전>` 하나뿐 — **행이 없는 사람 = 토큰을 안 보내는 구버전** ([database/client_versions.py](../server/database/client_versions.py)) |
+| `report_eval_daily` | eval 룰 엔진 **일별 지표**(정확도·커버리지 추이) | `PK(day,…,engine_version)`. ⚠ **재계산 UPSERT(덮어쓰기)** — `report_chatbot_daily` 의 누적 더하기와 규약이 반대다 ([database/eval_stats.py](../server/database/eval_stats.py)) |
 | `report_annotation` | 세션 주석 | `session_id` 인덱스 |
 | `report_analysis_lock` | analysis_key 동시성 락 | `analysis_key`(PK), `expires_at`(TTL 300s) |
 | `report_csv_files` / `report_dashboard_comment` / `report_user` | legacy 보존 | (미사용) |

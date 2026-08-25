@@ -1,11 +1,14 @@
 # report_server 컨텍스트 (eval_analyzer 개발자용)
 
+> ⚠️ **역사 문서 (2026-07 작성).** 전제였던 **"report.db 전면 개편"은 일어나지 않았다** —
+> report.db 는 증분 확장돼 지금 테이블 27개다. 스키마 현행 사실은
+> [../../CLAUDE.md §2](../../CLAUDE.md) 와 [../../docs/03](../../docs/03_storage.md) 가 정본이고,
+> 통합 규약은 [../../docs/13](../../docs/13_eval_analyzer_integration.md) 이 정본이다.
+> 아래 스키마 서술은 작성 시점 스냅샷으로 읽을 것.
+
 > eval_analyzer 를 바이브코딩할 때 "데이터가 어디서 어떻게 오는지" 충분히 알기 위한 문서.
 > **eval_analyzer 는 report_server 코드를 import 하지 않는다([CODE_TO_PORT.md](CODE_TO_PORT.md)).**
->
-> ★★ **중요**: report_server 의 DB(`report.db`)는 **전면 개편 예정**이다. 아래 현재 스키마는
-> "지금은 데이터가 이렇게 쌓인다"는 *이해용 참고*일 뿐, eval_analyzer 는 **report.db 구조에
-> 의존하지 말 것**. eval_analyzer 의 DB 적재는 자체 eval.db 로 **새로 시작**(greenfield)한다.
+> eval_analyzer 는 report.db 구조에 의존하지 않고 자체 eval.db 를 쓴다 — 그 원칙은 유효하다.
 
 ---
 

@@ -243,6 +243,32 @@ def drop_report(upload_root: Path, cache_key: tuple) -> None:
         pass
 
 
+def drop_analysis(upload_root: Path, analysis_key) -> int:
+    """akey 의 계산 캐시 파일을 전부 삭제 — **키가 그대로인데 산출물이 달라지는** 경우 전용.
+
+    파일명(`<kind>-<chash12>-<digest>`)은 analysis_key·content_hash 에서 나오는데, 그 둘의
+    산출식에는 **source 이름이 없다**(ingest 규칙 #3). 그래서 같은 parquet 을 이름만 바꿔
+    재업로드하면 파일명이 한 글자도 안 바뀌어 `_cleanup_stale_generations`(다른 chash 세대만
+    회수)로는 옛 이름이 박힌 산출물이 회수되지 않는다. report 뿐 아니라 dist/map/aicmt 등도
+    source 이름을 담으므로 kind 를 가리지 않고 통째로 지운다(캐시는 재계산 가능한 파생물).
+    """
+    if not _enabled():
+        return 0
+    removed = 0
+    try:
+        for p in _cache_dir(upload_root, analysis_key).iterdir():
+            if not p.is_file():
+                continue
+            try:
+                p.unlink()
+                removed += 1
+            except OSError:
+                continue
+    except OSError:      # 디렉토리 없음 포함 — 지울 게 없다
+        pass
+    return removed
+
+
 def load_dist(upload_root: Path, cache_key: tuple) -> bytes | None:
     """distribution gzip bytes 디스크 캐시 조회. cache_key 는
     service.get_distribution_gzip 의 DIST_CACHE 키 (analysis_key, content_hash, mode)."""

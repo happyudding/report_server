@@ -1,10 +1,14 @@
 # report_server 담당자 전달 — eval_analyzer 연동에 필요한 것
 
+> ⚠️ **역사 문서 — 연동은 이미 완료됐다.** 이 문서는 "아직 붙기 전" 관점에서 쓴 요청서이고,
+> 전제였던 **report.db 전면 개편은 일어나지 않았다**. 현행 연동 규약(import 3곳,
+> `persist=False`, 코멘트 export, 룰 패널)은
+> [../../docs/13](../../docs/13_eval_analyzer_integration.md) 이 정본이다.
+> 두 저장소가 하나로 합쳐진 지금은 "전달"이라는 전제 자체가 없다(2026-08-03 원본 승격).
+
 > 그대로 담당자/담당 AI 에게 전달 가능. report_server 의 DB·파이프라인을 **개편(rebuild)** 하는
 > 관점에서, 별도 개발 중인 **eval_analyzer**(fail-item 평가 엔진)가 동작하려면 무엇이 필요한지 정리.
->
-> 전제: report.db 는 전면 개편 예정. eval_analyzer 는 **자체 DB(eval.db)를 따로 소유**하므로
-> report_server 가 평가결과를 저장할 의무는 없다. 핵심은 **"raw 입력을 eval_analyzer 로 흘려주는 것"**.
+> 핵심 요청은 **"raw 입력을 eval_analyzer 로 흘려주는 것"** 이었고, 그것은 현재 충족돼 있다.
 
 ---
 

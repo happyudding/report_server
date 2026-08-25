@@ -145,6 +145,35 @@ def save_client_dist_pack(dist_pack: dict | None, analysis_key, content_hash, mo
     return True
 
 
+def _source_names_changed(analysis_key, new_names, *, report_db, upload_root: Path) -> bool:
+    """이 akey 에 이미 저장된 manifest 의 source 이름이 이번 업로드와 다른가.
+
+    `analysis_key`/`content_hash` 산출식에는 source 이름이 없다(규칙 #3 — files 해시 +
+    meta + selected_items). 그래서 **같은 parquet 을 이름만 바꿔 재업로드**하면 두 키가
+    그대로여서 dedup 으로 묶이고, manifest 는 새 이름으로 덮어써지는데 먼저 만들어진
+    형제 세션의 payload 캐시는 키가 하나도 안 바뀌어 **옛 이름을 계속 서빙**한다.
+    그러면 갤러리(payload)와 Item Detail(`/scatter`, manifest 실시간)의 source 이름이
+    갈려 legend 색이 죽고(distColorMap 미스), 이름으로 매칭하는 Temperature 그룹 필터·
+    Bin1(RT만)·CT/HT 의 RT limit 참조가 **에러 없이** 어긋난다.
+
+    신규 akey(=이 akey 로 저장된 산출물이 아직 없음)면 storage 를 건드리지 않고 False —
+    대부분의 업로드는 여기서 끝나 manifest GET 비용이 없다. 판단이 불가능한 예외는
+    전부 False(기존 동작 유지) — 이 함수는 캐시 회수용 best-effort 다.
+    """
+    want = [str(n) for n in (new_names or [])]
+    try:
+        if not report_db.get_all_object_infos(analysis_key):
+            return False
+        old = runtime.storage().load_webreport_manifest(analysis_key, upload_root=upload_root)
+        old_names = [str((s or {}).get("name") or "")
+                     for s in ((old or {}).get("sources") or [])]
+    except Exception:
+        _log.debug("webreport ingest: previous manifest unreadable: %s",
+                   str(analysis_key), exc_info=True)
+        return False
+    return bool(old_names) and old_names != want
+
+
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "",
                      dist_blobs: dict | None = None,
@@ -210,6 +239,11 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     content_hash = hashlib.sha256(_canon({"files": file_hashes})).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
 
+    # 저장(=manifest 덮어쓰기) **전에** 판정해야 옛 이름을 볼 수 있다.
+    renamed = _source_names_changed(
+        analysis_key, [item["source"] for item in decoded],
+        report_db=report_db, upload_root=upload_root)
+
     # S3 는 connect 5s / read 8s / retry 3 이고 실패하면 로컬 폴백으로 **전량 재저장**
     # 하므로, 저장소가 응답하지 않으면 여기 혼자서 수 분을 먹을 수 있다. storage_gateway
     # 는 동결 영역이라 내부를 쪼갤 수 없어 이 호출 전체를 한 단계로 잰다.
@@ -218,6 +252,14 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
             analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
             upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
+    # source 이름만 바뀐 재업로드 — 키가 안 갈리므로 형제 세션의 캐시를 명시적으로 회수한다
+    # (_source_names_changed 참조). 이름이 그대로면 아무 일도 하지 않아 기존 업로드 경로는
+    # 종전과 완전히 동일하다. 회수 범위는 이 akey 뿐이라 전 세션 콜드 폭풍이 아니다.
+    if renamed:
+        cache.evict_akey_caches(analysis_key)
+        dropped_cache = disk_cache.drop_analysis(upload_root, analysis_key)
+        _log.info("webreport ingest: source names changed for akey %s — "
+                  "invalidated caches (disk files=%d)", str(analysis_key), dropped_cache)
     # ingest 가 이미 디코드한 tables 를 loader 와 같은 키로 시딩 — prewarm/첫 조회의
     # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
     # 키는 cache_policy 빌더로 만든다(즉석 조립 금지) — loader 도 tables_key 로 조회하므로

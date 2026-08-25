@@ -105,9 +105,16 @@ def build_distribution_compact(tables, all_items, *, bin1_only=False,
             # 수백만 포인트를 파이썬 round_num 루프로 돌리면 요청당 수 초가 걸려 numpy 로
             # 벡터화한다 — to_numeric_clean 이 유한 float64 만 반환하므로(NaN/inf 없음)
             # np.round(half-even)는 round_num 의 round()와 동일한 값을 낸다.
+            # n(소스별 표본 수)은 프런트 미니셀의 세로 채움 간격 정본이다 — cum 의 분모와
+            # 같은 값이라 "점 1개 = 100/n %" 가 정확히 나온다. 이게 없으면 프런트가 최소
+            # Δy 로 추정할 수밖에 없어, 표본이 작아도 이산값처럼 부풀려 채운다(규칙 #5).
             sources[table.source] = {
                 "x": np.round(unique_vals, 6).tolist(),
                 "y": np.round(cum, 3).tolist(),
+                # perf-guard: allow S01-report-schema (report payload 가 아니라
+                # distribution_batch 응답 구조다 — 세대는 DIST_BATCH_SCHEMA_VERSION 으로
+                # 올렸다. 전역 bump 는 무관한 세션까지 콜드 재빌드시킨다)
+                "n": int(values.size),
             }
         if sources:
             items[item] = {"units": units, "lo": lo, "hi": hi, "sources": sources}

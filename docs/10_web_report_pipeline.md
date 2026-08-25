@@ -52,6 +52,24 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
   넘어가는 순간의 honeyform** 이 검증 대상이다. 실패하면 `[파일명]` 이 앞에 붙어 표시된다.
 - ⚠️ `client/honey_parse/` 더미 폴백은 아직 구형 5-meta 를 반환하므로 **개발 PC 에서는 이
   단계가 실패하는 것이 정상**이다(실제 honey_parse 가 붙은 운영은 정상).
+- **honeyform 에는 source 이름 컬럼이 없다.** 이름·순서·그룹(Compare 의 Before/After,
+  Temperature 의 RT/CT/HT)은 전부 **manifest 의 `sources[]` 에만** 있다. 그래서 배치창에서
+  이름을 바꾸거나 순서를 옮겨도 **parquet 을 다시 인코딩할 필요가 없다** — 이미 만들어 둔
+  것을 그대로 올리고 manifest 만 바꾼다(`_encode_sources_worker` 가 배치창보다 먼저 돌 수
+  있는 근거). 반대로 말하면 **parquet 만 보고는 어느 source 인지 알 수 없다** — idx 순서가
+  유일한 대응이므로 source 를 지우는 편집은 `sources` 목록도 함께 줄여야 한다
+  (CLAUDE.md §5 규칙 6).
+
+### Distribution pack 청킹 계약 (클라 ↔ 서버 공유)
+[dist_pack.py](../web_report/dist_pack.py) 는 **순수 모듈이고 클라가 import 한다** — 정렬을
+Honey 에 전가하고 서버는 cumsum 만 하기 위해서다(→ [12](12_web_report_cache.md)). 따라서
+청킹 상수는 양쪽이 같은 코드를 돌려야 의미가 있다:
+`CHUNK_ITEMS=30`(기본 항목 수) · `_CHUNK_TARGET_CELLS=240`(source 가 많을수록 청크를
+잘게 — 목표 셀 수) · `_CHUNK_ITEMS_MIN=5`(하한) · `adaptive_chunk_items(n_sources)`.
+클라에서 pack 을 만드는 곳은 **3곳이고 전부 같은 빌더 `build_pack_from_parquet` 를 쓴다**:
+[honey_main.py](../client/honey_main.py) `_build_webreport_dist_pack`(업로드) ·
+`excel_edit/excel_session.py`(Excel 왕복 후 재생성) · `excel_edit/item_add.py`(신규 Item 추가
+후 재생성). 빌더를 우회해 직접 조립하면 서버가 그 pack 을 못 읽는다.
 
 ## 업로드 흐름 (`ingest_webreport()`)
 1. **정규화** — `validate_meta`(product_type/product/lot_id/revision/process/edm_link/password/
@@ -67,6 +85,18 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
    - `content_hash = sha256(canon({files: […]}))`
    - `session_id = "<epoch>_<hex6>"`
    - **password·mode·신원은 analysis_key 에 불포함** (규칙 유지 — 같은 데이터면 같은 key).
+   - ⚠️ **source 이름도 두 키 어디에도 없다.** 그래서 같은 parquet 을 **이름만 바꿔**
+     재업로드하면 akey·chash 가 그대로라 dedup 으로 묶이는데, manifest 는 새 이름으로
+     덮어써지는 반면 먼저 만들어진 형제 세션의 payload 캐시는 키가 하나도 안 바뀌어
+     **옛 이름을 계속 서빙**한다. 그러면 갤러리(payload)와 Item Detail(`/scatter`,
+     manifest 실시간)의 source 이름이 갈려 legend 색이 죽고(`distColorMap` 미스 → 회색),
+     이름으로 매칭하는 Temperature 그룹 필터·`Bin1(RT만)`·CT/HT 의 RT limit 참조가
+     **에러 없이** 어긋난다. → ingest 가 저장 **직전에** 옛 manifest 의 이름과 비교해
+     달라졌으면 그 akey 의 캐시를 회수한다([ingest.py](../web_report/ingest.py)
+     `_source_names_changed` + [disk_cache.py](../web_report/disk_cache.py)
+     `drop_analysis`). **캐시 키에 이름을 넣어 해결하지 말 것** — `_base` 를 바꾸면 전
+     세션 키가 갈려 콜드 폭풍이 된다. 회귀 테스트
+     [tests/test_webreport_rename_reupload.py](../tests/test_webreport_rename_reupload.py).
 5. **저장** — `storage.save_webreport_sources(akey, chash, [bytes…], manifest)` (S3 우선,
    실패 시 로컬 폴백, 저장 위치를 object_info 에 기록 → [03](03_storage.md)). 이어서
    manifest·tables 를 인메모리 캐시에 시딩(첫 조회 재디코드 제거).

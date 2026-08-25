@@ -647,6 +647,9 @@ class SourceNameDialog(QDialog):
         if self._is_temp:
             self._renumber_groups()
         self._rendering = True
+        # Group 칸 편집기(QLineEdit) 래퍼 보관소 — 아래 _group_edit 주석 참조.
+        # 표를 다시 그릴 때마다 옛 위젯은 파괴되므로 여기서 비운다.
+        self._group_edits = []
         try:
             self.table.setRowCount(0)
             self.table.setRowCount(len(self._rows))
@@ -700,6 +703,14 @@ class SourceNameDialog(QDialog):
         타이핑은 종전과 같다: 이름을 적으면 같은 그룹 전원 일괄 개명, 다른 그룹의
         이름을 적으면 그 그룹으로 이동, 미지정 행의 새 이름은 새 그룹 생성.
         기본 표시는 빈 칸 + placeholder(회색 "그룹 N") — 이름 없는 그룹임을 보여준다.
+
+        ⚠️ **``self._group_edits.append(edit)`` 를 지우지 말 것** (2026-08-25 회귀 수정).
+        ``combo.lineEdit()`` 은 **C++ 이 소유한 객체의 임시 파이썬 래퍼**라, 거기 건
+        ``editingFinished`` 연결(람다)은 그 래퍼가 GC 되는 순간 함께 사라진다 —
+        ``receivers()`` 는 그대로 2 라서 **에러 없이 조용히 죽고**, 사용자에게는 "이름을
+        적어도 아무 일이 안 일어난다" 로만 보인다(드롭다운·Role 콤보는 sender 가 파이썬이
+        만든 위젯이라 멀쩡해서 더 헷갈린다). 창이 래퍼를 붙들어야 연결이 산다.
+        회귀 고정: ``tests/test_source_group_rename.py``.
         """
         combo = QComboBox()
         combo.setEditable(True)
@@ -719,6 +730,7 @@ class SourceNameDialog(QDialog):
         combo.activated.connect(lambda idx, i=r, c=combo: self._on_group_pick(i, idx, c))
         # 엔터·포커스 아웃 모두 editingFinished 하나로 받는다 (엔터는 둘 다 발화).
         edit.editingFinished.connect(lambda i=r, e=edit: self._on_group_text(i, e))
+        self._group_edits.append(edit)     # 래퍼 GC = 연결 소멸 (위 docstring ⚠️)
         return combo
 
     def _role_combo(self, r, row):

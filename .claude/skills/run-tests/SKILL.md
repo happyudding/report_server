@@ -30,6 +30,7 @@ server\.venv\Scripts\python.exe tests\test_xxx.py
 | `tests/test_eval_panel_js.py` | **`server/eval_panel/eval_panel.html` 을 고쳤으면 필수.** headless Edge 로 패널 JS 를 실제 서버 페이로드에 대고 돌린다(node 가 없어 Edge 가 유일한 JS 실행 수단). Edge 가 없으면 정적 id 검사만 하고 SKIP. 파이썬 테스트로는 안 잡히는 부류 — 렌더 예외·**로더 실패 시 빈 화면**을 잡는다 |
 | `tests/test_issue_signature.py` | Issue Table Signature 컬럼 + ENGR 정답 라벨(eval DB) 을 고쳤으면 필수. `REPORT_EVAL_DB_PATH` 를 임시 경로로 잡으므로 **단독 실행**(다른 test 와 pytest 로 묶으면 격리가 import 순서에 좌우된다) |
 | `tests/test_source_group_dropdown.py` | Temperature 그룹 드롭다운·Role 짝 검증 (client `SourceNameDialog`). **PyQt6 필요 — 전역 python 으로 단독 실행**(`python tests/test_source_group_dropdown.py`, offscreen). pytest 로 묶지 말 것 |
+| `tests/test_source_group_rename.py` | 위와 **같은 창의 신호 경로** — Group 칸에 이름을 타이핑(QTest 키 입력)했을 때 같은 그룹 전원이 개명되는지. 핸들러 직접 호출로는 못 잡는 회귀(위젯 연결이 GC 로 끊김)를 **gc.collect() 후** 확인한다. PyQt6 필요 — `python tests/test_source_group_rename.py` 단독 실행 |
 | `eval_analyzer/tests/` | **여기만 conftest.py 가 있다** — autouse fixture `all_signatures_enabled` 가 배포용 `enabled:false` 를 무시한다. pytest 로 실행하며, 배포 상태 그대로 보려면 `rules_as_deployed` 마커 |
 
 ## 3. 주의

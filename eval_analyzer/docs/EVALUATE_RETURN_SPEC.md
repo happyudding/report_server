@@ -1,8 +1,15 @@
-# evaluate() 반환 형식 — report_generator 연동 스펙
+# evaluate() 반환 형식 — 연동 스펙
 
-> eval_analyzer 는 **in-process 라이브러리**. report_generator 가 파일 1회 run 마다 `evaluate()` 호출.
-> **결과 저장은 eval_analyzer 가 자체 eval.db 에 이미 수행** — 반환값은 UI/Issue Table 표시용이며,
-> 쓰지 않으면 버려도 데이터는 남는다. 아래는 **실제 출력 기준** 필드 명세.
+> ⚠️ **호출자·저장 주체 정정 (2026-08 현행)**
+> - 호출자는 `report_generator` 가 **아니라** 웹 리포트의 콜드 빌드
+>   [web_report/ai_comment.py](../../web_report/ai_comment.py) 다.
+> - **`persist=False` 로 부르므로 결과가 eval.db 에 저장되지 않는다** — 반환값을 안 쓰면
+>   데이터도 남지 않는다. 서버가 기록하는 것은 코멘트 export 경로에서 쓰는 별도 파일
+>   `REPORT_EVAL_DB_PATH` 뿐이다(→ [../../docs/13](../../docs/13_eval_analyzer_integration.md)).
+> - 아래 **필드 명세 자체는 유효하다**(반환 형식은 그대로다).
+
+> eval_analyzer 는 **in-process 라이브러리**이며, 반환값은 UI/Issue Table 표시용이다.
+> 아래는 **실제 출력 기준** 필드 명세.
 > 정본 계약: [INTEGRATION_CONTRACT.md §4](INTEGRATION_CONTRACT.md) · 소스: `pipeline/present.py:to_result`.
 
 ```python

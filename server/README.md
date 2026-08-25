@@ -121,6 +121,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_USAGE_DAILY_RETENTION_DAYS` | `730` | 일별 사용량·Peak 롤오프(장기 추이라 2년). **eval 지표 일별 집계(`report_eval_daily`)도 이 값을 쓴다**. dry-run 무관 |
 | `REPORT_EVAL_ROLLUP_DAYS` | `14` | eval 룰 지표 일별 집계에서 **매번 다시 계산하는 최근 구간**(일). 누적 더하기가 아니라 덮어쓰기라 재실행이 안전하다 — 세션 재수집·뒤늦은 Close 가 과거 날짜 값을 바꾸므로 겹쳐 본다. 0 이하 = 집계 안 함. dry-run 무관(비파괴) |
 | `REPORT_EVAL_PURGE_STALE_RUNS` | `0`(끔) | eval.db 옛 스냅샷 run 정리. `force` 재수집이 기존 run 을 지우지 않고 새로 쌓기 때문에(사람 라벨 보호) 반복하면 판정 사본이 늘어난다. 같은 (세션,소스)의 **최신이 아니고 라벨이 하나도 안 붙은** run 만 걷는다(`fail_case`·`label`·마스터는 보존). **`REPORT_CLEANUP_DRYRUN` 을 존중**한다 — 켜기 전에 dry-run 로그로 대상 수를 먼저 볼 것 |
+| `REPORT_TIER_ENABLED` / `REPORT_TIER_DRYRUN` | `1`(켬) / `1`(참) | 오래된 산출물을 S3 로 내리는 티어링. **기본은 실이동 안 함** — 실제로 옮기려면 DRYRUN 을 `0` 으로 명시. S3 미설정이면 no-op |
+| `REPORT_TIER_AGE_DAYS` | `180` | 이 일수를 넘긴 세션 산출물이 티어링 대상 |
+| `REPORT_TIER_LOCAL_MAX_GB` | `1024` | 로컬 티어링대상 총량 상한(GB). 나이를 안 넘겼어도 이 값을 넘으면 오래된 순으로 S3 로 이동하고 로컬 원본을 지운다 |
 | `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db (voc.db 는 VOC 미사용 중이라 제외, DB 별 prefix 로 rotation) |
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
@@ -335,6 +338,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
 | `GET` | `/input_info` | 공개 | **Input File Information** — source 별 입력 파일(파일명·경로·크기·생성/수정 시각)과 STDF 헤더(LOT ID·Wafer No·Test 시각·Test Time). manifest 만 읽어 즉시 응답(parquet 디코드 없음). Compare/Temperature 는 `group`/`group_index`/`role` 태그를 함께 준다 — 배치 규칙은 리포트 본문과 **같은 함수** (`compare.resolve_group_names` / `metrics.temperature_roles`). 파일 정보가 없는 옛 세션은 `has_file_info:false` 로 200 (에러 아님) → [docs/21](../docs/21_input_file_info.md) |
+| `GET` | `/build_status` | 공개 | 콜드 빌드 진행 상태(단계·경과초·`eta`). 202 를 받은 프런트가 폴링해 로드 오버레이 문구를 갱신한다 — **DB 를 읽지 않는** 메모리 스냅샷([web_report/build_status.py](../web_report/build_status.py)) |
 | `GET` | `/raw_data/columns`, `/raw_data` | 공개 | Raw Data 컬럼 UI / 조회 |
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
 | `GET` | `/distribution` | 공개 | Distribution ECDF **전량** (컴팩트 gzip, 전 포인트). 클라 프리컴퓨트 시딩·하위호환 폴백용 — 프런트는 아래 배치를 쓴다 |
@@ -350,7 +354,9 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/issue_table/signature` | 편집자 | Issue 행의 **ENGR 확정 Signature** 저장 (kind=issue_signature, `{key, signatures:[id,…]}`, 빈 배열=해제). 카탈로그 id 또는 `UNKNOWN` 만·중복 불가·최대 8개. 저장 후 eval DB 로 비동기 동기화 ([docs/13 §6-3](../docs/13_eval_analyzer_integration.md)) |
+| `GET` | `/issue_table/signature_reason` | 공개 | Issue Table Signature 컬럼의 **판정 근거 팝업**(`?` 버튼) 데이터. eval 스냅샷 run(`ingested_by='eval-snapshot'`)만 읽어 발화 규칙·지표·임계값을 조립한다 ([eval_panel/signature_reason.py](eval_panel/signature_reason.py), 화면 `sig_reason.js`) → [docs/13](../docs/13_eval_analyzer_integration.md) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
+| `POST` | `/note_tags` | 편집자 | Note 시트 **태그 위치** 저장 (kind=note_tag). Issue comment 의 `#[태그]` 링크가 Note 의 어느 셀로 점프할지 정하는 좌표 spec. payload 중립 kind |
 | `POST` | `/compare_notes` | 편집자 | **Compare 탭 행 코멘트** 저장 (kind=compare_note, `{ops:[{key,value}]}`, 빈 값/null=삭제). key 는 `gl:<after>U+001F<before>`(Log 비교 행) 또는 `bm:<x>,<y>`(동일 좌표 Bin 비교 행) — **고정 규약**(키가 바뀌면 기존 입력이 유실된다, CLAUDE.md §5-12). 응답에 권위본 `compare_notes` 동봉 |
 | `GET` | `/gap_chart/<chart_id>` | 조회 | **Gap Chart**(사용자 수식 파생 분포) 계산 결과. 응답 구조는 `/scatter` 와 같아 Item_detail 이 재사용한다. 갤러리 카드도 같은 응답을 쓴다. gzip + ETag(수식 digest 포함). `?bin1=1[&bin1_scope=rt]` 지원(양품 die 만, 규격 클리핑 없음) |
 | `POST` | `/gap_charts` | 편집자 | **Gap Chart** 수식 정의 저장 (kind=gap_chart, `{ops:[{key,value}]}`, null=삭제). key 는 프런트 생성 **UUID(불변)**, value 는 `{name, sources:[…], tokens:[…], limit:{mode:"manual"\|"none",lo?,hi?}}`. **수식은 토큰 배열이 정본**(평문 재파싱 불가 — 항목명에 괄호·연산자가 합법). 문법 오류는 400 + `index`(토큰 위치). 응답에 권위본 `gap_charts` 동봉 |
@@ -583,13 +589,16 @@ server/
 ├── db_backup.py              report.db 온라인 백업 사이클
 ├── report/
 │   ├── report_extension.py   report_bp 정의 + DB init + web_report 저장 포트 주입
-│   ├── report_routes.py      라우트 집결자 (구현은 아래 4모듈)
+│   ├── report_routes.py      라우트 집결자 (구현은 아래 routes_* 5모듈, import 순서 고정)
 │   ├── security.py           CSRF·신원 가드(_uploader_guard/_editor_guard)·감사 헬퍼
 │   ├── routes_session.py     세션 조회/삭제/권한·편집자 위임 라우트
 │   ├── routes_webreport.py   web_report 데이터/편집 라우트
 │   ├── routes_misc.py        페이지·history·주석·favorites·auth 스텁·정적
+│   ├── routes_voc.py         VOC 게시판 (운영 미사용 — docs/16)
+│   ├── routes_eval_input.py  Honey 'DB Input' 선례 CSV 적재 (subprocess 실행)
+│   ├── routes_chat.py        챗봇 웹 노출 — **유일한 노출 지점**(master 전용 404 가드)
 │   ├── static_pages.py       검색결과/상세 HTML 서빙 헬퍼
-│   ├── static/webreport/     세션 상세 JS 모듈 (탭별, 순서 로드)
+│   ├── static/webreport/     JS 모듈 32개 — 세션 상세가 31개 순서 로드 (정본 표 docs/11)
 │   ├── report_analysis_index.html  검색결과 페이지
 │   ├── report_view.html      세션 상세 (마크업+CSS)
 │   └── admin_dashboard.html  구 감사로그 대시보드 (admin_panel 로 대체)

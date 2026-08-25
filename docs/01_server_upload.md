@@ -4,6 +4,12 @@
 > issue PNG 저장까지 끝내는 단일 라우트. **원본 xlsx 파일은 받지 않는다.**
 > 관련: 들어오는 쪽 [07 클라 업로드](07_client_upload_chart.md) · 저장 대상 [03 저장소](03_storage.md) · 조회 [02](02_server_query_edit.md)
 
+> ⚠️ **현황(2026-08): 이 라우트를 부르는 클라 코드는 없다.** Honey 의 xlsx 업로드는
+> web_report honeyform 경로([10](10_web_report_pipeline.md))로 통합됐고, `post_grids` /
+> `prepare_upload_xlsx` 는 재노출만 남은 미호출 코드다. 라우트·파서·기존 세션 조회는
+> 그대로 살아 있으므로 **문서와 코드를 지우지 않는다**(과거 세션이 이 형식으로 저장돼 있고,
+> xlsx 흐름 재작업 시 출발점이다). 아래 설명은 그 라우트의 계약이다.
+
 ## 파일
 - [server/upload_xlsx.py](../server/upload_xlsx.py) — 라우트 `POST /pe/report/upload_xlsx` 전체
 - [server/xlsx_parser.py](../server/xlsx_parser.py) — 시트 grid → 텍스트 추출 (`_GridSheet` 셸, openpyxl 미사용)
@@ -12,7 +18,7 @@
 
 ## 흐름 (`upload_xlsx()`)
 1. **입력 검증** — `request.form["sheet_grids"]` 존재·유효 JSON·비어있지 않은 객체. `file_name` 폼값을 `secure_filename`.
-2. **메타 검증** (`_validate_meta`) — `product_type ∈ {MDDI,PDDI,PMIC,SECURITY,TCON}`, `product`/`lot_id` 는 안전토큰 정규식. **password 는 선택**(빈 값 허용, 있으면 4자리 형식만 검사 — 접근제어에는 미사용, →[02](02_server_query_edit.md)).
+2. **메타 검증** (`_validate_meta`) — `product_type ∈ {MDDI,PDDI,PMIC,SECURITY,TCON}`, `product`/`lot_id` 는 안전토큰 정규식. **password 는 폐지**(2026-08-14) — 폼값을 받아도 형식만 보고 **저장하지 않는다**(`password = None`, [upload_xlsx.py](../server/upload_xlsx.py)). 접근제어는 신원 기반이고 `has_password` 는 항상 false (→[02](02_server_query_edit.md)).
 3. **키 산출** — `grids_canonical = json.dumps(sheet_grids, sort_keys, ensure_ascii=False, separators=(",",":"))`. `analysis_key = sha256(grids + "|" + canonical_meta)`. password 는 meta 에 **불포함**. `content_hash = sha256(grids_canonical)`. `session_id = "<epoch>_<hex6>"`.
 4. **세션 생성** — `create_session(... source="xlsx_upload")` → `update_session(status="uploading", analysis_key, content_hash)`.
 5. **grid 파싱** — `parse_report_xlsx(sheet_grids)` → `{summary, yield_rows, issue_rows, sheet_data}`. 실패 시 `status="failed"` + 400. (원본 xlsx 는 저장하지 않는다.)

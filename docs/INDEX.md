@@ -74,6 +74,8 @@
 | 20 | **오류 추적 / 콜드 빌드 진단** — 상관 ID 한 개로 요청→빌드→오류를 잇는 사건 저장소, 300초 타임아웃의 마지막 단계·파일 보존, Honey 오프라인 큐 | Server + Client | [20_error_tracking.md](20_error_tracking.md) | [server/diagnostics.py](../server/diagnostics.py) · [web_report/build_log.py](../web_report/build_log.py) |
 | 21 | **Input File Information** (세션 상세 ℹ 모달) + **STDF 메타 요청 스펙** + 세션 이름 수정 라우트 | Client + Server | [21_input_file_info.md](21_input_file_info.md) | [web_report/service.py](../web_report/service.py) `input_info` |
 | — | **챗봇 구조 도식** (브라우저로 여는 단일 HTML) — 계층 5개·입력→출력 12단계·인텐트 13종·빈틈 목록·적용 개념(규칙/LLM/RAG/LangChain) | Server | [chatbot_architecture.html](chatbot_architecture.html) | [server/chatbot/](../server/chatbot/README.md) |
+| — | **eval signature 분류 도식** (단일 HTML) — 발화 카드별 조건·관계(대체/제거/양보/단독) | Server | [eval_signature_taxonomy.html](eval_signature_taxonomy.html) | [rules/signatures/](../eval_analyzer/eval_engine/rules/) |
+| — | **안정성·동시성 조치 도식** (단일 HTML) — 컴퓨트 풀·락·타임아웃·백오프 한눈에 | Server | [stability_concurrency_measures.html](stability_concurrency_measures.html) | [web_report/compute.py](../web_report/compute.py) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.
@@ -125,7 +127,7 @@
 | 새 탭 추가 | — | [web_report/tabs/__init__.py](../web_report/tabs/__init__.py) `TAB_REGISTRY` + 프런트 JS 1개 |
 | IssueTable AI Comment / eval_analyzer 연결 | [13](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) `safe_build` + 코멘트 export [web_report/eval_export.py](../web_report/eval_export.py) + 룰 패널 [web_report/eval_debug.py](../web_report/eval_debug.py) (eval_engine import 3곳) |
 | eval 임계값/signature 바꾸기 · 왜 이 코멘트가 나왔나 | [13 §11](13_eval_analyzer_integration.md) | `/pe/eval` ([server/eval_panel/](../server/eval_panel/)) — 제품군×family 오버레이 `eval_analyzer/eval_engine/rules/thresholds/` + 같은 규약의 `rules/signatures/`(2026-08-04), 저장 즉시 반영 |
-| 세션 상세 탭 UI (JS) | — | [server/report/static/webreport/](../server/report/static/webreport/) 15개 모듈 (순서 로드 — report_view.html 은 마크업+CSS) |
+| 세션 상세 탭 UI (JS) | [11 §렌더 구조](11_web_report_tabs.md) | [server/report/static/webreport/](../server/report/static/webreport/) — 파일 32개 중 세션 상세가 31개를 **순서 로드**(로드 순서 표 = docs/11 이 정본, report_view.html 은 마크업+CSS) |
 | 신원/SSO 전환 | — | [server/auth_identity.py](../server/auth_identity.py) (`AUTH_SSO_HEADER`) |
 | 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, 대시보드 `/pe/admin-pte/` ([admin_panel/](../server/admin_panel/)) |
 | S3 키 경로 바꾸기 | [03](03_storage.md) | [_s3.py](../server/storage_gateway/_s3.py) `make_*_key` + [config.py](../server/config.py) |

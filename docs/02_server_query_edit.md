@@ -88,6 +88,35 @@ trim → 소문자*. `SECDS\Chumji.Kim`·`Chumji.Kim`·`chumji.kim` 은 한 사�
 변경요청을 방어한다. Honey 클라 전용 업로드(`/upload_xlsx`)는 브라우저가 아니라 제외
 (`X-Honey-Agent` 헤더 구분).
 
+### `X-Honey-Agent: 1` — "브라우저가 아니다" 증명 (CSRF 대체)
+Honey 클라는 쿠키를 들고 다니지 않으므로 double-submit 을 쓸 수 없다. 대신 이 헤더를 붙여
+CSRF 검사를 대신하고, 일부 라우트는 **거꾸로 이 헤더를 요구**해 "그 조작은 Honey 에서만"
+을 강제한다. 헤더를 보내는 곳은 클라 **5곳**뿐이다:
+
+| 클라 파일 | 대상 라우트 | 왜 Honey 전용인가 |
+|---|---|---|
+| `excel_edit/excel_session.py` | `POST .../web_report/rawdata_replace` | 원본 parquet 교체 |
+| `honey_main.py` `on_session_meta_edit` | `PATCH /session/<sid>/meta` | 기준정보 재lookup·eval 대상 변경 |
+| `honey_ui/rawdata_hub_dialog.py` | `POST .../web_report/preprocess` | 조회 전처리 spec 저장 |
+| `honey_ui/rawdata_quick_dialog.py` | `POST .../web_report/preprocess` | 〃 (빠른 수정) |
+| `transport/eval_input.py` | `POST /api/eval/labels_import` | 선례 CSV 적재 |
+
+⚠️ 헤더는 **위조 가능**하다 — 권한 판정이 아니라 "경로 구분"용이다. 실제 접근제어는 위의
+가드 3종이 하고, 이 헤더는 그 위에 얹힌다. 세션 **이름만** 고치는 `PATCH .../name` 은
+표시 전용이라 의도적으로 이 헤더를 요구하지 않는다(웹에서도 고칠 수 있다).
+
+### 입력 형식 검증 (security.py 정규식 — 저장 키와 직결)
+경로 파라미터·사용자 입력은 DB 에 닿기 전에 형식부터 거른다. **이 패턴을 넓히면 기존 저장
+키와 충돌**할 수 있으니(특히 `_SESSION_ID_RE`) 넓힐 땐 기존 데이터 영향을 먼저 볼 것.
+
+| 상수 | 패턴 | 대상 |
+|---|---|---|
+| `_ANALYSIS_KEY_RE` | `^[0-9a-f]{64}$` | analysis_key (sha256 hex) |
+| `_SESSION_ID_RE` | `^[A-Za-z0-9_-]{1,80}$` | session_id (URL-safe) |
+| `_USER_ID_RE` | `^[^\s\\/]{1,64}$` | 사용자 ID (공백·슬래시 금지) |
+| `_PIN_RE` | `^\d{4}$` | 웹 로그인 PIN (숫자 4자리) — 세션 password 와 무관 |
+| `_DISPLAY_NAME_RE` | `^[가-힣]{2,10}$` | 사용자 **실명** — 한글만 |
+
 ## 주요 흐름
 ### 검색 목록 — `history()`
 쿼리스트링(`product_type/process/product/revision/lot_id/source`) → `get_history()`.

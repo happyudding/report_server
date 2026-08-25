@@ -110,6 +110,23 @@ _RULES = [
         "doc": "CLAUDE.md §5-5",
     },
     {
+        "id": "R13-ecdf-fill-cap",
+        "kind": "forbid_add",
+        "paths": ["server/report/static/webreport/distribution.js",
+                  "client/excel_download/_charts.py"],
+        "pattern": r"\bmin\(.*FILL_VISUAL_MAX_DY",
+        # 같은 편집 조각에 n 기반 계산(100/n)이 있으면 그 캡은 폴백 경로다 — 위반 아님.
+        # 줄 단위로는 두 줄이 갈라져 판정할 수 없어 multi(조각 전체)로 본다.
+        "unless": r"100(\.0)?\s*/\s*(float\()?n\b",
+        "multi": True,
+        "why": "미니셀 세로 채움 간격은 서버가 준 소스별 표본 수 n 으로 정한다"
+               "(stepY=100/n) — 채우는 점 개수가 실제 측정 개수와 같아야 한다. 고정 상수로 "
+               "상한을 걸면(FILL_VISUAL_MAX_DY 를 n 폴백 밖에서 사용) 표본이 작은 세션이 "
+               "실제보다 촘촘하게 그려진다(2026-08-25 회귀: n=100 이 400점으로 보임). "
+               "그 캡은 n 이 없는 옛 응답 폴백 전용이다.",
+        "doc": "CLAUDE.md §5-5",
+    },
+    {
         "id": "R03-gzip-level",
         "kind": "forbid_add",
         "paths": ["web_report/**/*.py"],

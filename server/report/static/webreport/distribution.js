@@ -163,7 +163,10 @@ function buildDistDataFromCompact(payload) {
   Object.keys(items).forEach(subj => {
     const it = items[subj], bySource = {};
     Object.keys(it.sources || {}).forEach(src => {
-      bySource[src] = { xs: it.sources[src].x || [], ys: it.sources[src].y || [] };
+      // n 은 소스별 표본 수(서버 cum 의 분모) — 세로 채움 간격의 정본이다(distStepY).
+      // 옛 캐시·구버전 클라 blob 응답에는 없어 undefined 가 되고, 그때만 추정 폴백을 탄다.
+      bySource[src] = { xs: it.sources[src].x || [], ys: it.sources[src].y || [],
+                        n: it.sources[src].n };
     });
     out[subj] = { lower_limit: it.lo, upper_limit: it.hi, units: it.units || "", bySource };
   });
@@ -931,8 +934,10 @@ function distHardCap(xs, ys, cap) {
 // 이 규칙이 발동하지 않아(xg=0) 무영향이고, 고립점을 일부러 흩뿌린 최악 케이스에서도
 // 0.05% 까지 내려야 점이 +680 늘 뿐이라 폭증 위험은 없다. 더 내리면(0.05%) 이득이 사라지고
 // 꼬리 35% 케이스는 오히려 미세하게 나빠져 0.1% 가 스위트스팟.
-// Δy 0.15%p 는 이미 0.28px(지각 한계 미만)이고, 세로채움 후 이웃 간 Δy 가 항상 stepY
-// (≤0.3%p, 보통 0.03%p)라 실측상 한 번도 발동하지 않는다 — 건드릴 이유가 없어 유지.
+// Δy 0.15%p 는 이미 0.28px(지각 한계 미만)이다. 세로채움 후 이웃 간 Δy 는 항상 stepY
+// (=100/n)인데, 표본이 작으면 그 값이 0.15%p 를 넘어 이 강제 보존이 발동할 수 있다.
+// 다만 그런 소량 데이터는 채움 후 총점도 CAP 이하라 이 함수의 첫 줄에서 그대로 반환되므로
+// 실제 영향은 없다. 대량 표본은 stepY 가 잘아 종전처럼 미발동 — 건드릴 이유가 없어 유지.
 function distDownsampleForDisplay(xs, ys, cap) {
   const CAP = cap || DIST.DOWNSAMPLE;
   const n = xs.length;
@@ -977,11 +982,17 @@ function distDownsampleForDisplay(xs, ys, cap) {
 // 백엔드가 동일값을 1점으로 축약(np.unique)하므로 이산(code)값은 점이 성기게 찍힌다.
 // 각 고유값 x_i 의 riser(prevY→y_i)를 x=x_i 에 stepY 간격 세로 점으로 채워 "연속 분포"로
 // 보이게 한다. 점끼리 잇지 않으므로 x축 수평선(계단 tread)은 자연히 없다.
-// stepY 는 호출부(distStepY)가 min(단일 점 1개의 증가량, FILL_VISUAL_MAX_DY 0.3%) 로
-// 유도한다 — riser 는 ECDF 계단함수의 실제 세로 구간이므로 단일점 riser 포함 모든 riser 를
-// 0.3% 이하 간격으로 채워 누적 0~100% 에 marker 빈 구간이 없게 한다(x값 조작 없는
-// 세로 방향 표시용 업샘플링). 가로(x) 방향 보간은 계속 금지.
+// stepY 는 호출부(distStepY)가 "데이터 점 1개의 ECDF 증가량"으로 유도한다(= 100/n).
+// riser 는 ECDF 계단함수의 실제 세로 구간이므로, 채우는 점 개수가 그 값의 **실제 중복
+// 측정 개수**와 같아진다 — 단일 관측 riser 는 채움 0(소량 데이터가 부풀지 않는다).
+// x값 조작 없는 세로 방향 표시용 업샘플링이며, 가로(x) 방향 보간은 계속 금지.
 // 전제: xs 오름차순, ys 단조 비감소·마지막 100, ECDF 시작 누적 0 (cumulative_distribution_full 보장).
+//
+// ⚠️ 누적 덧셈(yy += stepY)을 쓰지 않는다. 서버가 y 를 np.round(cum,3) 로 내리기 때문에
+// stepY 가 굵어지면(=표본이 작으면) riser 끝과 미세하게 어긋나 없어야 할 점이 생긴다.
+// 예: n=7 → stepY=14.285714…, 서버 y[0]=14.286 → 14.285714 < 14.286 이라 가짜 점 1개.
+// 그래서 배수 k 를 먼저 반올림으로 확정하고 riser 를 k 등분한다 — 오차가 누적되지 않고,
+// 중간점이 j 번째 중복 관측의 실제 ECDF 좌표와 정확히 일치한다.
 function distFillVertical(xs, ys, stepY) {
   const n = xs.length;
   if (n === 0) return { xs: [], ys: [] };
@@ -989,25 +1000,31 @@ function distFillVertical(xs, ys, stepY) {
   let prevY = 0;                               // ECDF 는 0 에서 첫 riser 시작
   for (let i = 0; i < n; i++) {
     const x = xs[i], y = ys[i];
-    // riser 중간점: prevY 다음 stepY 지점부터 y_i 미만까지. Δy<stepY(정규 산포)면 루프
-    // 0회 → 실제 점만 남아 기존과 픽셀 동일. 실제 ECDF 점은 항상 마지막에 보존.
-    for (let yy = prevY + stepY; yy < y - 1e-9; yy += stepY) { ox.push(x); oy.push(yy); }
-    ox.push(x); oy.push(y);
+    const dy = y - prevY;
+    const k = Math.round(dy / stepY);          // 이 riser 가 품은 관측 수(표시 상한 반영)
+    for (let j = 1; j < k; j++) { ox.push(x); oy.push(prevY + j * dy / k); }
+    ox.push(x); oy.push(y);                    // 실제 ECDF 점은 항상 마지막에 보존
     prevY = y;
   }
   return { xs: ox, ys: oy };
 }
 
-// 세로 채움 간격(stepY): 소스 내 "단일 데이터 점 1개의 ECDF 증가량" = 최소 양의 Δy
-// (첫 riser 0→ys[0] 포함)를 FILL_VISUAL_MAX_DY(0.3%)로 캡한다. 표본이 작아 단일점
-// 증가량이 0.3% 를 넘으면(대략 표본<333) 단일점 riser 까지 포함해 모든 riser 가 0.3%
-// 간격으로 채워져 썸네일 누적축이 끊김 없이 보인다. 조밀한 데이터(stepY≤0.3%)는 캡이
-// no-op 라 기존과 픽셀 동일.
-// 표본이 매우 커 stepY 가 지나치게 잘면 100/fillMax 하한으로 채움점 폭증을 막는다.
+// 세로 채움 간격(stepY) = "데이터 점 1개의 ECDF 증가량". 서버가 소스별 표본 수 n 을
+// 함께 내려주므로(build_distribution_compact / _ecdf_sources) 100/n 이 곧 그 값이다.
+// 이러면 채우는 점 개수가 실제 측정 개수와 같아져, 소량 데이터(n≤100)가 부풀지 않고
+// 이산(code)값은 실제 중복 수만큼 채워진다 — 두 경우가 한 규칙으로 정리된다.
+// 표본이 매우 커 간격이 지나치게 잘면 100/fillMax 하한으로 채움점 폭증을 막는다.
 // fillMax 는 유효 캡에 연동한다(cap×1.5) — 기본 캡 1500 이면 2250(절대 천장
 // FILL_MAX_POINTS 3000 미만이라 이쪽이 지배), 다소스 미니셀처럼 캡이 낮으면 수천 개를
 // 채웠다가 150 개만 남기는 낭비를 애초에 안 한다(채움 계산 비용 자체가 준다).
-function distStepY(ys, cap) {
+//
+// n 이 없는 응답(옛 캐시·구버전 Honey 가 올린 dist blob)만 종전 추정 경로를 탄다:
+// 최소 양의 Δy 를 단위 증가량으로 삼고 FILL_VISUAL_MAX_DY(0.3%)로 캡한다. minΔy 는 n 의
+// **상한 추정**일 뿐이라(모든 고유값이 2회 이상 중복이면 과대) 그 캡이 성김 보정으로
+// 필요했다. 두 상수는 이 폴백 전용이며 새 경로에서는 쓰지 않는다.
+function distStepY(ys, cap, n) {
+  const fillMax = Math.min(DIST.FILL_MAX_POINTS, Math.round((cap || DIST.DOWNSAMPLE) * 1.5));
+  if (n > 0) return Math.max(100 / n, 100 / fillMax);
   let step = Infinity, prev = 0;
   for (let i = 0; i < ys.length; i++) {
     const d = ys[i] - prev;
@@ -1015,14 +1032,13 @@ function distStepY(ys, cap) {
     prev = ys[i];
   }
   if (!isFinite(step)) step = DIST.FILL_STEP_Y;              // 유효 riser 없음 — 폴백
-  const fillMax = Math.min(DIST.FILL_MAX_POINTS, Math.round((cap || DIST.DOWNSAMPLE) * 1.5));
   return Math.min(Math.max(step, 100 / fillMax), DIST.FILL_VISUAL_MAX_DY);
 }
 
 // 미니셀 표시용 좌표: 세로 보간 → 표시용 다운샘플 순서(순서 근거 CLAUDE.md §5·docs/11).
 // 반대 순서면 다운샘플 stride 로 Δy 가 오염돼 없던 가짜 세로 줄무늬가 생긴다.
-function distPointsForDisplay(xs, ys, cap) {
-  const f = distFillVertical(xs, ys, distStepY(ys, cap));
+function distPointsForDisplay(xs, ys, cap, n) {
+  const f = distFillVertical(xs, ys, distStepY(ys, cap, n));
   return distDownsampleForDisplay(f.xs, f.ys, cap);
 }
 
@@ -1036,7 +1052,7 @@ function distDisplayPoints(entry, cap) {
   let m = _distDisplayMemo.get(entry);
   if (!m) { m = new Map(); _distDisplayMemo.set(entry, m); }
   let v = m.get(key);
-  if (!v) { v = distPointsForDisplay(entry.xs, entry.ys, key); m.set(key, v); }
+  if (!v) { v = distPointsForDisplay(entry.xs, entry.ys, key, entry.n); m.set(key, v); }
   return v;
 }
 

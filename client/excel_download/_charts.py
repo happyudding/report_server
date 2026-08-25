@@ -211,15 +211,21 @@ _FILL_MAX_POINTS = 3000     # 세로 채움점 총량 상한 — stepY 하한 10
 _FILL_VISUAL_MAX_DY = 0.3   # 시각 연속성 캡(%) — 웹 DIST.FILL_VISUAL_MAX_DY 와 동일
 
 
-def _dist_step_y(ys):
-    """세로 채움 간격 = "단일 데이터 점 1개의 ECDF 증가량"(최소 양의 Δy, 첫 riser 0→ys[0] 포함).
+def _dist_step_y(ys, n=None):
+    """세로 채움 간격 = "데이터 점 1개의 ECDF 증가량". 서버가 준 소스별 표본 수 n 이 있으면
+    100/n 이 곧 그 값이다(웹 distribution.js distStepY 포팅).
 
-    웹 distribution.js distStepY 포팅. 값이 전부 다른 진짜 희소 데이터는 모든 Δy 가 이 값과
-    같아 채움 0(업샘플링 없음)이고, 동일값이 축약된 riser 만 개수에 비례해 채운다. 표본이
-    매우 커 간격이 잘면 100/_FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다. 반대로 표본이
-    작아 단일점 증가량이 _FILL_VISUAL_MAX_DY 를 넘으면 그 값으로 캡해 누적 0~100% 에 marker
-    빈 구간이 없게 한다(조밀한 데이터는 캡이 no-op — 기존과 픽셀 동일).
+    이러면 채우는 점 개수가 실제 측정 개수와 같아져, 값이 전부 다른 데이터는 채움 0
+    (업샘플링 없음)이고 동일값이 축약된 riser 만 실제 중복 수만큼 채운다. 표본이 매우 커
+    간격이 잘면 100/_FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
+
+    n 이 없는 응답(옛 캐시·구버전 서버)만 종전 추정 경로를 탄다 — 최소 양의 Δy 를 단위
+    증가량으로 삼고 _FILL_VISUAL_MAX_DY 로 캡한다. 최소 Δy 는 n 의 **상한 추정**일 뿐이라
+    (모든 고유값이 2회 이상 중복이면 과대) 그 캡이 성김 보정으로 필요했다. 두 상수는 이
+    폴백 전용이며 새 경로에서는 쓰지 않는다.
     """
+    if n:
+        return max(100.0 / float(n), 100.0 / _FILL_MAX_POINTS)
     step = float("inf")
     prev = 0.0
     for v in ys:
@@ -232,30 +238,34 @@ def _dist_step_y(ys):
     return min(max(step, 100.0 / _FILL_MAX_POINTS), _FILL_VISUAL_MAX_DY)
 
 
-def _dist_fill_vertical(xs, ys, step_y=None):
+def _dist_fill_vertical(xs, ys, step_y=None, n=None):
     """ECDF riser(동일 x 의 세로 구간)를 세로 점으로 채운다. step_y 미지정 시 데이터에서
-    유도(_dist_step_y) — "단일 점 1개의 증가량".
+    유도(_dist_step_y) — "데이터 점 1개의 증가량".
 
     웹 distribution.js distFillVertical 포팅 — 이산/코드값 항목이 세로 점기둥으로
-    촘촘해 보이도록(선 없이 점만). 값이 전부 다른 진짜 희소 데이터는 각 riser Δy==step_y 라
+    촘촘해 보이도록(선 없이 점만). 값이 전부 다른 데이터는 riser 하나가 관측 1개라
     내부 루프 0회 → 채움 없이 원본 포인트만(업샘플링 없음). 다운샘플이 아니라 표시용 포인트
     추가(불변규칙 #5 의 sanctioned 세로채움).
+
+    ⚠️ 누적 덧셈을 쓰지 않는다 — 서버가 y 를 round(cum, 3) 로 내리므로 step_y 가 굵어지면
+    (=표본이 작으면) riser 끝과 어긋나 없어야 할 점이 생긴다. 배수 k 를 먼저 반올림으로
+    확정하고 riser 를 k 등분한다(웹과 동일).
     """
-    n = len(xs)
-    if n == 0:
+    cnt = len(xs)
+    if cnt == 0:
         return xs, ys
     if step_y is None:
-        step_y = _dist_step_y(ys)
+        step_y = _dist_step_y(ys, n)
     ox, oy = [], []
     prev_y = 0.0                        # ECDF 는 0 에서 첫 riser 시작
-    for i in range(n):
+    for i in range(cnt):
         x = xs[i]
-        y = ys[i]
-        yy = prev_y + step_y
-        while yy < y - 1e-9:
+        y = float(ys[i])
+        dy = y - prev_y
+        k = int(round(dy / step_y)) if step_y > 0 else 1
+        for j in range(1, k):
             ox.append(x)
-            oy.append(yy)
-            yy += step_y
+            oy.append(prev_y + j * dy / k)
         ox.append(x)
         oy.append(y)
         prev_y = y
@@ -519,7 +529,7 @@ def _draw_cdf_cell(fig, cell, box, outer=None):
         color, x, y = src[1], src[2], src[3]
         if len(x) == 0:
             continue
-        x, y = _dist_fill_vertical(x, y)
+        x, y = _dist_fill_vertical(x, y, n=src[7] if len(src) > 7 else None)
         px = x0 + (np.asarray(x, dtype="float64") - xmin) / span * w
         py = y0 + np.asarray(y, dtype="float64") / 100.0 * h
         _add_markers(fig, px, py, color)
@@ -619,7 +629,7 @@ def render_grid_chunk(job) -> str:
     {"kind": "cdf"|"hist", "out_path": str,
      "cells": [{"title","test_num","units","lo","hi","status","cpk",
                 "sources": [(name, color, x(np.ndarray), y(np.ndarray),
-                             n|None, avg|None, std|None), ...]}, ...]}
+                             n|None, avg|None, std|None, ecdf_n|None), ...]}, ...]}
     반환: out_path. cells 는 최대 NCOLS*ROWS_PER_CHUNK 개.
     """
     cells = job["cells"]
@@ -676,15 +686,16 @@ def _draw_mini_cdf_cell(fig, cell, box):
         if len(x) == 0:
             continue
         pts.append((np.asarray(x, dtype="float64"),
-                    np.asarray(y, dtype="float64"), color))
-    xr = _mini_x_range([(x, y) for x, y, _ in pts], cell)
+                    np.asarray(y, dtype="float64"), color,
+                    src[7] if len(src) > 7 else None))
+    xr = _mini_x_range([(x, y) for x, y, _, _ in pts], cell)
     if xr is None:
         return
     x0, y0, w, h = box
     xmin, xmax = xr
     span = xmax - xmin
-    for x, y, color in pts:
-        fx, fy = _dist_fill_vertical(x, y)
+    for x, y, color, ecdf_n in pts:
+        fx, fy = _dist_fill_vertical(x, y, n=ecdf_n)
         px = x0 + (fx - xmin) / span * w
         py = y0 + fy / 100.0 * h
         _add_markers(fig, px, py, color)

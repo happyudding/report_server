@@ -22,7 +22,7 @@
 | `SessionMetaDialog` | 업로드 **후** 세션 메타 수정 — `UploadDialog` 상속(Part ID 자동완성·Family 콤보 그대로) + 맨 위 `Session Name`(서버 file_name) 칸, password 행 숨김, ProductType 은 세션 값 고정. 세션 페이지 ✏️ → `honey_main._handle_honey_action` → `on_session_meta_edit` → `PATCH .../meta` → [02](02_server_query_edit.md) |
 | `D1BrowserDialog` | `d1_storage` 검색·다중선택 (외부 provider 결과) |
 | `FileOrderDialog` | 입력 2개↑ 시 순서 확정(첫 파일=기준 스키마) |
-| `SourceNameDialog` | **Web Report 생성 직전 공통 창** (Normal·Commonality·Temperature. Compare 는 `CompareArrangeDialog`, DUT 는 창 없음). 표 한 줄 = source 하나 — `입력 파일`(읽기 전용, 뒤에서 폴더 2개+파일명으로 축약, 툴팁에 전체 경로) / `Legend`(편집, 12자·Temperature 는 15자). `↑`/`↓`(Alt+↑/↓)·`↑↑`/`↓↓`(Alt+Home/End = 최상단/최하단)로 바꾼 순서가 곧 업로드 순서이고 **최상단 = limit 기준**이라 1행을 초록으로 강조한다. **Ctrl/Shift 다중 선택 이동**(2026-08-10) — 선택 블록이 경계에 닿아도 블록 안에서 뒤섞이지 않는다(`_shift` 의 blocked). **표의 위→아래 = web_report 표시 순서**이고 Temperature 는 그룹 순서·그룹 안 member 순서까지 표 순서로 나간다(그래서 그룹 번호도 표 순서로 다시 매긴다 — `_renumber_groups`). 삭제 없음. 21행까지 스크롤 없이 보이고 그 이상은 세로 스크롤바. **Temperature 는 열 3개(`Group`·`Role`·`색`)와 Limit 파일 영역이 더 생긴다** — 구 `TemperatureGroupDialog`(드래그앤드랍 배치 창)를 흡수한 것으로, 열은 `setColumnHidden` 이 아니라 **columnCount 자체가 2 또는 5**고 Limit 영역은 컨테이너째 숨겨 레이아웃이 높이를 회수한다. `색` 칸 더블클릭 = 이 리포트에만 적용되는 Distribution 색(옵션 F10 팔레트를 기본값으로 읽고 **창 값이 우선**, `chart_colors.json` 은 안 건드린다). 자동 그룹 배치는 `temperature_pairing.suggest_groups(_by_role)` — **짝 키(입력 파일 base 이름) 우선 매칭**(2026-08-24, `pair_keys` 인자·`honey_main._temp_pair_keys`)이라 dedupe(_2)로 legend 가 갈려도 같은 웨이퍼끼리 묶인다. Temperature 는 입력 파일 열이 22자 더 넓다(창 가로 +15%, 2026-08-24). **그룹 소속 변경은 `Group` 칸 드롭다운**(2026-08-24 — 다른 그룹을 고르거나 그 그룹 이름을 적으면 그 행이 이동. 행 순서 ↑/↓는 소속을 바꾸지 않는다). 그룹 이름 타이핑 = 같은 그룹 전원 일괄 개명(종전 유지). OK 시 Role 짝 검증 — 같은 그룹에 같은 Role 2개면 차단, 그룹별 구성이 다르면 확인 질문 → [10](10_web_report_pipeline.md). 결과 → `honey_main._apply_source_arrangement` 가 `rename_sources(names)` 먼저 → 순서는 **이름이 아니라 `order_index`** 로 잇는다(dedupe 규칙 차이로 `mass_data_map` 키와 어긋나는 것을 막는다). 표에 뜨는 Legend **기본값**은 product_type 별 파일명 규칙([client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py) `_SOURCE_NAME_RULES`)이 만든다 → [10](10_web_report_pipeline.md) |
+| `SourceNameDialog` | **Web Report 생성 직전 공통 창** (Normal·Commonality·Temperature. Compare 는 `CompareArrangeDialog`, DUT 는 창 없음). 표 한 줄 = source 하나 — `입력 파일`(읽기 전용, 뒤에서 폴더 2개+파일명으로 축약, 툴팁에 전체 경로) / `Legend`(편집, 12자·Temperature 는 15자). `↑`/`↓`(Alt+↑/↓)·`↑↑`/`↓↓`(Alt+Home/End = 최상단/최하단)로 바꾼 순서가 곧 업로드 순서이고 **최상단 = limit 기준**이라 1행을 초록으로 강조한다. **Ctrl/Shift 다중 선택 이동**(2026-08-10) — 선택 블록이 경계에 닿아도 블록 안에서 뒤섞이지 않는다(`_shift` 의 blocked). **표의 위→아래 = web_report 표시 순서**이고 Temperature 는 그룹 순서·그룹 안 member 순서까지 표 순서로 나간다(그래서 그룹 번호도 표 순서로 다시 매긴다 — `_renumber_groups`). 삭제 없음. 21행까지 스크롤 없이 보이고 그 이상은 세로 스크롤바. **Temperature 는 열 3개(`Group`·`Role`·`색`)와 Limit 파일 영역이 더 생긴다** — 구 `TemperatureGroupDialog`(드래그앤드랍 배치 창)를 흡수한 것으로, 열은 `setColumnHidden` 이 아니라 **columnCount 자체가 2 또는 5**고 Limit 영역은 컨테이너째 숨겨 레이아웃이 높이를 회수한다. `색` 칸 더블클릭 = 이 리포트에만 적용되는 Distribution 색(옵션 F10 팔레트를 기본값으로 읽고 **창 값이 우선**, `chart_colors.json` 은 안 건드린다). 자동 그룹 배치는 `temperature_pairing.suggest_groups(_by_role)` — **짝 키(입력 파일 base 이름) 우선 매칭**(2026-08-24, `pair_keys` 인자·`honey_main._temp_pair_keys`)이라 dedupe(_2)로 legend 가 갈려도 같은 웨이퍼끼리 묶인다. Temperature 는 입력 파일 열이 22자 더 넓다(창 가로 +15%, 2026-08-24). **그룹 소속 변경은 `Group` 칸 드롭다운**(2026-08-24 — 다른 그룹을 고르거나 그 그룹 이름을 적으면 그 행이 이동. 행 순서 ↑/↓는 소속을 바꾸지 않는다). **그룹 이름 타이핑 = 같은 그룹 전원 일괄 개명**(필수 기능 — 유지 규칙과 GC 함정은 아래 [주의](#주의)). OK 시 Role 짝 검증 — 같은 그룹에 같은 Role 2개면 차단, 그룹별 구성이 다르면 확인 질문 → [10](10_web_report_pipeline.md). 결과 → `honey_main._apply_source_arrangement` 가 `rename_sources(names)` 먼저 → 순서는 **이름이 아니라 `order_index`** 로 잇는다(dedupe 규칙 차이로 `mass_data_map` 키와 어긋나는 것을 막는다). 표에 뜨는 Legend **기본값**은 product_type 별 파일명 규칙([client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py) `_SOURCE_NAME_RULES`)이 만든다 → [10](10_web_report_pipeline.md) |
 | `CompareArrangeDialog` | **Compare 모드 전용** — source 를 Before/After 두 리스트로 배치(`>>` `>` `<` `<<`)하고 `↑`/`↓` 로 그룹 안 순서를 정한다. 항목 더블클릭 = Legend 이름 변경(중복은 `_2`,`_3`) — Compare 모드에선 이 창이 `SourceNameDialog` 를 **대신한다**. 순서가 의미를 가지므로(After 최상단 = limit 기준 + goodlog 대표) `RawdataHubDialog` 의 Item Select 와 달리 **이동 후 재정렬하지 않는다**. Confirm 시 양쪽 최소 1개 검증. 결과 → `rename_sources(names)`(원본 순서) + `options.compare` + 업로드 순서(After→Before) → [10](10_web_report_pipeline.md)·[11](11_web_report_tabs.md) |
 | `RawdataHubDialog` | 열린 세션의 Rawdata 진입 허브 — **좌측 기능 버튼 + 우측 활성 패널**(`QStackedWidget`, 2026-07-28 개편. 종전 세로 grid 1장은 Item Select 2-리스트가 창을 다 먹었다). 페이지: `현재 상태`(적용 중인 전처리 목록 + 선택/전체 해제) / **`Options`**(조건을 짤 필요 없는 한 줄 옵션 — `Bin1 only` 체크박스. 내부적으로는 조건 규칙을 만들어 [현재 상태] 에 그대로 나타나고, 거기서 해제하면 체크도 함께 풀린다 — `_sync_options`) / `Item Select`(2-리스트 + 검색 — 검색은 **숨기기만**, 목록에서 빼면 저장 대상이 달라진다) / `Outlier 제거` / **`Yield 계산`**(소스별 수율 **분모** — 자동/Gross die/Test die 콤보 + 그 자리에서 다시 계산되는 수율. `GET .../web_report/yield_basis` 로 받은 pass/tested/gross 로 **왕복 없이** 계산하고, 저장은 같은 요청의 `yield_basis={"mode","sources"}` 필드 → [11](11_web_report_tabs.md)) / **`신규 Item(수식) 추가`**(주황, 2026-08-24 — Options 바로 밑. 아래 별도 행) / `Rawdata 원본 수정`(주황, Excel — **열 source 체크리스트** + `ACTION_EXCEL`, 선택은 `hub.excel_indices`. 진입 전 "셀 패치 N건이 해제된다" 확인) + 하단 저장·닫기. 창 크기는 **1040×600**(2026-08-24 — 신규 Item 페이지가 수식 칸·자동완성·통계 7열 표를 한 화면에 편다). **서버 조회 3건은 창을 띄운 뒤 `_HubLoadWorker`(QThread)** 에서 — 생성자 동기 호출은 큰 세션에서 창이 뜨기 전 UI 를 멈춘다. Excel 을 뺀 나머지는 원본을 고치지 않는 **전처리**(서버 `.../web_report/preprocess`)라 전 탭이 그 기준으로 재계산되고 언제든 되돌릴 수 있다. *2026-07-28 임시 비활성(사용자 요청)*: `빠른 수정` 페이지·`Spec Out 빈값` 은 화면에서만 뺐다(코드 유지, 등록 3줄 복구로 되살아남) |
 | `RawdataHubDialog` → **신규 Item(수식) 추가** 페이지 | 수식으로 파생 측정 item 을 만들어 **원본 parquet 에 컬럼을 추가**한다(2026-08-24). 다른 페이지가 전부 되돌릴 수 있는 전처리인 것과 정반대라 하단 공용 [저장] 을 쓰지 않고 자체 주황 버튼을 두며, **미리보기를 통과해야만** 그 버튼이 열린다(수식을 고치면 다시 잠긴다). 메타 7칸(ITEMNAME/TSEQ/TNO/STEP/UNIT/HILIM/LOLIM) 기본값은 **탭을 처음 열 때 받은 rawdata** 에서 채운다(`_NewItemLoadWorker` → `item_add.default_meta` — TSEQ/TNO 는 전 source 최대 +1, STEP 은 마지막 항목 승계, 숫자가 아니면 빈칸으로 두고 직접 입력받는다). 서버 `raw_data/columns` 에 필드를 추가하지 않는 이유는 그게 `web_report/tabs/` 라 perf_guard S01 이 `REPORT_SCHEMA_VERSION` bump 를 요구하기 때문이다(= 전 세션 콜드 폭풍). 미리보기·적용도 각각 QThread(`_NewItemPreviewWorker` / honey_main 의 `AddItemWorker`). 확정은 `ACTION_ADD_ITEM` + `hub.add_item_spec` 으로 honey_main 에 넘겨 Excel 왕복과 **같은 워커 필드**를 쓴다(중복 실행·이탈 취소 가드 재사용). → [11](11_web_report_tabs.md) |
@@ -46,7 +46,76 @@
    web_report parquet 병행 업로드 경로도 있다(→[10](10_web_report_pipeline.md)).
 7. **업데이트** — 기동 후 버전 확인([04](04_honey_update.md)).
 
+## 불변 규칙 (클라 전역 — 3개월 이상 안정)
+
+### UA 토큰 — `HoneyUser/<계정> HoneyVer/<버전>`
+서버가 **신원과 클라 버전을 아는 유일한 통로**다([02](02_server_query_edit.md) 인증 ·
+`report_client_version` 대장). 계약:
+- 계정은 `urllib.parse.quote(user, safe="")` 로 **퍼센트 인코딩**한다(서버 파싱 정규식이
+  `HoneyUser/(\S+)` 라 공백이 들어가면 토큰이 잘린다).
+- 형식이 **8곳에 복제**돼 있다(공용 함수가 없는 것이 현 상태다):
+  `transport/version_check.py`(버전 대장의 유일한 입력 — 앱 시작 시 1회) ·
+  `transport/uploader.py` · `transport/error_report.py` · `excel_download/_fetch.py` ·
+  `excel_edit/excel_session.py` · `honey_ui/rawdata_hub_dialog.py` ·
+  `honey_ui/rawdata_quick_dialog.py` · `embedded_browser.py`(Chromium 기본 UA 에 **1회만**
+  append — `if "HoneyUser/" in ua: return`). 형식을 바꾸려면 8곳을 함께 고쳐야 한다.
+- **예외 1곳**: `transport/app_update.py`(런처)는 requests 를 못 써서 `python-urllib` +
+  HoneyVer 없음. 런처는 신원 통계 대상이 아니라 문제되지 않는다.
+- **계정 수집에 실패하면 토큰 없이 진행한다** — 업로드를 절대 깨뜨리지 않는다(서버는
+  `ip:<addr>` 로 집계). 신원은 편의 기능이지 인증이 아니다.
+
+### 스레드·종료
+- **워커 스레드는 UI 객체에 직접 접근하지 않는다** — 보고는 `queue.Queue` 로만
+  (`q_prep`, `_dist_stage_q`, `download_events`). 표준 패턴은
+  `ElapsedProgress`(+`mirror`) + `ThreadPoolExecutor(max_workers=1)`(FIFO = 제출순=실행순) +
+  `wait_for_future(fut, progress, poll_cb=, cancelled=)`
+  ([honey_ui/progress.py](../client/honey_ui/progress.py)). **새로 추가하는 무거운 작업은
+  이 패턴을 따른다** — 7초 이상 UI 를 막으면 사용자는 죽은 줄 안다.
+- 취소는 `OperationCancelled` 예외로 올라오며 **`except Exception` 보다 먼저** 잡아야 한다
+  (안 그러면 사용자 취소가 오류 팝업이 된다).
+- **종료는 `os._exit()` 로 강제한다**(`_final_exit`). `QApplication` 이 `QWebEngineView`
+  보다 먼저 파괴되면 access violation 이 난다 — 정상 종료 경로로 되돌리지 말 것.
+
+### Excel COM
+- COM 은 **워커 스레드에서만** 다루고 그 스레드에서 `CoInitialize` 한다
+  (`honey_main._init_com_for_worker` / `_co_uninitialize`).
+- COM 을 쓰는 곳: `report_flow/`(DRM/NASCA 해제 — Excel 설치 PC 필수) · `excel_edit/`
+  (xlwings 가시 창) · `excel_download/`(차트 PNG·기입) · `map_report/`(xlsx 부착 2함수).
+- **서버에는 COM 도 openpyxl 도 없다**(CLAUDE.md §5 규칙 1) — Excel 이 필요한 일은 전부
+  클라 몫이다. 반대로 `excel_download` 는 XlsxWriter 기본 엔진이라 Excel 없이도 생성된다.
+- PyInstaller + `ProcessPoolExecutor`(차트 렌더) 조합 때문에
+  `if __name__ == "__main__": multiprocessing.freeze_support()` 가 필수다.
+
+### 빌드·패키징
+- **PyQt6 전용, PyQt5 재도입 금지** — `build_honey.spec` 의 `excludes=['PyQt5']` 는 영구
+  유지한다(잔재가 있으면 "multiple Qt bindings" 로 빌드가 깨진다). enum 은 PyQt6 스코프드
+  표기(`Qt.Orientation.Vertical` 등).
+- `requirements.txt` 의 `PyQt6==6.11.0` / `PyQt6-WebEngine==6.11.0` 은 **`==` 핀 고정**이다 —
+  범위로 두면 Chromium 이 배포마다 바뀌어 렌더링 이상을 배포와 분리할 수 없다.
+- 런처(`build_launcher.spec`)는 **Qt·pandas·numpy·requests 를 전부 배제**한다(그래서 진행창이
+  tkinter 다). 런처에 무거운 의존을 넣지 말 것.
+- **`.bat` 은 순수 ASCII + CRLF**(cmd.exe 가 LF·한글에서 조용히 창을 닫는다), **`.ps1` 은
+  UTF-8 BOM**(한글 허용). 업데이트 배치 파일 자체는 mbcs 로 쓴다.
+
 ## 주의
+- 🔒 **Temperature 배치 창 `Group` 칸 — "이름 한 번 = 그 그룹 전원 개명" 은 필수 기능이다**
+  (2026-08-25 회귀 수정). `SourceNameDialog._on_group_text` → `_sync_group_name(gid)` 가
+  그 그룹 **모든 행**의 legend 앞부분을 그 이름으로 바꾸고 역할 접미사(`_RT`/`_CT`/`_HT`)만
+  남긴다. 그룹이 7개면 source 가 21개라, 이게 없으면 사용자가 legend 를 21번 손으로
+  고쳐야 한다 — Group 칸 UI 를 어떻게 바꾸든 **이 동작은 유지**한다.
+  세 가지 입력이 한 칸에서 갈린다: 새 이름 = 그 그룹 일괄 개명 / 다른 그룹의 이름 =
+  그 그룹으로 이동(▼ 드롭다운 선택과 같은 뜻) / 미지정 행의 새 이름 = 새 그룹 생성.
+  - ⚠️ **함정 — 이 기능은 예외 없이 조용히 죽는다**: 입력칸은 편집 가능 `QComboBox` 의
+    `combo.lineEdit()` 이고, 이는 **C++ 이 소유한 객체의 임시 파이썬 래퍼**다. 거기 건
+    `editingFinished` 연결(람다)은 그 래퍼가 GC 되는 순간 함께 사라진다 —
+    `receivers()` 는 2 그대로라 **예외도 로그도 남지 않고**, 사용자에게는 "이름을 적어도
+    아무 일이 안 일어난다" 로만 보인다. 같은 창의 ▼ 드롭다운·Role 콤보는 sender 가
+    파이썬이 만든 위젯이라 멀쩡해서 원인을 더 가린다(2026-08-24 실제 회귀).
+    → 창이 래퍼를 붙들어야 한다: `_render` 가 `self._group_edits` 를 비우고
+    `_group_edit` 이 매 행 `edit` 를 거기 담는다. **그 append 를 지우지 말 것.**
+  - 회귀 고정: [tests/test_source_group_rename.py](../tests/test_source_group_rename.py)
+    (`python tests/test_source_group_rename.py` — PyQt6 offscreen, **gc.collect() 를 강제로
+    돌린 뒤** 확인한다. 실기에서는 GC 시점이 무작위라 그게 없으면 통과해 버린다).
 - **report generator 산출물은 .xlsx 1개** — 하나의 파일에서 모든 것을 관리하는 정책.
 - **엔진 미설치 그레이스풀** — `import report_generator`(외부·무수정) 실패 시 분석 버튼만
   비활성, **로컬 xlsx 직접 업로드는 유지**. 분석/생성엔 pandas/numpy/xlwings+Excel 필요.

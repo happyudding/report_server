@@ -1,5 +1,13 @@
 # 전체 프로젝트 운영·정상동작·UX 검토 보고서
 
+> ⚠️ **역사 문서 — 2026-07-15 시점 스냅샷이다. 현행 코드 설명으로 읽지 말 것.**
+> 특히 §1 "가장 위험한 문제"(rawdata_replace)는 **해소됐다**: 현재 경로는
+> `POST /pe/report/session/<sid>/web_report/rawdata_replace` 이고 CSRF + `_editor_guard` +
+> 교체 전 백업이 붙어 있다([docs/02](docs/02_server_query_edit.md) ·
+> [docs/11](docs/11_web_report_tabs.md)). 이 보고서가 지목한 나머지 항목의 반영/미반영
+> 판단도 그 뒤 별도로 이뤄졌다 — **현행 사실은 docs/ 와 코드가 정본**이고, 이 문서는
+> 당시 판단 근거를 남겨 두기 위해 보존한다.
+
 > 검토 기준일: 2026-07-15 (Asia/Seoul)  
 > 검토 커밋: `0bdd44a48027d6f972ced50434d277fcdec26f5e` (`master`)  
 > 검토 범위: 현재 커밋과 작업 트리, 서버·클라이언트·DB·스토리지·문서, 격리 실행 및 브라우저 검증  

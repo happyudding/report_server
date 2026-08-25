@@ -158,8 +158,24 @@ function idetFailBinsHtml(data) {
 // 정규분포) 모두에서 끈다(2026-08-19 사용자 요청) — 내장 legend 클릭·강조 해제가 차트를
 // 접거나 덮는 문제가 있어, 강조 선택은 Distribution 갤러리와 동일하게 우측 칸에서만 한다.
 // 배치는 Distribution 갤러리와 동일한 세로 규격(DIST_LEGEND_VERT_CLS).
+// 이름이 distColorMap(=payload sources)에 없으면 스와치가 조용히 회색(#888)이 된다.
+// 색을 지어내 폴백하면 갤러리와 같은 source 가 다른 색으로 보여 더 나쁘므로(규칙 13)
+// 폴백 없이 **경고만** 남긴다 — payload 와 /scatter 의 source 이름이 갈린 세션을 신고
+// 없이도 콘솔 한 줄로 판별하기 위한 것이다(이름은 akey·chash 산출 밖이라 이름만 바꾼
+// 재업로드에서 갈릴 수 있다 → web_report/ingest.py `_source_names_changed`).
+// Gap Chart·합성 차트 상세는 시리즈 이름이 설계상 source 명이 아니므로 제외한다.
+let _idetLegendWarned = false;
 function idetLegendHtml(data) {
-  return distLegendHtml((data && data.sources) || [], "idet-legend " + DIST_LEGEND_VERT_CLS);
+  const list = (data && data.sources) || [];
+  if (!_idetLegendWarned && !_itemDetailOpts) {
+    const unknown = list.filter(s => !(s.name in distColorMap)).map(s => s.name);
+    if (unknown.length) {
+      _idetLegendWarned = true;   // 세션당 1회 — 강조 토글마다 재렌더되므로
+      console.warn("[item_detail] source 이름이 리포트 payload 와 불일치 — legend 색 없음.",
+                   "\n  상세:", unknown, "\n  payload:", Object.keys(distColorMap));
+    }
+  }
+  return distLegendHtml(list, "idet-legend " + DIST_LEGEND_VERT_CLS);
 }
 
 // 갤러리 툴바의 표시 옵션을 상세 안에서도 제공 — "Limit 안 Data만"(축 클램프)과

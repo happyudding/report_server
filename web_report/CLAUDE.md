@@ -73,6 +73,9 @@ web_report/
 │                        안내 전용(진행바 %는 종전 creep). parquet footer 로 규모(Mcells·kcols)
 │                        를 디코드 없이 재고, build_log 실측으로 배율 하나를 학습해 사양차를
 │                        흡수. 실패는 전부 None = 안내 생략 → docs/12
+├── build_status.py     콜드 빌드 진행 상태 등록/조회 (`GET .../web_report/build_status` —
+│                        202 를 받은 프런트가 진행률·단계를 폴링한다)
+├── diag_yield_step.py  yield STEP 분해 진단 도구 (운영 조회 경로 아님 — 수동 실행)
 ├── build_log.py        콜드 빌드 **단계별 소요 + 대기 3종(큐/풀/IPC)** 기록 (2026-08-04).
 │                        server/log/webreport_build_*.log JSON line · 실패(타임아웃·워커
 │                        붕괴)도 기록 · 관리자 이력 탭 카드. 오프로드 빌드는 잡이
@@ -146,6 +149,10 @@ web_report/
     │                       dist_shift(산포 비교 — Before 분모 지표 6종 meanshift σ/Cpk%/
     │                       stdev 증가율/median·IQR/KS D + 유의성 2종 + focus 판정)·
     │                       equivalence(동일성 검증 Grade1/2/3)=그룹 pool)
+    ├── compare_issue.py    Compare 검출을 **이슈 표**로 (Distribution·ETC 시트).
+    │                       row_key `CMPDIST|<item>` / `CMPETC|<item>` — 불변 저장 키.
+    │                       ⚠ **TAB_REGISTRY 밖**이다: metrics.py 가 Compare 세션일 때
+    │                       sheets["Issue Table Compare"] 에 직접 주입한다
     ├── significance.py     2표본 유의성 검정 (scipy 없이 — 불완전베타→Student-t CDF,
     │                       Welch t / Brown-Forsythe). dist_shift 의 **노이즈 게이트** 전용:
     │                       die 공간상관·거대 n 때문에 p 는 "노이즈다" 한 방향만 신뢰 가능
@@ -158,7 +165,7 @@ web_report/
 |--------|----------------------|------|
 | 업로드 라우트 | [server/upload_webreport.py](../server/upload_webreport.py) | `POST /pe/report/upload_webreport` |
 | 데이터/편집 라우트 | [server/report/routes_webreport.py](../server/report/routes_webreport.py) | `.../web_report/*` (CSRF + 편집자 가드) |
-| 세션 상세 페이지 | [report_view.html](../server/report/report_view.html) + [static/webreport/](../server/report/static/webreport/) | 마크업+CSS / 탭별 JS 17모듈 |
+| 세션 상세 페이지 | [report_view.html](../server/report/report_view.html) + [static/webreport/](../server/report/static/webreport/) | 마크업+CSS / 탭별 JS — 파일 32개 중 31개 순서 로드(정본 표 [docs/11 §렌더 구조](../docs/11_web_report_tabs.md)) |
 | 저장소(parquet/manifest) | [storage_gateway](../server/storage_gateway/__init__.py) | `save/load_webreport_sources`. **직접 import 금지** — `runtime.storage()` 포트로 접근 |
 | DB CRUD | [database/report_db.py](../server/database/report_db.py) | create/update_session, log_audit, get/apply_webreport_edits, get_webreport_edit_rev |
 | eval_analyzer 엔진 | [eval_analyzer/](../eval_analyzer/) `eval_engine` | **ai_comment.py(evaluate, persist=False) + eval_export.py(store·ingest 헬퍼) + eval_debug.py(룰 리로드·트레이스) 3곳에서만 import** (단방향) → [docs/13](../docs/13_eval_analyzer_integration.md) |

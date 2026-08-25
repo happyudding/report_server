@@ -10,7 +10,7 @@
 
 | 파일 (패턴) | 정체 | 생성 주체 | 날짜 파일명? |
 |-------------|------|-----------|--------------|
-| `DB/pe/report/report.db` | **메인 세션 DB** — 테이블 25개 전부 여기 | `report_db.init_report_db` | 아니오 (고정명) |
+| `DB/pe/report/report.db` | **메인 세션 DB** — 테이블 27개 전부 여기 | `report_db.init_report_db` | 아니오 (고정명) |
 | `DB/pe/report/backup/report_YYYYMMDD_HHMMSS.db` | report.db **자동 백업** (최대 7개 rotation) | `db_backup.run_backup` | **예 — 의도된 백업** |
 | `DB/pe/report/product_info.db` | **기준정보 카탈로그** — part_ids 검색 후보 + 세션 기준정보 lookup (읽기전용) | [tools/product_info_import](../tools/product_info_import/README.md) (Excel PC) → 수동 복사 | 아니오 (고정명) |
 | `DB/pe/report/voc/voc.db` · `eval/eval.db` | VOC 게시판 / 코멘트 export — report_server 소유 별도 파일 | `voc_db.py` / `eval_export.py` | 아니오 (고정명) |
@@ -26,7 +26,7 @@
 ## 1. report.db — 세션 관리 단일 DB
 
 - 경로: `config.REPORT_DB_PATH` (env `REPORT_DB_PATH` 로 변경 가능).
-- 테이블 25개, 전부 `report_` prefix. 정본 SCHEMA 는
+- 테이블 27개, 전부 `report_` prefix. 정본 SCHEMA 는
   [core.py](../server/database/core.py), 목록·컬럼은 [03 저장소](03_storage.md) 참조.
 - DB 는 **메타데이터 저장소**다 — 큰 본문(parquet·manifest·계산 캐시·이미지, 그리고
   2026-08-14 부터 Note 시트 JSON)은 전부 `uploads/report/` 또는 S3 에 있고 DB 에는 포인터만

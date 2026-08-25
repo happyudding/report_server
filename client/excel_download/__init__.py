@@ -612,6 +612,8 @@ def _bin1_cell(cell, info):
 
     미니 CDF 렌더는 (색, x, y) 와 셀의 lo/hi 만 쓰므로 나머지 필드(n/avg/std)는 그대로 둔다.
     Bin1 응답에 없는 소스는 양품 die 가 없다는 뜻이라 빈 배열 — 그 소스만 안 그려진다.
+    끝의 ecdf_n(세로 채움용 표본 수)만은 **Bin1 응답 값으로 갈아끼운다** — 갈아끼운 ECDF 와
+    표본이 달라지므로 옛 값을 남기면 채움 밀도가 어긋난다.
     """
     src_map = info.get("sources") or {}
     sources = []
@@ -620,7 +622,7 @@ def _bin1_cell(cell, info):
         sources.append((s[0], s[1],
                         np.asarray(d.get("x") or [], dtype="float32"),
                         np.asarray(d.get("y") or [], dtype="float32"),
-                        s[4], s[5], s[6]))
+                        s[4], s[5], s[6], d.get("n")))
     return {**cell, "sources": sources}
 
 
@@ -669,6 +671,8 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None, chart_notes=No
             avg, std = _ecdf_mean_std(xs, ys)
             n = None
             # float32: 플롯(수백 px 폭) 정밀도로 충분 — 자식 프로세스 피클 전송량 절반
+            # 끝의 ecdf_n 은 **세로 채움 간격 전용**(웹 distStepY 미러)이라 위 n(정규분포
+            # 곡선용, 의도적 None)과 자리를 나눈다 — 한 칸에 담으면 곡선 렌더가 바뀐다.
             sources.append((
                 src_name,
                 color_of.get(src_name, "#888888"),
@@ -676,6 +680,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None, chart_notes=No
                 np.asarray(ys, dtype="float32"),
                 n,
                 avg, std,
+                data.get("n"),
             ))
         cells.append({
             "title": subject,

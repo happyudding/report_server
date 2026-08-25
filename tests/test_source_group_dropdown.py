@@ -9,6 +9,11 @@
 - 그룹 이름 일괄 개명(종전 동작) 유지 + 드롭다운 표시 문자열 잔존 가드
 - _accept: 같은 그룹 CT/HT 중복 차단 + 그룹별 Role 구성 불일치 확인 질문
 - 이동 후 result_arrangement groups 정합
+
+⚠ 여기서는 핸들러(`_on_group_text`)를 **직접 호출**한다 — 판정 규칙만 보는 테스트다.
+그래서 "위젯 신호가 핸들러까지 도달하는가" 는 **못 잡는다**(2026-08-24 회귀: lineEdit 래퍼가
+GC 되며 연결이 조용히 끊겨 이름 입력이 무반응이 됐는데 이 파일은 전부 통과했다).
+실제 키 입력 경로는 [test_source_group_rename.py](test_source_group_rename.py) 가 고정한다.
 """
 import os
 import sys

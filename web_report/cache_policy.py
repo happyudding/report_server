@@ -86,6 +86,16 @@ def dist_key(session, *, bin1: bool = False, prep_digest: str = "",
     return _base(session, prep_digest) + (_mode(session),) + _bin1_suffix(bin1, bin1_scope)
 
 
+# 배치 ECDF 응답 스키마 세대. 응답 구조(items[].sources[].x/y/n)를 바꾸면 올린다 —
+# 이 키에는 edits_rev 가 없어 이 값 말고는 재계산을 강제할 수단이 없다.
+# **전역 REPORT_SCHEMA_VERSION 과 무관한 전용 세대**다(전역 bump 는 콜드 폭풍).
+# 짝인 dist_key 에는 **일부러 넣지 않는다** — 그쪽은 Honey 가 업로드 때 시딩한 dist blob
+# 이 얹히는 자리라, 무효화하면 그 시딩이 막아 주던 수십 초 콜드 dist 빌드가 되살아난다.
+# 웹 화면(갤러리 카드·미니셀·composite·Gap)은 전부 이 배치 경로만 쓴다.
+# v1: 소스별 표본 수 n 추가 (미니셀 세로 채움 간격 정본 — 2026-08-25)
+DIST_BATCH_SCHEMA_VERSION = 1
+
+
 def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
                    prep_digest: str = "", bin1_scope: str = "") -> tuple:
     """항목 배치 ECDF(GET .../distribution_batch) 응답 gzip 캐시 키.
@@ -94,7 +104,8 @@ def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
     배치 구성이 스크롤에 따라 달라지므로 집합 자체가 키의 일부다. 전체 dist 캐시와
     같은 세션을 가리키지만 별도 캐시라 서로를 무효화하지 않는다.
     """
-    return (_base(session, prep_digest) + (_mode(session), str(subjects_digest))
+    return (_base(session, prep_digest)
+            + (_mode(session), str(subjects_digest), DIST_BATCH_SCHEMA_VERSION)
             + _bin1_suffix(bin1, bin1_scope))
 
 
