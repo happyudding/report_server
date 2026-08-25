@@ -325,7 +325,7 @@ document.querySelector(".content").addEventListener("click", e => {
 });
 
 // Status 낙관 반영은 행 인덱스가 아니라 **이슈 키**로 찾아 쓴다 (2026-08-11 수정).
-// 화면이 그린 배열은 dropIssueMostFailDetailRows 로 걸러진 사본이라 td.dataset.r 이
+// 화면이 그린 배열은 insertBinAggRows 로 가공된 사본이라 td.dataset.r 이
 // 원본 rows(DATA.issue_table_text) 인덱스와 어긋난다 — 걸러진 행 수만큼 밀리는 CPK/ETC
 // 섹션에서 엉뚱한 행의 Status 가 바뀌어 Summary 의 Open/Close 카운트가 안 따라왔다.
 // 섹션 추적은 issueStatusCounts / sheets.js rowSection 과 같은 규칙(Category 상속).
@@ -411,13 +411,25 @@ document.querySelector(".content").addEventListener("change", async e => {
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     // 낙관 반영: 재렌더 없이 rows 데이터만 갱신 → Summary Open/Close 카운트 재계산 유도.
     // rows 는 그 셀이 속한 패널의 것(Issue Table / Issue Table Temp)이어야 한다.
-    const td = sel.closest("td");
-    applyIssueStatusToRows(issueRowsOf(issuePanelOf(sel)), key, value);
-    setStatusDot(td, value);   // 셀 색(Open 주황 / Close 초록) 갱신
+    const panel = issuePanelOf(sel);
+    applyIssueStatusToRows(issueRowsOf(panel), key, value);
+    // 같은 키의 select 가 2개일 수 있다 — Yield 섹션은 접힘 대표행과 펼침 집계 헤더행이
+    // 같은 bin 단위 키(Yield|<bin>)를 공유한다. 한쪽만 갱신하면 토글했을 때 옛 값이 보인다.
+    // 속성 선택자 대신 순회 비교 — key 에 item 명이 들어가는 섹션(CPK|/TEMP|/ETC|)은
+    // 따옴표·역슬래시가 섞일 수 있어 선택자 문자열로 만들면 깨진다.
+    (panel || document).querySelectorAll("select.issue-status-sel").forEach(other => {
+      if (other.dataset.skey !== key) return;
+      other.value = value;
+      setStatusDot(other.closest("td"), value);   // 셀 색(Open 주황 / Close 초록) 갱신
+    });
     tabDirty["summary"] = true;
   } catch (err) {
-    sel.value = (value === "Close") ? "Open" : "Close";   // 실패 시 롤백
-    setStatusDot(sel.closest("td"), sel.value);
+    const back = (value === "Close") ? "Open" : "Close";   // 실패 시 롤백
+    ((issuePanelOf(sel)) || document).querySelectorAll("select.issue-status-sel").forEach(other => {
+      if (other.dataset.skey !== key) return;
+      other.value = back;
+      setStatusDot(other.closest("td"), back);
+    });
     showToast("Status 저장 실패: " + err.message);
   }
 });
@@ -543,6 +555,26 @@ document.querySelector(".content").addEventListener("keydown", e => {
   cell.blur();   // focusout 핸들러가 링크 표시로 복귀시킨다
 });
 
+// Yield 섹션의 접힘 대표행과 첫 상세행(most-fail 항목)은 **같은 row_key** 를 갖는다
+// (comment 저장 키가 Yield|<bin>|<item> 이고 대표행 이름이 곧 그 항목이다). 둘은 접힘/펼침으로
+// 배타 표시되지만 DOM 에는 함께 있으므로, 한쪽을 고치고 재렌더 없이 토글하면 반대쪽이 옛 값을
+// 보인다. 저장 자체는 변경분만 보내고 성공 시 rows 에 write-back 하므로 데이터는 맞다 —
+// 여기서는 **화면 사본**만 맞춰 준다.
+function mirrorCommentCell(cell, raw) {
+  const key = cell && cell.dataset ? cell.dataset.key : "";
+  const col = cell && cell.dataset ? cell.dataset.col : "";
+  if (!key || !col) return;
+  const panel = issuePanelOf(cell);
+  const scope = panel || document.querySelector(".content");
+  if (!scope) return;
+  scope.querySelectorAll(`td[data-key][data-col]`).forEach(td => {
+    if (td === cell || td.dataset.key !== key || td.dataset.col !== col) return;
+    if (td.isContentEditable) return;      // 편집 중인 셀은 건드리지 않는다
+    td.dataset.raw = raw;
+    td.innerHTML = linkifyComment(raw);
+  });
+}
+
 // comment 셀 편집 종료(focusout): 편집 중 원문(@[항목])을 data-raw 에 되저장하고 링크 표시로
 // 복귀시킨다. 이래야 저장 버튼을 누르지 않아도(=전체 탭 재렌더 없이) 방금 입력한 @멘션이 곧바로
 // 클릭 가능한 Item_detail 링크가 된다. mention 드롭다운 선택은 mousedown+preventDefault 로
@@ -554,6 +586,7 @@ document.querySelector(".content").addEventListener("focusout", e => {
   cell.contentEditable = "false";
   cell.dataset.raw = raw;                  // 저장·재편집 라운드트립용 원문 갱신
   cell.innerHTML = linkifyComment(raw);    // @[항목] → 링크, *[..] → 색·굵기 표시로 복귀
+  mirrorCommentCell(cell, raw);
   hideMention();
   hideCmtFmtBar();
   // 편집 종료 즉시 DB 저장 (web_report 만 — legacy PATCH /content 는 405 폐지).
@@ -1188,7 +1221,7 @@ function buildPayload() {
 // 변경 없으면 요청을 보내지 않는다. 실패 시 throw — 호출부가 dirty 복원.
 //
 // 행 조회는 인덱스(td.dataset.r)가 아니라 **row_key** 로 한다 — Status(2026-08-11)와 같은
-// 이유: 화면이 그린 배열은 dropIssueMostFailDetailRows 로 걸러진 사본이라 td.dataset.r 이
+// 이유: 화면이 그린 배열은 insertBinAggRows 로 가공된 사본이라 td.dataset.r 이
 // 원본 rows(DATA.issue_table_text) 인덱스와 어긋난다. 인덱스로 찍으면 write-back 이 위쪽
 // 엉뚱한 행에 들어가, 일괄 삭제 후 재렌더에서 comment 가 밀려 보였다(2026-08-14 수정).
 // Yield 대표행과 걸러진 첫 상세행은 같은 키를 공유하므로 매칭된 모든 행에 쓴다
@@ -1530,7 +1563,9 @@ function setStatusDot(td, value) {
 // 백엔드가 단건 API 라 순차 호출한다(세션 편집 DB read-modify-write 경합 방지). 재로드는 마지막 1회.
 async function deleteSelectedIssueRows(panel) {
   panel = panel || activeIssuePanel();
-  const checked = panel ? [...panel.querySelectorAll(".issue-del-chk:checked")] : [];
+  // 같은 이슈를 가리키는 체크박스가 2개일 수 있다(Yield 접힘 대표행 ↔ 펼침 집계 헤더행)
+  // — 키로 접어야 개수와 요청이 부풀지 않는다.
+  const checked = issueSelectedChks(panel);
   if (!checked.length) { showToast("삭제할 행을 체크하세요."); return; }
   if (!confirm(`체크한 ${checked.length}개 행을 Issue Table 에서 삭제할까요?\n※ 삭제한 행 복원은 "삭제 전체 초기화"로만 가능합니다.`)) return;
   if (!(await flushPendingComments())) return;
@@ -1585,13 +1620,20 @@ async function bulkSetIssueStatus(value, scope, panel) {
   if (!panel) return;
   let sels;
   if (scope === "selected") {
-    const checked = [...panel.querySelectorAll(".issue-del-chk:checked")];
+    const checked = issueSelectedChks(panel);
     if (!checked.length) { showToast("Status 를 바꿀 행을 선택하세요."); return; }
     sels = checked.map(chk => chk.closest("tr").querySelector("select.issue-status-sel")).filter(Boolean);
   } else {
     sels = [...panel.querySelectorAll("select.issue-status-sel")];
   }
-  const targets = sels.filter(sel => sel.value !== value && sel.dataset.skey);
+  // 같은 skey 의 select 가 2개일 수 있다(대표행 ↔ 집계 헤더행) — 개수·요청이 부풀지 않게 접는다.
+  const seenSkey = new Set();
+  const targets = sels.filter(sel => {
+    if (sel.value === value || !sel.dataset.skey) return false;
+    if (seenSkey.has(sel.dataset.skey)) return false;
+    seenSkey.add(sel.dataset.skey);
+    return true;
+  });
   if (!targets.length) { showToast(`바꿀 행이 없습니다 (이미 모두 ${value}).`); return; }
   const what = scope === "selected" ? "선택한" : "전체";
   if (!confirm(`${what} ${targets.length}개 행의 Status 를 ${value} 로 변경할까요?`)) return;
@@ -1608,9 +1650,13 @@ async function bulkSetIssueStatus(value, scope, panel) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     const rows = issueRowsOf(panel);
-    targets.forEach(sel => {
+    const done = new Set(targets.map(sel => sel.dataset.skey));
+    targets.forEach(sel => applyIssueStatusToRows(rows, sel.dataset.skey, value));
+    // 화면 갱신은 **같은 skey 의 select 전부**에 — 대표행/집계 헤더행처럼 한 키에 셀이
+    // 둘일 수 있어 targets(키당 1개)만 고치면 반대쪽이 옛 값으로 남는다.
+    panel.querySelectorAll("select.issue-status-sel").forEach(sel => {
+      if (!done.has(sel.dataset.skey)) return;
       sel.value = value;
-      applyIssueStatusToRows(rows, sel.dataset.skey, value);
       setStatusDot(sel.closest("td"), value);
     });
     tabDirty["summary"] = true;

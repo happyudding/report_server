@@ -265,6 +265,51 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   나간다 — 계산에 쓴 규격과 화면 규격이 다르면 CPK 탭의 한계값 역산(avg ± 3·Cpk·stdev)이
   맞지 않는다. 값이 바뀌므로 `REPORT_SCHEMA_VERSION` v29(**서버 재시작 필요**).
   회귀 고정: [tests/test_cpk_temperature_basis.py](../tests/test_cpk_temperature_basis.py).
+- **Bin 그룹 펼침 = 집계 헤더행 분리 (2026-08-25)**: Yield 탭과 Issue Table Yield 섹션 모두,
+  같은 Bin 에 항목이 **여럿일 때만** 접힘/펼침의 첫 줄이 달라진다.
+
+  | 상태 | 첫 줄 | 그 아래 |
+  |------|-------|---------|
+  | 접힘 (**종전과 동일**) | 대표행 — 숫자는 Bin 합계, 이름은 most-fail 항목 | 없음 |
+  | 펼침 (**변경**) | 집계 헤더행 `BIN 15    (3 items)`, TNO `-`, 숫자는 Bin 합계 | 그 Bin 의 **모든** TNO 행(각자 실제 값) |
+
+  종전에는 펼칠 때 첫 상세행(= most-fail 항목)을 "대표행과 중복"이라며 지웠는데, 대표행의
+  숫자는 그 항목 값이 아니라 **Bin 합계**여서 그 항목의 실제 fail 수가 화면 어디에도 없었다
+  (TEST1 이 2개 fail 인데 `0.5 / 5` 로 표시 — 사용자 신고). 이제 그 행을 되살리고 합계는
+  정체가 분명한 집계 헤더행으로 옮긴다. rep 와 agg 는 **상호 배타**로 표시된다.
+  - **규약 정본은 [web_report/yield_agg.py](../web_report/yield_agg.py)** (`bin_agg_label` /
+    `build_bin_agg_row` / `expand_bin_group` / `insert_bin_agg_rows`). 소비자가 4곳
+    (웹 [sheets.js](../server/report/static/webreport/sheets.js) `insertBinAggRows` +
+    [yield_issue.js](../server/report/static/webreport/yield_issue.js) `yieldBinAggRow`,
+    Honey Excel [_extra.py](../client/excel_download/_extra.py)·[_sheets.py](../client/excel_download/_sheets.py)·[_xlsx.py](../client/excel_download/_xlsx.py))
+    이라 **라벨 문자열을 각자 만들지 말 것** — JS 사본 1벌은 테스트가 파이썬 정본과 글자
+    단위로 대조한다([tests/test_yield_bin_agg_js.py](../tests/test_yield_bin_agg_js.py)).
+    `tabs/` 밖에 둔 이유는 Honey 클라가 pandas·전 탭 레지스트리를 끌어오지 않게 하기 위함.
+  - **서버 payload 무변경** — 집계행은 `rep` 에서 표시 직전에 파생할 뿐이라
+    `REPORT_SCHEMA_VERSION` 을 올리지 않는다(§5-14 콜드 폭풍 회피). `yield_bin_groups`·
+    `yield_step_groups`·`sheets["Yield"]`·public_api 응답 전부 종전 그대로다.
+  - **항목이 1개뿐인 Bin 은 집계행도 ▼ 토글도 만들지 않는다**(사용자 확정) — 값이 그 항목
+    값과 같아 같은 줄이 두 번 보일 뿐이다. 표시는 종전과 100% 동일.
+  - **Issue Table 집계행은 Map/Distribution 이 빈 칸**이다(미니셀 112px 이 빠져 행 높이가
+    숫자에 맞게 좁아진다 — 사용자 요청). 그림이 바로 아래 항목 행들과 같아 중복이기도 하다.
+  - **저장 키**: 집계행은 comment 키가 **없다**(`issueRowKey` → `""`) — 라벨을 키로 쓰면
+    기존 `Yield|<bin>|<item>` comment 가 고립된다(§5-12). 반대로 Status/숨김 키
+    `Yield|<bin>` 은 **집계행에도 준다**(원래 bin 단위 키라 집계행이 자연스러운 주인이고,
+    접힘 대표행과 상호 배타로 보이므로 한쪽만 보인다). 같은 키의 셀이 DOM 에 2개 생기므로
+    comment blur·Status 변경은 [edit_mode.js](../server/report/static/webreport/edit_mode.js)
+    `mirrorCommentCell` / Status 낙관 갱신이 **같은 키 전부**를 맞춘다.
+  - ⚠ **Issue Table Temp·Compare 는 대상이 아니다.** 같은 `_grp`/`_detail` 규약을 쓰지만
+    대표행이 **항목 행 자체**라 합계 개념이 없다 — `rep.Item == 첫 상세행.Item` 가드가
+    자동으로 제외한다(종전 `dropIssueMostFailDetailRows` 의 가드를 그대로 승계).
+  - **검색 강제 펼침**(`.yield-searching`/`.issue-searching`)도 대표행을 감추고 집계행을
+    띄운다(`tr.*-bin-rep.has-agg`) — 안 그러면 검색 결과에서 옛 혼동이 그대로 재발한다.
+  - **Excel 3경로도 화면과 같은 구성**(사용자 확정): 웹 Yield Excel Down / 웹 Issue Table
+    Excel / Honey 전체 Excel 모두 집계 헤더행 + 전 TNO 행. Honey Excel 의
+    `write_issue_sheet` 은 상세 comment 를 대표행에 합치던 동작을 **집계행 그룹에서만**
+    멈춘다(상세행이 각자 한 줄로 나가므로 합칠 이유가 없다).
+  - 회귀 고정: [tests/test_yield_bin_agg.py](../tests/test_yield_bin_agg.py)(값·합 검산·원본
+    불변) + [tests/test_yield_bin_agg_js.py](../tests/test_yield_bin_agg_js.py)(headless Edge
+    로 실제 DOM — 접힘/펼침 행 구성·미니셀 빈 칸·저장 키·Temp 표 불변).
 - **Issue Table comment 키**: `row_key` 규약 — Yield 행 `Yield|<bin>|<item>`,
   CPK 데이터 행 `CPK|<item>`, TEMP 행 `TEMP|<item>`(Temperature 전용), ETC 행 `ETC|<item>`.
   comment 컬럼은 `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서

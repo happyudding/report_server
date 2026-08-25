@@ -711,6 +711,10 @@ function reorderYieldRows(rows, cols) {
 function issueRowKey(r, section) {
   const item = String((r && r["Item"]) ?? "");
   if (!item.trim()) return "";
+  // 펼침 집계 헤더행(insertBinAggRows)은 표시 전용이다 — Item 이 측정 항목이 아니라
+  // "BIN 15    (3 items)" 라벨이라 키를 주면 그 문자열로 comment 가 저장돼 원래 항목의
+  // comment 가 고립된다. 키를 주지 않으면 data-key 자체가 안 붙어 저장 경로에서 빠진다.
+  if (r && r._agg) return "";
   if (section === "Yield") return `Yield|${String((r && r["Bin"]) ?? "")}|${item}`;
   if (section === "CPK") return `CPK|${item}`;
   if (section === "TEMP") return `TEMP|${item}`;
@@ -830,34 +834,64 @@ function issueSectionHeadRowsHtml(cols, sec) {
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
 }
 
-// Issue Table Yield 섹션: 각 Bin 그룹의 첫 상세행(= most-fail TNO)은 대표행이 같은 Item 을
-// 제목으로 이미 보여주므로 중복이라 표시에서 뺀다(2026-08-07 사용자 요청 — Yield 탭
-// renderYieldTable 의 slice(2)와 같은 규칙). 대표행 _ndetail 을 함께 줄여 남은 상세가 없으면
-// ▼ 토글도 사라진다. 서버 payload(캐시 포함)는 그대로 두고 표시 직전에만 거른다 —
-// comment 키는 대표행과 동일(Yield|bin|item)이라 지워도 편집·표시 유실이 없다.
-function dropIssueMostFailDetailRows(rows) {
-  const repByGrp = {};
-  const seen = new Set();   // 첫 상세행을 이미 제거한 _grp
+// Issue Table Yield 섹션: Bin 그룹의 표시 형태를 접힘/펼침 2단으로 만든다(2026-08-25).
+//
+//   접힘  = 대표행(rep) 1줄 — 숫자는 Bin 합계, 이름은 most-fail 항목. **종전과 동일**.
+//   펼침  = 집계 헤더행(BIN 15    (3 items), Bin 합계) + 그 Bin 의 **모든** TNO 행.
+//
+// 종전에는 첫 상세행(= most-fail TNO)을 "대표행과 중복"이라며 지웠는데, 대표행의 숫자는
+// 그 항목 값이 아니라 Bin 합계여서 **그 항목의 실제 fail 수가 화면 어디에도 없었다**
+// (TEST1 이 2개 fail 인데 5 로 보임). 이제 그 행을 되살리고, 합계는 정체가 분명한 집계
+// 헤더행으로 옮긴다. rep 와 agg 는 서로 배타로 표시된다(setIssueGroup).
+//
+// 서버 payload(캐시 포함)는 그대로 두고 표시 직전에만 사본을 가공한다 — 집계행은 rep 에서
+// 파생될 뿐 저장 대상이 아니다(row_key 없음 → 편집·저장 경로에 잡히지 않는다).
+//
+// ⚠ 대표행이 **집계행인 표에만** 적용해야 한다. Issue Table Temp(tabs/temp_fail._group_by_bin)
+// 는 같은 _grp/_detail 규약을 쓰지만 대표행이 항목 행 자체라 합계 개념이 없다 —
+// `rep.Item === 첫 상세행.Item` 가드가 그 표를 자동으로 제외한다(종전 가드 그대로 승계).
+function insertBinAggRows(rows) {
+  const src = rows || [];
+  const firstDetail = {};   // _grp → 첫 상세행
+  src.forEach(r => {
+    if (r && r._grp && r._detail && !(r._grp in firstDetail)) firstDetail[r._grp] = r;
+  });
   const out = [];
-  (rows || []).forEach(r => {
-    if (r && r._grp && !r._detail) {
-      const cp = Object.assign({}, r);   // _ndetail 을 고치므로 원본 불변 사본
-      repByGrp[r._grp] = cp;
-      out.push(cp);
+  const drop = new Set();   // 걸러낼 원본 행(단일 항목 Bin 의 중복 상세행) — 원본 불변
+  src.forEach(r => {
+    out.push(r);
+    if (!r || !r._grp || r._detail) return;
+    const first = firstDetail[r._grp];
+    // 대표행이 집계행인 표(Yield 섹션)인지 판정 — 아니면 종전 그대로 둔다.
+    if (!first || String(r.Item ?? "") !== String(first.Item ?? "")) return;
+    const nItems = Number(r._ndetail) || 0;
+    if (nItems <= 1) {
+      // 항목이 1개뿐인 Bin: 집계행을 만들지 않고 종전처럼 중복 상세행만 뺀다.
+      const cp = Object.assign({}, r);
+      cp._ndetail = 0;
+      out[out.length - 1] = cp;
+      drop.add(first);
       return;
     }
-    if (r && r._grp && r._detail && !seen.has(r._grp)) {
-      seen.add(r._grp);
-      const rep = repByGrp[r._grp];
-      // 정렬 규약상 첫 상세행 = 대표행과 같은 most-fail Item. 혹시 어긋나면 지우지 않는다.
-      if (rep && String(rep.Item ?? "") === String(r.Item ?? "")) {
-        rep._ndetail = Math.max(0, (Number(rep._ndetail) || 0) - 1);
-        return;
-      }
-    }
-    out.push(r);
+    // 집계 헤더행 — 숫자는 rep 그대로, 식별정보만 Bin 집계 표기. 편집 열은 비운다:
+    // comment/Signature 는 첫 TNO 행이 갖고(저장 키가 Yield|<bin>|<item> 이라 그쪽이 주인),
+    // Status 만 rep 에서 승계한다(저장 키가 bin 단위 Yield|<bin> 이라 집계행이 자연스럽다).
+    const agg = yieldBinAggRow(r, String(r["Bin"] ?? ""), nItems, {
+      Map: "", Distribution: "", "AI Comment": "", Signature: "",
+      "PTE comment": "", "개발 comment": "",
+    });
+    if (!agg) return;
+    delete agg._sig;
+    delete agg._sigrev;
+    // 대표행에 has-agg 마킹 — 검색 강제 펼침 CSS 가 "집계행이 있는 그룹의 대표행"만
+    // 감추기 위해 쓴다(Issue Table Temp 처럼 집계행이 없는 표는 대표행을 감추면 안 된다).
+    const repCp = Object.assign({}, r);
+    repCp._hasAgg = true;
+    out[out.length - 1] = repCp;
+    out.push(agg);
   });
-  return out;
+  // 단일 항목 Bin 의 중복 상세행 제거(위에서 표시만 해 두고 여기서 한 번에 거른다).
+  return drop.size ? out.filter(r => !drop.has(r)) : out;
 }
 
 function renderSheetTable(rows, opts) {
@@ -879,7 +913,7 @@ function renderSheetTable(rows, opts) {
   // tabs/temp_fail._group_by_bin 이 이미 정렬해 보낸다).
   const hasBinGroups = (bodyRows || []).some(r => r && r._grp);
   if (opts.kind === "yield" && !opts.edit && !hasBinGroups) bodyRows = reorderYieldRows(bodyRows, cols);
-  if (opts.kind === "issue") bodyRows = dropIssueMostFailDetailRows(bodyRows);
+  if (opts.kind === "issue") bodyRows = insertBinAggRows(bodyRows);
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
   // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.
@@ -969,7 +1003,10 @@ function renderSheetTable(rows, opts) {
       if (isMapCol(c)) {
         const binv = r && (r["Bin"] ?? r["bin"]);
         const hasBin = String(binv ?? "").trim() !== "";
-        if (opts.kind === "issue" && !subhead && hasBin && !issuePassRow
+        // 집계 헤더행은 Bin 이 있어도 미니맵을 넣지 않는다(_agg) — 그림이 바로 아래 항목
+        // 행들과 완전히 같아 중복이고, 미니셀(112px)이 빠져야 헤더행 높이가 숫자에 맞게
+        // 좁아진다(사용자 요청 2026-08-25).
+        if (opts.kind === "issue" && !subhead && hasBin && !issuePassRow && !(r && r._agg)
           && (issueRowSec === "Yield" || issueRowSec === "ETC")) {
           const expandBtn = (mapSourceCount() > 1)
             ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
@@ -1006,7 +1043,9 @@ function renderSheetTable(rows, opts) {
         // 분포 유무는 distribution_index(=/full 에 이미 있음)로 판단한다 — ECDF 는 보이는
         // 셀만 배치로 받으므로 캐시 보유 여부로 판단하면 아직 안 받은 항목의 셀이 통째로
         // 안 만들어진다. Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
-        if (opts.kind === "issue" && item && !subhead && !issuePassRow
+        // 집계 헤더행은 제외 — Item 이 라벨이라 distHasData 로도 걸러지지만, 판정을
+        // 데이터 유무에 맡기지 않고 명시한다(행 높이도 이 셀이 빠져야 좁아진다).
+        if (opts.kind === "issue" && item && !subhead && !issuePassRow && !(r && r._agg)
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC"
             || rowSection[ri] === "CPK" || rowSection[ri] === "TEMP")
           && distHasData(item)) {
@@ -1130,6 +1169,8 @@ function renderSheetTable(rows, opts) {
       // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).
       const isSelCell = opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem);
       if (isSelCell) clsParts.push("issue-sel-cell");
+      // 집계 헤더행 Item 라벨의 공백 4칸은 HTML 이 접으므로 그 셀만 pre 로 지킨다.
+      if (r && r._agg && String(c).trim().toLowerCase() === "item") clsParts.push("bin-agg-item");
       const cls = clsParts.join(" ");
       // Item 셀: 클릭 시 Item_detail 로 이동(항목명 = 측정항목). issue + yield(Bin 상세 구성표) 공용.
       // Pass(Bin 1) 행과 자유입력 Engr ETC 항목(TNO 없음 = 측정항목 아님)은 제외.
@@ -1170,7 +1211,10 @@ function renderSheetTable(rows, opts) {
         && String(c).trim().toLowerCase() === "step"
         && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
         const tcls = opts.kind === "issue" ? "issue-toggle" : "yield-toggle";
-        cellHtml += ` <button type="button" class="${tcls}" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
+        // 집계 헤더행은 펼침 상태에만 보이므로 처음부터 ▲(expanded)로 그린다.
+        const tExp = !!(r && r._agg);
+        cellHtml += ` <button type="button" class="${tcls}" data-grp="${esc(r._grp)}" ` +
+          `aria-expanded="${tExp ? "true" : "false"}">${tExp ? "▲" : "▼"}</button>`;
       }
       // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
       // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
@@ -1184,7 +1228,9 @@ function renderSheetTable(rows, opts) {
       const pfx = opts.kind === "issue" ? "issue-bin" : "yield-bin";
       trAttr = r._detail
         ? ` class="${pfx}-detail" data-grp="${esc(r._grp)}" style="display:none"`
-        : ` class="${pfx}-rep" data-grp="${esc(r._grp)}"`;
+        : (r._agg
+          ? ` class="${pfx}-agg" data-grp="${esc(r._grp)}" style="display:none"`
+          : ` class="${pfx}-rep${r._hasAgg ? " has-agg" : ""}" data-grp="${esc(r._grp)}"`);
     }
     return `<tr${trAttr}>${tds}</tr>`;
   };

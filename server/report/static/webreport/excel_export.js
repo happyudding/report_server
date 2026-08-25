@@ -67,7 +67,11 @@ function hxlNum(v) {
 }
 
 // _sheets.py yield_header / _yield_row_values / write_yield_sheet 파리티.
-// STEP(P1/P2/P3) 마다 표 1개 — 맨 위 Pass 행(그 STEP 까지의 누적 수율) + Bin 대표행(접힘).
+// STEP(P1/P2/P3) 마다 표 1개 — 맨 위 Pass 행(그 STEP 까지의 누적 수율) + Bin 별 행.
+// Bin 행은 **화면 펼침과 같은 구성**이다(2026-08-25 사용자 확정): 항목이 여럿이면
+// 집계 헤더행(BIN n    (k items), Bin 합계) + 그 Bin 의 모든 TNO 행(각자 실제 값),
+// 항목이 하나면 그 항목 행 하나. 접힘본(대표행만)을 내보내면 Bin 합계가 most-fail 항목
+// 이름을 달고 굳어 Excel 에도 같은 오해가 남는다.
 // yield_step_groups 가 없으면(구 payload) 전체 Bin 표 1개로 폴백한다.
 function buildYieldSheetData(report) {
   const srcs = hxlSourceNames(report);
@@ -94,6 +98,16 @@ function buildYieldSheetData(report) {
       .concat(srcs.map(s => (bySrc[s] || {}).survivor));
   }
 
+  // 한 Bin 그룹 → 내보낼 행들(화면 펼침과 동일 구성).
+  function groupRowValues(g) {
+    const grp = g || {};
+    const detail = (grp.rows || []).slice(1);      // rows[0] 은 rep 자기 자신
+    const agg = (typeof yieldBinAggRow === "function")
+      ? yieldBinAggRow(grp.rep, grp.bin, detail.length) : null;
+    if (!agg) return [rowValues(grp.rep)];         // 항목 1개 Bin — 종전과 동일
+    return [rowValues(agg)].concat(detail.map(rowValues));
+  }
+
   const stepGroups = (report && report.yield_step_groups) || [];
   const sections = [];
   if (stepGroups.length) {
@@ -101,7 +115,7 @@ function buildYieldSheetData(report) {
       const rows = [];
       const pass = stepPassRow((sg || {}).step);
       if (pass) rows.push(pass);
-      ((sg || {}).groups || []).forEach(g => rows.push(rowValues((g || {}).rep)));
+      ((sg || {}).groups || []).forEach(g => groupRowValues(g).forEach(v => rows.push(v)));
       sections.push({
         title: `STEP ${String((sg || {}).step || "").trim() || "(기타)"}`,
         rows: rows,
@@ -116,7 +130,8 @@ function buildYieldSheetData(report) {
   if (yieldRows.length && String((yieldRows[0] || {}).bin) === "1") {
     rows.push(rowValues(yieldRows[0]));
   }
-  ((report && report.yield_bin_groups) || []).forEach(g => rows.push(rowValues((g || {}).rep)));
+  ((report && report.yield_bin_groups) || []).forEach(g =>
+    groupRowValues(g).forEach(v => rows.push(v)));
   sections.push({ title: "", rows: rows });
   return { header: header, sections: sections };
 }
@@ -161,13 +176,20 @@ function blankRepeatedCpkLabels(rows) {
 }
 
 // _sheets.py write_issue_sheet 파리티 — 컬럼 순서(식별 → Map → Distribution → avg →
-// source → Status → comment), 접힌 detail 행 comment 흡수, CPK 서브헤더 소스명,
+// source → Status → comment), CPK 서브헤더 소스명,
 // 강조(Yield/ETC fail>0 / CPK<1.33), Category 세로 병합 구간.
 // rows: DATA.issue_table_text (화면 편집이 반영된 배열).
 // 반환 offset 은 데이터 행 기준(0=첫 데이터 행) — 기입 시 HEADER_ROW+1 을 더한다.
 function buildIssueSheetData(issueRows, srcs) {
   const header = ISSUE_ID_COLS.concat(["Map", "Distribution", "avg"])
     .concat(srcs).concat(["Status"]).concat(HXL_ISSUE_COMMENT_COLS);
+  // 화면과 같은 행 구성을 쓰기 위해 렌더러와 **같은 함수**로 집계행을 끼운다
+  // (사본을 만들지 않는다 — Excel 이 화면과 갈라지면 그게 곧 신고가 된다).
+  if (typeof insertBinAggRows === "function") issueRows = insertBinAggRows(issueRows);
+  // 집계행이 생긴 그룹은 상세행을 각자 한 줄씩 내보낸다 — comment 를 대표행에 합칠 이유가
+  // 없어진다(합치기는 상세행을 아예 안 내보내던 시절의 보완책이었다).
+  const aggGrps = new Set();
+  (issueRows || []).forEach(r => { if (r && r._agg && r._grp) aggGrps.add(r._grp); });
   const rows = [];
   const fails = [];        // [[rowOffset, colOffset], ...] — colOffset 은 header 기준
   const warns = [];
@@ -185,6 +207,7 @@ function buildIssueSheetData(issueRows, srcs) {
     if (r.Category === "Yield" || r.Category === "CPK" || r.Category === "ETC"
         || r.Category === "TEMP") scanSection = r.Category;
     if (scanSection === "TEMP" || !r._detail) return;
+    if (aggGrps.has(r._grp)) return;      // 집계행 그룹은 상세행이 자기 줄로 나간다
     HXL_ISSUE_COMMENT_COLS.forEach(col => {
       const text = stripCommentFormat(r[col]).trim();
       if (!text) return;
@@ -201,7 +224,9 @@ function buildIssueSheetData(issueRows, srcs) {
         || r.Category === "TEMP") {
       section = r.Category;
     }
-    if (r._detail && section !== "TEMP") return;
+    if (r._detail && section !== "TEMP" && !aggGrps.has(r._grp)) return;
+    // 접힘 전용 대표행(_hasAgg)은 집계 헤더행과 같은 줄이라 Excel 에는 한 번만 나간다.
+    if (r._hasAgg) return;
     const off = rows.length;
     const subhead = section === "CPK" && String(r.avg || "").trim().toLowerCase() === "cpk";
     const binText = String(r.Bin === undefined || r.Bin === null ? "" : r.Bin).trim();

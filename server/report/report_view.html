@@ -682,6 +682,14 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .sheet-table.kind-yield tbody tr.yield-bin-rep td { font-weight: 600; }
 .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #fbfcfe; color: #55606c; }
 .sheet-table.kind-issue tbody tr.issue-bin-rep td { font-weight: 600; }
+/* Bin 집계 헤더행 (펼침 전용 — sheets.js insertBinAggRows / yield_issue.js renderYieldTable).
+   접힘의 대표행과 같은 숫자를 보여주므로 굵기도 대표행과 같게 유지하고, 그 아래 항목
+   상세행은 기존 -detail 규칙(회색·보통 굵기)을 그대로 타 굵기가 자동으로 풀린다. */
+.sheet-table.kind-yield tbody tr.yield-bin-agg td { font-weight: 600; background: #f2f6fc; }
+.sheet-table.kind-issue tbody tr.issue-bin-agg td { font-weight: 600; background: #f2f6fc; }
+/* 라벨 "BIN 15    (3 items)" 의 공백 4칸 — HTML 이 접지 않게 이 셀만 pre.
+   저장·Excel 로는 평범한 space 로 나가므로 데이터에는 nbsp 를 섞지 않는다. */
+.sheet-table td.bin-agg-item { white-space: pre; }
 /* 좌측 고정 6열(Step/Bin/TNO/Item/Map/Distribution)은 hover 시에도 반드시 불투명이어야 한다 —
    행 hover 색(.sheet-table tbody tr:hover td, 특이도 0,2,2)은 고정열 배경(0,3,2)을 못 이겨
    고정열만 색이 안 바뀌고, 가로 스크롤 상태에서 고정열 밑으로 지나가는 우측 데이터가
@@ -712,6 +720,13 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .sheet-search-cnt { font-size: 11px; color: #667085; font-variant-numeric: tabular-nums; }
 #panel-issues.issue-searching tr.issue-bin-detail , #panel-issue-temp.issue-searching tr.issue-bin-detail, #panel-issue-cmp.issue-searching tr.issue-bin-detail{ display: table-row !important; }
 #panel-yield.yield-searching tr.yield-bin-detail { display: table-row !important; }
+/* 검색은 접힌 상세행을 강제로 펼친다 — 그 상태에서 대표행(Bin 합계를 most-fail 항목 이름으로
+   들고 있는 행)이 함께 남으면 펼침에서 없애려던 혼동이 그대로 재발한다. 검색 중에는
+   대표행을 감추고 집계 헤더행을 대신 띄운다. */
+#panel-issues.issue-searching tr.issue-bin-agg, #panel-issue-temp.issue-searching tr.issue-bin-agg, #panel-issue-cmp.issue-searching tr.issue-bin-agg,
+#panel-yield.yield-searching tr.yield-bin-agg { display: table-row !important; }
+#panel-issues.issue-searching tr.issue-bin-rep.has-agg, #panel-issue-temp.issue-searching tr.issue-bin-rep.has-agg, #panel-issue-cmp.issue-searching tr.issue-bin-rep.has-agg,
+#panel-yield.yield-searching tr.yield-bin-rep.has-agg { display: none !important; }
 #panel-issues.issue-searching tbody tr.row-search-hide, #panel-issue-temp.issue-searching tbody tr.row-search-hide, #panel-issue-cmp.issue-searching tbody tr.row-search-hide,
 #panel-yield.yield-searching tbody tr.row-search-hide { display: none !important; }
 /* Issue Table Status 보기 필터(액션 메뉴 "Close/Open 항목 숨기기", yield_issue.js
@@ -824,6 +839,7 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .sheet-table.kind-yield tbody td:nth-child(-n+4) { background: #fff; }
 .sheet-table.kind-yield tbody tr:nth-child(even) td:nth-child(-n+4) { background: #f7f9fb; }
 .sheet-table.kind-yield tbody tr.yield-bin-detail td:nth-child(-n+4) { background: #fbfcfe; }
+.sheet-table.kind-yield tbody tr.yield-bin-agg td:nth-child(-n+4) { background: #f2f6fc; }
 .sheet-table.kind-yield tbody tr:hover td:nth-child(-n+4) { background: #edf3fc; }
 .sheet-table.kind-yield th {
   background: #eef2f7; text-transform: uppercase; font-size: 10.5px;
@@ -2100,6 +2116,43 @@ td.issue-sig-cell .sig-chip { max-width: 104px; overflow: hidden; text-overflow:
 /* Summary 의 Compare 요약 카드 비고 열 — 숫자가 아니라 설명이라 좁게·연하게. */
 .iss-status-table td.cmp-sum-sub { color: #667085; font-size: 11px; font-weight: 400; }
 
+/* ── 세부 데이터 글자 크기 ×1.5 (Summary / Yield / CPK 탭) — 사용자 요청 2026-08-25 ──
+   표 안 값처럼 10~13px 로 손튜닝돼 있던 "작은 글씨"만 1.5배로 올린다. 제목
+   (.section-title / .yield-step-title / .yield-corner-title)과 이미 큰 대표값
+   (.yo-pct 30px · .yo-num 17px · .mfb-yield 20px)은 요청대로 건드리지 않는다.
+   패널 스코프(#panel-*)로 한정하는 이유: 같은 클래스(.sheet-table.kind-yield,
+   .mfb-table)를 Issue Table 탭·Item detail 도 쓰기 때문에 전역으로 올리면 그쪽에
+   따로 손튜닝된 값 폰트(15~21px)와 어긋난다.
+   열 폭은 함께 손대지 않는다 — .sheet-table 은 auto table-layout 이라 colWidth() 는
+   힌트일 뿐이고(내용이 넓으면 그만큼 열이 늘어난다) 넘치는 폭은 .sheet-wrap 의 가로
+   스크롤이 받는다. */
+#panel-summary .mfb-table { font-size: 18px; }              /* 12 → 18 (.mfb-yield 20px 유지) */
+#panel-summary .iss-status-table { font-size: 19.5px; }     /* 13 → 19.5 */
+#panel-summary .iss-status-table td.cmp-sum-sub { font-size: 16.5px; }   /* 11 → 16.5 */
+
+/* th 는 전역 `th{font-size:11px}` 가 잡고 있어(.sheet-table th 에는 크기 지정이 없다)
+   표 본문과 함께 명시해야 같이 커진다. */
+#panel-yield .sheet-table,
+#panel-yield .sheet-table th { font-size: 16.5px; }          /* 11 → 16.5 */
+#panel-yield .ybs-table { font-size: 16.5px; }
+#panel-yield .ybs-table th,
+#panel-yield .ybs-table .ybs-step .ybs-step-avg,
+#panel-yield .temp-rt { font-size: 15px; }                   /* 10 → 15 */
+/* 표가 커진 만큼 7행 스크롤 상한도 같은 비율로 — 안 올리면 종전보다 적은 행만 보인다. */
+#panel-yield .yield-by-source.ybs-scroll { max-height: 264px; }
+#panel-yield .yield-by-step.ybs-scroll { max-height: 267px; }
+#panel-yield .yield-overview .yo-label,
+#panel-yield .yield-overview .yo-basis { font-size: 16.5px; }
+#panel-yield .yield-overview .yo-cap { font-size: 15px; }
+
+#panel-cpk .sheet-table,
+#panel-cpk .sheet-table th { font-size: 16.5px; }            /* 11 → 16.5 */
+#panel-cpk .cpk-pager { font-size: 18px; }                   /* 12 → 18 */
+
+/* Issue Table 컬럼명(헤더) — 값 셀이 15~21px 인데 헤더만 11px 이라 읽기 어렵다는 요청
+   (2026-08-25). 헤더 밑 부기(.th-note 9px)는 안내문이라 그대로 둔다. */
+.sheet-table.kind-issue th { font-size: 16px; }
+
 .edit-bar {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 95;
   background: #fff; border-top: 1px solid #ddd; box-shadow: 0 -1px 8px rgba(0,0,0,.08);
@@ -2609,10 +2662,13 @@ html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row td {
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row:hover td,
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row:hover td { background: #17402b !important; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #20242c; color: #9aa3b0; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-agg td,
+html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-agg td { background: #263043; }
 /* Yield 좌측 고정열 불투명 배경 (라이트와 같은 순서 — hover 가 마지막) */
 html[data-theme="dark"] .sheet-table.kind-yield tbody td:nth-child(-n+4) { background: #1e2128; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr:nth-child(even) td:nth-child(-n+4) { background: #22262e; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td:nth-child(-n+4) { background: #20242c; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-agg td:nth-child(-n+4) { background: #263043; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr:hover td:nth-child(-n+4) { background: #263043; }
 html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-track { background: #1e2128; }
 html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }

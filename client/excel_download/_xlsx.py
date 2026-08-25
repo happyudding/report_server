@@ -299,6 +299,8 @@ class XlsxBook:
                           step_groups=None, step_summary=None, *,
                           yield_summary=None, yield_basis=None, pass_row_builder=None):
         """웹 Yield 탭 구성 — 상단 요약 3표(신규) + STEP 별 Bin 표 + fail 그라데이션."""
+        from web_report.yield_agg import expand_bin_group
+
         from ._sheets import yield_header, _yield_row_values, _step_pass_row_values
 
         ws = self._sheets["Yield"]
@@ -330,15 +332,19 @@ class XlsxBook:
                 pass_row = _step_pass_row_values(sg.get("step"), step_summary, source_names)
                 if pass_row:
                     rows.append(pass_row)
+                # 웹 펼침과 같은 구성 — 집계 헤더행 + 그 Bin 의 모든 TNO 행
+                # (항목이 하나면 그 항목 행 하나). _sheets.write_yield_sheet 와 같은 규약.
                 for group in sg.get("groups") or []:
-                    rows.append(_yield_row_values(group.get("rep") or {}, source_names))
+                    for r in expand_bin_group(group):
+                        rows.append(_yield_row_values(r or {}, source_names))
                 row = one_table(row, rows, label=f"STEP {label}") + 3
         else:
             rows = []
             if yield_rows and str(yield_rows[0].get("bin")) == _extra.PASS_BIN:
                 rows.append(_yield_row_values(yield_rows[0], source_names))
             for group in yield_bin_groups or []:
-                rows.append(_yield_row_values(group.get("rep") or {}, source_names))
+                for r in expand_bin_group(group):
+                    rows.append(_yield_row_values(r or {}, source_names))
             one_table(row, rows)
 
         self._set_col_widths(ws, header, {"Item": 36}, default=_NARROW_COL_WIDTH * 1.6)

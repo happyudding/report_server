@@ -5,6 +5,30 @@
 // Pass 행은 표에 넣지 않고 상단 요약 박스가 담당한다(전체 + STEP 별 통과율).
 let yieldPanelBound = false;
 
+// ── Bin 집계 헤더행 (펼침 표시 전용) ─────────────────────────────────────────
+// 서버 rep(대표) 행은 숫자가 Bin 합계인데 식별정보(Step/TNO/Item)는 most-fail 항목 것이다
+// (yield_tab._bin_total_row). 접힘에선 "Bin 요약"으로 읽히지만 펼치면 그 항목 혼자 Bin 전체
+// 만큼 죽은 것처럼 보인다 — 그래서 펼칠 때만 대표행을 이 집계 헤더행으로 갈아끼우고
+// most-fail 항목은 자기 실제 값을 가진 상세행으로 되돌린다(2026-08-25).
+//
+// 규약 정본은 서버 web_report/tabs/yield_tab.py (BIN_AGG_TNO / bin_agg_label /
+// build_bin_agg_row) — Excel 내보내기가 같은 라벨을 쓰므로 문자열을 여기서 다시 만들지 말고
+// 이 함수 하나만 호출할 것. 라벨 가운데 공백 4칸은 CSS `white-space: pre` 로 지킨다.
+const BIN_AGG_TNO = "-";
+function binAggLabel(binValue, nItems) {
+  return `BIN ${binValue}    (${nItems} items)`;
+}
+// rep 행 → 집계 헤더행 사본. 항목이 1개뿐인 Bin 은 null (펼쳐도 상세가 1줄이라 같은 값을
+// 두 번 보여줄 뿐 — 사용자 확정). extra 로 비울 컬럼(Map/Distribution/comment 등)을 준다.
+function yieldBinAggRow(rep, binValue, nItems, extra) {
+  if (!rep || !(nItems > 1)) return null;
+  const row = Object.assign({}, rep, extra || {});
+  row.TNO = BIN_AGG_TNO;
+  row.Item = binAggLabel(binValue, nItems);
+  row._agg = true;
+  return row;
+}
+
 // Yield 표 컬럼 순서(step/bin/tno/item → source yield/count → avg). 모든 STEP 표가 같은
 // 컬럼을 쓰도록 전체 행에서 한 번만 계산한다.
 function yieldColumnsFrom(allRows) {
@@ -48,7 +72,7 @@ function renderYieldTable(cols, groups, si, passRow) {
   const colMax = {};
   gradCols.forEach(c => { colMax[c] = 0; });
   (groups || []).forEach(g => {
-    const rows = [g.rep].concat((g.rows || []).slice(2));
+    const rows = [g.rep].concat((g.rows || []).slice(1));
     rows.forEach(r => gradCols.forEach(c => {
       const n = parseFloat(r ? r[c] : "");
       if (!isNaN(n) && n > colMax[c]) colMax[c] = n;
@@ -56,7 +80,9 @@ function renderYieldTable(cols, groups, si, passRow) {
   });
 
   // isPass = Bin1 행 — fail 행 전용 장식(Item 상세 링크 / 빨강 그라데이션)을 뺀다.
-  const cellTds = (r, toggleHtml, isPass) => cols.map(c => {
+  // isAgg = 펼침 집계 헤더행 — Item 이 측정 항목이 아니라 라벨이라 상세 링크를 걸지 않는다
+  // (그라데이션은 rep 와 같은 숫자이므로 그대로 둔다).
+  const cellTds = (r, toggleHtml, isPass, isAgg) => cols.map(c => {
     const v = r ? r[c] : "";
     const txt = (v === null || v === undefined) ? "" : String(v);
     const isEmpty = txt === "";
@@ -66,9 +92,11 @@ function renderYieldTable(cols, groups, si, passRow) {
     if (isEmpty) cls.push("st-empty"); else if (isNumVal(v)) cls.push("st-num");
     let inner = isEmpty ? "" : esc(txt);
     // Item 셀 → Item_detail 링크 (Bin1 Pass 행은 측정 항목이 아니라 제외)
-    if (cLower === "item" && !isEmpty && !isPass) {
+    if (cLower === "item" && !isEmpty && !isPass && !isAgg) {
       inner = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
     }
+    // 집계행 Item 라벨의 공백 4칸은 HTML 이 접으므로 그 셀만 pre 로 지킨다.
+    if (cLower === "item" && isAgg) cls.push("bin-agg-item");
     // source _yield / avg 셀: 각 컬럼 내 최댓값 대비 빨강 그라데이션(불량률 높을수록 진함).
     if (!isEmpty && !isPass && gradSet.has(c)) {
       const num = parseFloat(v);
@@ -84,18 +112,27 @@ function renderYieldTable(cols, groups, si, passRow) {
   }).join("");
 
   let body = "";
-  if (passRow) body += `<tr class="yield-pass-row">${cellTds(passRow, "", true)}</tr>`;
+  if (passRow) body += `<tr class="yield-pass-row">${cellTds(passRow, "", true, false)}</tr>`;
   (groups || []).forEach((g, gi) => {
     const grp = `${si}_${gi}`;   // 표 간 유일한 그룹 id
-    // g.rows = [집계 rep, most-fail TNO, 나머지 TNO...]. 대표행이 most-fail Item 을 제목으로
-    // 이미 보여주므로 펼침 상세에서 most-fail 행(rows[1])은 중복이라 빼고(slice(2)),
-    // 남는 상세가 없는 단일 항목 Bin 은 ▼ 토글 자체를 만들지 않는다(2026-08-07 사용자 요청).
-    const detail = (g.rows || []).slice(2);
-    const toggle = detail.length
+    // g.rows = [집계 rep, most-fail TNO, 나머지 TNO...].
+    // 접힘 = rep 1행(Bin 합계, most-fail Item 이름) — 종전과 동일.
+    // 펼침 = 집계 헤더행(BIN n    (k items)) + **모든** TNO 행(most-fail 포함, slice(1)).
+    //   most-fail 행을 되살린 것이 이번 변경의 핵심이다 — 그 항목의 실제 fail 수가 종전엔
+    //   화면 어디에도 없었다(대표행이 그 자리에 Bin 합계를 들고 앉아 있었다, 2026-08-25).
+    // 항목이 1개뿐인 Bin 은 집계행도 토글도 만들지 않고 rep 만 그린다(값이 그 항목 값과 동일).
+    const detail = (g.rows || []).slice(1);
+    const agg = yieldBinAggRow(g.rep, g.bin, detail.length);
+    const toggle = agg
       ? ` <button type="button" class="yield-toggle" data-grp="${grp}" aria-expanded="false">▼</button>` : "";
-    body += `<tr class="yield-bin-rep" data-grp="${grp}">${cellTds(g.rep, toggle)}</tr>`;
+    body += `<tr class="yield-bin-rep${agg ? " has-agg" : ""}" data-grp="${grp}">${cellTds(g.rep, toggle, false, false)}</tr>`;
+    if (!agg) return;
+    // 토글 버튼은 rep·agg 양쪽에 둔다 — 둘은 상호 배타로 표시되므로 접힘에선 rep 의 ▼,
+    // 펼침에선 agg 의 ▲ 가 보인다.
+    const toggleUp = ` <button type="button" class="yield-toggle" data-grp="${grp}" aria-expanded="true">▲</button>`;
+    body += `<tr class="yield-bin-agg" data-grp="${grp}" style="display:none">${cellTds(agg, toggleUp, false, true)}</tr>`;
     detail.forEach(r => {
-      body += `<tr class="yield-bin-detail" data-grp="${grp}" style="display:none">${cellTds(r, "")}</tr>`;
+      body += `<tr class="yield-bin-detail" data-grp="${grp}" style="display:none">${cellTds(r, "", false, false)}</tr>`;
     });
   });
 
@@ -289,7 +326,18 @@ function yieldExcelBtnHtml() {
 // 한 Bin 그룹(대표행)의 detail FAILTNO 행 펼치기/접기 + 그룹 토글 버튼 상태 갱신.
 // 펼침으로 Item 등 컬럼 폭이 바뀌면 좌측 고정 오프셋이 stale 이 되므로 토글 후 재실측한다.
 function setYieldGroup(gi, expand, btn, skipSync) {
-  if (btn) { btn.setAttribute("aria-expanded", expand ? "true" : "false"); btn.textContent = expand ? "▲" : "▼"; }
+  // 토글 버튼은 rep·agg 양쪽에 있으므로 클릭된 하나가 아니라 그 그룹 전체를 갱신한다.
+  document.querySelectorAll(`#panel-yield .yield-toggle[data-grp="${gi}"]`).forEach(b => {
+    b.setAttribute("aria-expanded", expand ? "true" : "false");
+    b.textContent = expand ? "▲" : "▼";
+  });
+  // 3행 규칙: rep(접힘 전용) ↔ agg(펼침 전용) 상호 배타 + detail 일괄.
+  document.querySelectorAll(`#panel-yield tr.yield-bin-rep[data-grp="${gi}"]`).forEach(tr => {
+    tr.style.display = expand ? "none" : "";
+  });
+  document.querySelectorAll(`#panel-yield tr.yield-bin-agg[data-grp="${gi}"]`).forEach(tr => {
+    tr.style.display = expand ? "" : "none";
+  });
   document.querySelectorAll(`#panel-yield tr.yield-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
@@ -298,7 +346,13 @@ function setYieldGroup(gi, expand, btn, skipSync) {
   if (!skipSync) syncYieldStickyOffsets();
 }
 function setAllYieldGroups(expand) {
-  document.querySelectorAll("#panel-yield .yield-toggle").forEach(btn => setYieldGroup(btn.dataset.grp, expand, btn, true));
+  const seen = new Set();   // 그룹당 토글 버튼이 2개(rep/agg)라 중복 호출을 막는다
+  document.querySelectorAll("#panel-yield .yield-toggle").forEach(btn => {
+    const gi = btn.dataset.grp;
+    if (seen.has(gi)) return;
+    seen.add(gi);
+    setYieldGroup(gi, expand, btn, true);
+  });
   syncYieldStickyOffsets();
 }
 function bindYieldPanel() {
@@ -688,7 +742,7 @@ function issueMenuItemHtml(act, label, opts) {
 function issueActionMenuHtml(panel) {
   const ui = issueUi(panel);
   const on = ui.delMode;
-  const n = panel.querySelectorAll(".issue-del-chk:checked").length;
+  const n = issueSelectedChks(panel).length;
   const sep = `<div class="issue-menu-sep"></div>`;
   // ETC 는 Issue Table 전용 개념이라 Temp 패널에는 'ISSUE ITEM 추가' 가 없다.
   return (panel.id === ISSUE_PANEL_TEMP ? "" :
@@ -762,6 +816,22 @@ function markIssueRowSelected(chk) {
   const tr = chk && chk.closest("tr");
   if (tr) tr.classList.toggle("issue-row-sel", chk.checked);
 }
+// 체크된 행 중 **논리적으로 서로 다른 이슈**만 남긴다.
+// Yield 섹션은 접힘 대표행과 펼침 집계 헤더행이 같은 bin 단위 키(Yield|<bin>)를 공유해
+// 체크박스가 DOM 에 2개 있다(둘은 상호 배타로 표시된다). 그대로 세면 "체크한 6개 행"
+// 처럼 개수가 부풀고 일괄 요청에도 같은 키가 두 번 실린다 — 키로 접는다.
+function issueSelectedChks(panel) {
+  const seen = new Set();
+  const out = [];
+  (panel ? panel.querySelectorAll(".issue-del-chk:checked") : []).forEach(chk => {
+    const key = (chk.dataset.hkey || "") + "" + (chk.dataset.etc || "");
+    if (key === "" || seen.has(key)) return;   // 키 없는 체크박스는 대상 아님
+    seen.add(key);
+    out.push(chk);
+  });
+  return out;
+}
+
 // 전체 선택 / 선택 해제.
 function setAllIssueDelChecked(checked, panel) {
   panel = panel || activeIssuePanel();
@@ -780,7 +850,7 @@ function syncIssueDelCount(panel) {
   if (!panel) return;
   const trigger = panel.querySelector('[data-issue-act="menu"]');
   if (!trigger) return;
-  const n = panel.querySelectorAll(".issue-del-chk:checked").length;
+  const n = issueSelectedChks(panel).length;
   trigger.textContent = ISSUE_MENU_LABEL + (issueUi(panel).delMode && n ? ` (${n})` : "") + " ▾";
 }
 
@@ -795,9 +865,23 @@ function jumpToIssueSection(sec, panel) {
 }
 // 한 Bin 그룹(대표행)의 detail TNO 행 펼치기/접기.
 function setIssueGroup(gi, expand, btn, panel) {
-  if (btn) { btn.setAttribute("aria-expanded", expand ? "true" : "false"); btn.textContent = expand ? "▲" : "▼"; }
   panel = panel || (btn && issuePanelOf(btn)) || activeIssuePanel();
   if (!panel) return;
+  // 토글 버튼은 rep·agg 양쪽에 있을 수 있으므로 그 그룹 전체를 갱신한다(Yield 탭과 동일).
+  panel.querySelectorAll(`.issue-toggle[data-grp="${gi}"]`).forEach(b => {
+    b.setAttribute("aria-expanded", expand ? "true" : "false");
+    b.textContent = expand ? "▲" : "▼";
+  });
+  // 3행 규칙: rep(접힘 전용) ↔ agg(펼침 전용) 상호 배타 + detail 일괄.
+  // agg 행이 없는 표(Issue Table Temp — 대표행이 항목 행 자체)는 rep 를 숨기면 안 되므로
+  // **agg 행이 있는 그룹에서만** rep 를 감춘다.
+  const aggRows = panel.querySelectorAll(`tr.issue-bin-agg[data-grp="${gi}"]`);
+  if (aggRows.length) {
+    panel.querySelectorAll(`tr.issue-bin-rep[data-grp="${gi}"]`).forEach(tr => {
+      tr.style.display = expand ? "none" : "";
+    });
+    aggRows.forEach(tr => { tr.style.display = expand ? "" : "none"; });
+  }
   panel.querySelectorAll(`tr.issue-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
@@ -820,8 +904,13 @@ function toggleIssueGroup(btn) {
 function setAllIssueGroups(expand, panel) {
   panel = panel || activeIssuePanel();
   if (!panel) return;
-  panel.querySelectorAll(".issue-toggle").forEach(btn =>
-    setIssueGroup(btn.dataset.grp, expand, btn, panel));
+  const seen = new Set();   // 그룹당 토글 버튼이 2개(rep/agg)일 수 있다
+  panel.querySelectorAll(".issue-toggle").forEach(btn => {
+    const gi = btn.dataset.grp;
+    if (seen.has(gi)) return;
+    seen.add(gi);
+    setIssueGroup(gi, expand, btn, panel);
+  });
   afterIssueRowsToggled(panel);
 }
 

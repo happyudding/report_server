@@ -308,40 +308,12 @@ def build_yield_bin_groups(yield_rows):
 
 
 # ── Bin 집계 헤더행 (펼침 표시 전용) ──────────────────────────────────────────
-# perf-guard: allow S01-report-schema — payload 구조를 바꾸지 않는다. 아래 3개는 report
-# payload 에 실리지 않고, 프런트(sheets.js/yield_issue.js)와 Excel 내보내기가 **표시 직전에**
-# rep 행에서 파생할 때 쓰는 공용 규약이다. build_report_payload 의 키·행 구조는 그대로다.
-#
-# 왜 필요한가: rep(대표) 행은 숫자가 Bin 합계인데 식별정보(Step/TNO/Item)는 most-fail 항목
-# 것을 그대로 쓴다(_bin_total_row). 접힌 상태에선 그게 "Bin 요약"으로 읽혀 자연스럽지만,
-# 펼치면 그 항목이 혼자 Bin 전체만큼 죽은 것처럼 보인다(TEST1 이 2개 fail 인데 5 로 표시).
-# 그래서 펼칠 때만 대표행을 이 집계 헤더행으로 갈아끼우고, most-fail 항목은 자기 실제 값을
-# 가진 상세행으로 되돌린다.
-BIN_AGG_TNO = "-"
-
-
-def bin_agg_label(bin_value, n_items):
-    """펼침 집계 헤더행의 Item 표기 — ``BIN 15(3 items)``."""
-    return f"BIN {bin_value}({n_items} items)"
-
-
-def build_bin_agg_row(group):
-    """build_yield_bin_groups 의 그룹 → 펼침용 집계 헤더행 (없으면 None).
-
-    숫자(avg/{src}_yield/{src}_count)는 rep 를 그대로 승계하고 식별정보만 Bin 집계 표기로
-    바꾼다 — 값을 다시 계산하지 않는다(규칙 13).
-
-    항목이 1개뿐인 Bin 은 ``None`` 이다: 펼쳐도 상세가 1줄이라 집계행이 같은 값을 두 번
-    보여줄 뿐이다(사용자 확정 2026-08-25). 이 경우 화면은 종전처럼 항목 행 하나만 그린다.
-    """
-    rows = group.get("rows") or []
-    n_items = len(rows) - 1          # rows[0] 은 rep 자기 자신
-    if n_items <= 1:
-        return None
-    row = dict(group.get("rep") or {})
-    row["TNO"] = BIN_AGG_TNO
-    row["Item"] = bin_agg_label(group.get("bin"), n_items)
-    return row
+# perf-guard: allow S01-report-schema — payload 구조를 바꾸지 않는다. 아래는 report payload
+# 에 실리지 않고, 프런트와 Excel 내보내기가 **표시 직전에** rep 행에서 파생할 때 쓰는 공용
+# 규약의 재노출일 뿐이다(정본 web_report/yield_agg.py — Honey 클라가 tabs 패키지를 끌어오지
+# 않도록 순수 leaf 모듈로 뒀다). build_report_payload 의 키·행 구조는 그대로다.
+from ..yield_agg import (BIN_AGG_GAP, BIN_AGG_TNO, bin_agg_label,  # noqa: F401
+                         build_bin_agg_row, expand_bin_group)
 
 
 # ── STEP 별 분해 (Yield 탭 전용, 전체 rawdata 기준 수율) ────────────────────────

@@ -30,6 +30,7 @@ from report_generator._xlsx_style import (
     _style_range,
 )
 from web_report.comment_format import strip_format
+from web_report.yield_agg import expand_bin_group, insert_bin_agg_rows
 
 _CPK_WARN_FILL_RGB = "FFFFF3B0"   # cpk < 1.33 경고(연노랑) — honey excel 과 동일 계열
 _CPK_THRESHOLD = 1.33
@@ -226,7 +227,11 @@ def write_yield_sheet(ws, yield_rows, yield_bin_groups, source_names,
                       step_groups=None, step_summary=None):
     """STEP(P1/P2/P3) 별로 표를 나눠 쓴다 — 웹 Yield 탭과 동일 구성.
 
-    각 STEP 표 = 최상단 Pass 행(그 STEP 까지의 누적 수율) + Bin 대표(총합) 행(접힌 상태).
+    각 STEP 표 = 최상단 Pass 행(그 STEP 까지의 누적 수율) + Bin 별 행.
+    Bin 행은 **웹 펼침과 같은 구성**이다(2026-08-25 사용자 확정, expand_bin_group):
+    항목이 여럿이면 집계 헤더행(``BIN 15    (3 items)``, Bin 합계) + 그 Bin 의 모든 TNO 행
+    (각자 실제 값), 항목이 하나면 그 항목 행 하나. 접힘본(대표행만)을 내보내면 Bin 합계가
+    most-fail 항목 이름을 달고 굳어 Excel 에도 같은 오해가 남는다.
     bin fail % 는 STEP 별로 재계산하지 않는다(서버 build_yield_rows 의 전체 die 기준 값).
     step_groups 가 없으면(구 payload) 종전처럼 전체 Bin 표 1개만 쓴다.
     """
@@ -244,7 +249,8 @@ def write_yield_sheet(ws, yield_rows, yield_bin_groups, source_names,
             if pass_row:
                 rows.append(pass_row)
             for group in sg.get("groups") or []:
-                rows.append(_yield_row_values(group.get("rep") or {}, source_names))
+                for r in expand_bin_group(group):
+                    rows.append(_yield_row_values(r or {}, source_names))
             last = _write_table(ws, header, rows, header_row=row + 1)
             _yield_row_heights(ws, row + 1, len(rows))
             row = last + 3                     # 표 사이 2행 비우고 다음 STEP 제목
@@ -255,7 +261,8 @@ def write_yield_sheet(ws, yield_rows, yield_bin_groups, source_names,
     if yield_rows and str(yield_rows[0].get("bin")) == _PASS_BIN:
         rows.append(_yield_row_values(yield_rows[0], source_names))
     for group in yield_bin_groups or []:
-        rows.append(_yield_row_values(group.get("rep") or {}, source_names))
+        for r in expand_bin_group(group):
+            rows.append(_yield_row_values(r or {}, source_names))
     _write_table(ws, header, rows)
     _set_col_widths(ws, header, widths, default=_NARROW_COL_WIDTH * 1.6)
     _yield_row_heights(ws, _HEADER_ROW, len(rows))
@@ -433,7 +440,14 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
     dist_col = c1 + 6
     avg_col = c1 + 7            # avg 뒤로 source 컬럼이 이어진다(색상 표시 대상 구간)
 
-    # _grp 별 detail comment 수집 (TEMP 섹션은 접지 않으므로 대상 아님)
+    # 웹 화면과 같은 행 구성 — Bin 집계 헤더행 + 그 Bin 의 모든 TNO 행(2026-08-25).
+    # 규약 정본은 web_report/yield_agg.py (프런트 sheets.js insertBinAggRows 와 짝).
+    # xlsxwriter 엔진(_extra.build_issue_matrix)도 같은 함수를 쓴다 — 두 엔진 파리티 유지.
+    issue_rows = insert_bin_agg_rows(issue_rows)
+    agg_grps = {r.get("_grp") for r in issue_rows if r.get("_agg")}
+
+    # _grp 별 detail comment 수집 (TEMP 섹션은 접지 않으므로 대상 아님).
+    # 집계행이 생긴 그룹은 상세행이 각자 한 줄로 나가므로 합치지 않는다.
     detail_comments = {}
     scan_section = ""
     for r in issue_rows or []:
@@ -442,6 +456,8 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
         if scan_section == "TEMP" or not r.get("_detail"):
             continue
         grp = r.get("_grp")
+        if grp in agg_grps:
+            continue
         for col in _COMMENT_COLS:
             text = strip_format(r.get(col)).strip()
             if text:
@@ -461,7 +477,10 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
         # Category 는 섹션 개시행에만 채워진다 (build_issue_table_rows) — 이후 행은 승계.
         if r.get("Category") in ("Yield", "CPK", "ETC", "TEMP"):
             section = r["Category"]
-        if r.get("_detail") and section != "TEMP":
+        if r.get("_detail") and section != "TEMP" and r.get("_grp") not in agg_grps:
+            continue
+        # 접힘 전용 대표행은 집계 헤더행과 같은 줄이라 Excel 에는 한 번만 나간다.
+        if r.get("_hasAgg"):
             continue
         excel_row = _HEADER_ROW + 1 + len(rows)
         # CPK 섹션 서브헤더 = avg 칸이 "cpk" 인 행 (프런트 isCpkSubheadRow 와 같은 판정)
@@ -496,15 +515,17 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
                         fail_cells.append((excel_row, avg_col + off))
                     elif section == "CPK" and num < _CPK_THRESHOLD:
                         cpk_cells.append((excel_row, avg_col + off))
-            # Map 썸네일 대상 — 웹과 동일하게 Bin 이 있는 Yield/ETC 행(Pass 제외)
-            if not is_pass and bin_text and section in ("Yield", "ETC"):
+            # Map 썸네일 대상 — 웹과 동일하게 Bin 이 있는 Yield/ETC 행(Pass 제외).
+            # 집계 헤더행은 제외한다(웹도 빈 칸 — 아래 항목 행들과 그림이 같다).
+            if not is_pass and bin_text and section in ("Yield", "ETC") and not r.get("_agg"):
                 map_rows.append((bin_text, excel_row))
             # TEMP 행은 Bin 이 있어도 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를
             # 그린다 — 항목명으로 temp_map 인덱스를 찾는다(웹 map-cell-temp 와 동일).
             elif section == "TEMP" and str(r.get("Item") or "").strip():
                 temp_rows.append((str(r["Item"]).strip(), excel_row))
 
-        item_rows.append((r.get("Item"), excel_row, section))
+        # 집계 헤더행의 Item 은 측정 항목이 아니라 라벨이라 Distribution 썸네일 대상이 아니다.
+        item_rows.append((None if r.get("_agg") else r.get("Item"), excel_row, section))
         if spans and spans[-1][0] == section:
             spans[-1][2] = excel_row
         else:

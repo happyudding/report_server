@@ -18,6 +18,12 @@ except Exception:  # 단독 실행/테스트 폴백
     def strip_format(text):
         return text or ""
 
+try:
+    from web_report.yield_agg import insert_bin_agg_rows
+except Exception:  # 단독 실행/테스트 폴백 — 종전(대표행만) 구성으로 동작한다
+    def insert_bin_agg_rows(rows, *_a, **_kw):
+        return list(rows or [])
+
 # Engr Comment 리치 서식 마커 — map_select.js ENGR_RICH_MARK 와 동일.
 _ENGR_RICH_MARK = "<!--rich-->"
 # 내용까지 통째로 버리는 태그 — map_select.js ENGR_DROP_TAGS 미러.
@@ -336,6 +342,13 @@ def build_issue_matrix(issue_rows, source_names, *, header_row=3, start_col=2):
     avg_col = c1 + header.index("avg")
     status_col = c1 + header.index("Status")
 
+    # 웹 화면과 같은 행 구성 — Bin 집계 헤더행 + 그 Bin 의 모든 TNO 행(2026-08-25).
+    # 규약 정본은 web_report/yield_agg.py 이고 프런트 sheets.js insertBinAggRows 와 짝이다.
+    issue_rows = insert_bin_agg_rows(issue_rows)
+    agg_grps = {r.get("_grp") for r in issue_rows if r.get("_agg")}
+
+    # 집계행이 생긴 그룹은 상세행이 각자 한 줄로 나가므로 comment 를 대표행에 합치지 않는다
+    # (합치기는 상세행을 아예 안 내보내던 시절의 보완책이다).
     detail_comments = {}
     scan_section = ""
     for r in issue_rows or []:
@@ -344,6 +357,8 @@ def build_issue_matrix(issue_rows, source_names, *, header_row=3, start_col=2):
         if scan_section == "TEMP" or not r.get("_detail"):
             continue
         grp = r.get("_grp")
+        if grp in agg_grps:
+            continue
         for col in COMMENT_COLS:
             text = (strip_format(r.get(col)) or "").strip()
             if text:
@@ -359,7 +374,10 @@ def build_issue_matrix(issue_rows, source_names, *, header_row=3, start_col=2):
     for r in issue_rows or []:
         if r.get("Category") in ("Yield", "CPK", "ETC", "TEMP"):
             section = r["Category"]
-        if r.get("_detail") and section != "TEMP":
+        if r.get("_detail") and section != "TEMP" and r.get("_grp") not in agg_grps:
+            continue
+        # 접힘 전용 대표행은 집계 헤더행과 같은 줄이라 Excel 에는 한 번만 나간다.
+        if r.get("_hasAgg"):
             continue
         excel_row = header_row + 1 + len(rows)
         subhead = section == "CPK" and str(r.get("avg") or "").strip().lower() == "cpk"
@@ -396,12 +414,15 @@ def build_issue_matrix(issue_rows, source_names, *, header_row=3, start_col=2):
             if status:
                 status_cells[(excel_row, status_col)] = (
                     "close" if str(status) == "Close" else "open")
-            if not is_pass and bin_text and section in ("Yield", "ETC"):
+            # 집계 헤더행은 Map/Distribution 썸네일을 넣지 않는다(웹 화면과 동일 — 바로
+            # 아래 항목 행들과 그림이 같다).
+            if not is_pass and bin_text and section in ("Yield", "ETC") and not r.get("_agg"):
                 map_rows.append((bin_text, excel_row))
             elif section == "TEMP" and str(r.get("Item") or "").strip():
                 temp_rows.append((str(r["Item"]).strip(), excel_row))
 
-        rows_meta.append((r.get("Item"), excel_row, section))
+        # 집계 헤더행의 Item 은 측정 항목이 아니라 라벨이라 Distribution 썸네일 대상이 아니다.
+        rows_meta.append((None if r.get("_agg") else r.get("Item"), excel_row, section))
         if spans and spans[-1][0] == section:
             spans[-1][2] = excel_row
         else:
