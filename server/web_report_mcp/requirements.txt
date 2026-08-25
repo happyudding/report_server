@@ -1,0 +1,8 @@
+﻿# web_report MCP 서버 전용 의존성.
+# 서버(waitress/Flask) requirements 와 **분리**한다 — 이 프로세스는 Flask 앱에
+# import 되지 않는 독립 실행 도구라, 운영 서버에 mcp SDK 를 깔 이유가 없다.
+#
+# 설치:
+#   pip install -r server/web_report_mcp/requirements.txt
+
+mcp>=1.2.0

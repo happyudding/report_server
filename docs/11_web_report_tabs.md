@@ -600,6 +600,15 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - **전량 `/distribution` 라우트는 유지** — 클라 업로드 프리컴퓨트 dist blob 시딩
     (ingest)과 하위호환 폴백이 쓴다. 프런트가 더 이상 호출하지 않을 뿐이다.
   - 항목 상세(전 포인트 + serial/xpos/ypos hover 메타)는 종전대로 `/scatter/<subject>`.
+  - **← Back 은 들어가기 전 스크롤 위치로 돌아온다** (2026-08-25) — 갤러리를 한참 내려가
+    카드를 열면 매번 맨 위로 튀던 문제. `openItemDetail` 이 **상세를 새로 열 때만**
+    `_itemDetailReturnScroll` 에 문서 스크롤을 기억하고(`_itemDetailReturnId` 와 같은
+    블록), `closeItemDetail` 이 복귀 패널을 active 로 되돌린 **뒤** 그 값으로 `scrollTo`
+    한다(rAF 로 1회 보정). 상세 안 prev/next 이동은 이미 active 라 기억값을 덮지 않고,
+    탭 전환(`hideItemDetail`)은 복원 없이 버린다. 갤러리 카드가 `.distg-card` 고정 높이
+    264px 이라 IntersectionObserver 가 차트를 purge 해도 문서 높이가 유지되는 것이 전제다
+    — 카드를 가변 높이로 바꾸면 복원 위치가 어긋난다. 회귀 고정
+    [tests/test_item_detail_scroll_js.py](../tests/test_item_detail_scroll_js.py).
   - **Distribution composite (합성 산포 차트 — 2026-08-24)**: 툴바 우측 "분석하기 ▾"
     (편집모드 전용) → 모달에서 source 복수 + TestItem 검색·체크 복수 선택 → 고른
     **source × item 조합 각각이 legend 1개**(`<source>_<item>`)인 차트 1장을 갤러리 맨 앞에
@@ -927,6 +936,18 @@ Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
   gap_chart 파서의 **확장 사본**이며(gap_chart 는 한 글자도 고치지 않는다 — 거기 저장된
   토큰·에러 문구·`spec_digest` 가 운영 세션의 사용자 입력에 걸려 있다), 사본 드리프트는
   [tests/test_formula_item.py](../tests/test_formula_item.py) 의 **동치 테스트**가 막는다.
+- **입력은 줄글이다** (2026-08-25 개편 — 종전 연산자·함수 버튼 22개 조립 방식을 대체).
+  사용자가 `if(@"VREF_TRIM" > min(@"VDD_A", @"VDD_B"), 0, 1)` 처럼 그대로 치면
+  [formula.lex](../web_report/formula.py) 가 토큰으로 해독한다. **항목은 `@"이름"` 인용으로만**
+  들어오고(`@` 자동완성이 자동 삽입한다 — 이름 안의 `"` 는 `""` 로 escape) 인용 밖에서는
+  숫자·연산자·괄호·함수명만 받는다. item 이름에 공백·괄호·연산자·따옴표가 전부 합법이라
+  글자만 보고 `VDD-VSS + 1` 을 가릴 수 없기 때문이며, 명시적 구분자가 그 모호성과
+  `SUM(...)`=함수 / `@"SUM"`=항목 충돌을 **함께** 없앤다. 함수명·항목 조회는 **대소문자
+  무관**이되 토큰에는 목록의 **원본 이름**이 들어간다(소문자로 눕히면 source 별 참조가
+  어긋나거나 엉뚱한 컬럼을 덮어쓴다). `!=`·`==` 는 별칭으로 받지 않고 `<>`·`=` 를 쓰라고
+  안내한다 — 문법 표면을 넓히면 "어떤 건 되고 어떤 건 안 되는" 상태가 된다. `lex` 는 토큰마다
+  문자 오프셋 span 을 함께 돌려주고 파서 오류의 토큰 index 는 `error_span` 이 문자 위치로
+  되돌린다 — **위치 없는 오류를 만들지 않는다**.
 - **계산은 클라(Honey)에서** 한다. 서버가 parquet 전량을 디코드·계산·재인코딩하면 대형
   세션에서 웹 프로세스가 통째로 묶인다(빠른 수정을 웹이 아니라 Honey 에 둔 것과 같은 판단).
 - **모든 source 에 각각 계산**한다. 참조 항목이 없는 source 는 **그 source 만 건너뛰고
@@ -998,7 +1019,7 @@ Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
   없는 채로 응답하므로, 옛 manifest 로 pack 을 만들면 갤러리에서 **그 카드만 조용히 빈다**.
 
 **UI**: [rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py) 페이지 +
-[formula_editor.py](../client/honey_ui/formula_editor.py)(칩 스트립 + `@` 자동완성 + IME 가드) +
+[formula_editor.py](../client/honey_ui/formula_editor.py)(자유 타이핑 + `@` 인용 자동완성 + 문법 강조 + IME 가드) +
 [excel_edit/item_add.py](../client/excel_edit/item_add.py)(왕복) +
 `excel_edit/worker.py` `AddItemWorker`. 상세는 [05](05_client_ui.md).
 회귀 고정: `tests/test_formula_item.py` · `test_new_item_roundtrip.py` ·

@@ -235,6 +235,57 @@ def api_public_api():
     return jsonify(out)
 
 
+@admin_panel_bp.get("/api/public_api/contract")
+def api_public_api_contract():
+    """공개 API 규약 — 'public API' 탭의 "무엇이 열려 있나" 표.
+
+    계측(api_public_api)이 "얼마나 불렸나" 라면 이쪽은 "무엇을 어떤 입출력으로 부를 수
+    있나" 다. 두 데이터원을 맞대어 **규약에만 있고 라우트가 없는 것**(문서 앞서감)과
+    **라우트만 있고 규약에 없는 것**(문서 누락)을 화면에서 바로 보이게 한다.
+
+    함수 목록의 정본은 각 기능 폴더의 contracts.py 이고 여기서 다시 적지 않는다.
+    규약 파일이 없는 기능(product-info/help)은 url_map 에서 경로만 주워 함께 싣는다."""
+    from flask import current_app
+
+    registered = []
+    for rule in current_app.url_map.iter_rules():
+        if not str(rule.endpoint).startswith("public_api_"):
+            continue
+        registered.append({
+            "rule": str(rule),
+            "endpoint": str(rule.endpoint),
+            "methods": sorted(rule.methods & {"GET", "POST", "PATCH", "DELETE"}),
+        })
+    registered.sort(key=lambda r: r["rule"])
+
+    groups = []
+    try:
+        from public_api.web_report import contracts as wr_contracts
+        caps = wr_contracts.capabilities()
+        rules = {r["rule"] for r in registered}
+        functions = []
+        for spec in caps.get("functions") or []:
+            rule = (caps["base_path"] + spec["path"]) \
+                .replace("{session_id}", "<session_id>") \
+                .replace("{subject}", "<path:subject>") \
+                .replace("{index}", "<int:index>")
+            functions.append({**spec, "rule": rule,
+                              "implemented": rule in rules})
+        groups.append({"name": "web-report", "base_path": caps["base_path"],
+                       "auth": caps.get("auth"), "errors": caps.get("errors"),
+                       "schema_version": caps.get("schema_version"),
+                       "functions": functions})
+    except Exception:
+        _log.exception("public_api contract: web_report 규약 로드 실패")
+
+    documented = {f["rule"] for g in groups for f in g["functions"]}
+    undocumented = [r for r in registered
+                    if r["rule"] not in documented
+                    and not r["rule"].endswith("/capabilities")]
+    return jsonify({"groups": groups, "registered": registered,
+                    "undocumented": undocumented})
+
+
 @admin_panel_bp.get("/api/webreport/builds")
 def api_webreport_builds():
     """web_report 콜드 빌드 이력 — 단계별 소요 + 대기 시간 + 실패(타임아웃·워커 붕괴).

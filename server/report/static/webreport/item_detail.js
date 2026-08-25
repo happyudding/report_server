@@ -4,6 +4,12 @@
 // 원래 탭 패널 복원. Distribution 카드/Yield/CPK/IssueTable item 클릭 모두 이 화면으로 온다.
 const ITEM_FAIL_PAGE_SIZE = 30;
 let _itemDetailReturnId = null;   // 복귀할 탭 패널 id
+// 상세로 들어가기 직전의 문서 스크롤 위치 — Back 으로 돌아올 때 그 자리로 되돌린다.
+// (Distribution 갤러리에서 한참 내려가 카드를 열면 매번 맨 위로 튀던 문제. 갤러리 카드는
+//  .distg-card 가 고정 높이 264px 이라 차트를 purge 해도 문서 높이가 유지된다 → 복원 가능.)
+// 저장은 **상세가 새로 열릴 때만** 한다 — prev/next 이동(itemDetailNav)은 이미 상세 안이라
+// 여기서 저장하면 원래 탭 위치가 상세 화면 스크롤로 덮인다.
+let _itemDetailReturnScroll = 0;
 let _itemDetailSubject = null;
 let _itemDetailNav = [];          // prev/next 이동 목록(subject 배열)
 let _itemDetailFailRows = [];
@@ -71,6 +77,7 @@ function openItemDetail(subject, navList, opts = null) {
   if (!dp.classList.contains("active")) {
     const cur = document.querySelector(".content > .panel.active");
     _itemDetailReturnId = cur ? cur.id : "panel-summary";
+    _itemDetailReturnScroll = window.scrollY || document.documentElement.scrollTop || 0;
     if (cur) cur.classList.remove("active");
     dp.classList.add("active");
   }
@@ -482,6 +489,15 @@ function closeItemDetail() {
   const back = document.getElementById(_itemDetailReturnId || "panel-summary");
   if (back) back.classList.add("active");
   _itemDetailReturnId = null;
+  // 들어가기 전 자리로 복원. 패널을 active 로 되돌린 **뒤**라야 문서 높이가 살아나
+  // scrollTo 가 클램프되지 않는다. rAF 로 한 번 더 미는 것은 갤러리 IntersectionObserver
+  // 가 보이는 칸을 다시 그리며 레이아웃이 늦게 확정되는 경우의 보정이다.
+  const y = _itemDetailReturnScroll;
+  _itemDetailReturnScroll = 0;
+  if (y > 0) {
+    window.scrollTo(0, y);
+    requestAnimationFrame(() => window.scrollTo(0, y));
+  }
 }
 
 // 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
@@ -491,6 +507,7 @@ function hideItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); purgeItemDetailCharts(); dp.innerHTML = ""; }
   _itemDetailReturnId = null;
+  _itemDetailReturnScroll = 0;   // 탭 전환은 다른 화면으로 가는 것 — 옛 위치를 남기지 않는다
 }
 
 function bindItemDetailPanel() {

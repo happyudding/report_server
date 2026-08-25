@@ -39,8 +39,12 @@ def _register(app, blueprint, path):
 def register_public_api(app):
     from public_api.product_info.routes import product_info_bp
     from public_api.help.routes import help_bp
+    from public_api.web_report.routes import web_report_bp
     _register(app, product_info_bp, "product-info")
     _register(app, help_bp, "help")
+    _register(app, web_report_bp, "web-report")
+    # client_functions/ 는 아직 등록하지 않는다 — 폴더는 client 기능(분석·렌더)을 서버
+    # API 로 옮길 자리만 잡아 둔 껍데기이고, 구현·등록은 외부 담당자 인수 후다.
 
     _log.info("[public-api] registered at %s/", URL_PREFIX)
     return True

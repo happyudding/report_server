@@ -145,6 +145,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `LOG_KEEP_TOTAL_MB` | `4096` | `LOG_MIN_KEEP_HOURS` 밖 구간에 적용되는 총 용량 상한 (넘어선 지점부터 과거를 삭제) |
 | `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) + `runtime_YYYYMMDD.log` + `publicapi_YYYYMMDD.log` 보존 일수. `0` = 비활성 |
 | `PUBLIC_API_METRICS_ENABLED` | `1` | 공개 API(`/pe/api/v1`) 호출 계측 — 관리자 **public API** 탭. `0` = 계측만 끔(API 는 정상 동작) |
+| `WEB_REPORT_API_KEY` | (없음) | web_report 조회 API 의 **선택적** 인증 키. 미설정=무인증·공개 세션만. 설정 시 헤더 `X-Report-Api-Key` 가 같으면 **비공개 세션까지** 조회(틀려도 차단이 아니라 공개 범위) |
 | `PUBLIC_API_SLOW_MS` | `1000` | 이 시간을 넘긴 공개 API 호출을 '느린·실패 호출' 목록에 개별 기록. 단순 조회만 노출하므로 사람 요청(`REPORT_SLOW_REQ_MS`)보다 낮게 잡는다 |
 | `REPORT_RUNTIME_LOG_INTERVAL_SEC` | `300` | `runtime_*.log` 응답시간 스냅샷(p50/p95/p99 + 느린 경로 top5) 기록 주기. 최소 60 |
 | `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성. ⚠️ **요청이 끝나야** 기록된다 — 안 끝나는 요청은 아래 `REPORT_STUCK_REQ_SEC` 가 맡는다 |
@@ -561,9 +562,17 @@ report 캐시 키에 실려 다음 조회에서 재평가를 강제한다.
 | GET | `/product-info/lookup?part_id=` | part_id → 기준정보 14컬럼. 미매칭 404 |
 | GET | `/help/features` | HONEY 사용자 기능 전체 또는 q/category/surface/status 필터 검색 |
 | GET | `/help/features/<id>` | 기능 한 건의 제공 상태·사용 조건·절차·도움말 anchor. 미매칭 404 |
+| GET | `/web-report/capabilities` | **web_report 조회 API 규약 전체**(함수 22개·입력 스키마·에러). MCP·외부 시스템의 진입점 |
+| GET | `/web-report/sessions` · `/web-report/<sid>/{overview,yield,fail-bins,cpk,issue-table,items,compare,temperature,map,input-info,build-status,raw-data,…}` | 세션 계산값 조회 — 규약 정본 [web_report/CONTRACT.md](public_api/web_report/CONTRACT.md) |
 
-부하가 작은 조회만 노출한다(단순 SELECT / 메모리 dict) — 파싱·재계산 경로는 넣지 않는다.
+product-info/help 는 부하가 작은 조회만 노출한다(단순 SELECT / 메모리 dict).
+**web-report 는 예외**로 계산된 리포트를 읽는다 — 대신 세 가지 장치를 둔다:
+콜드 세션은 계산을 기다리지 않고 **202 + `status_url`**(요청 스레드를 묶지 않는다),
+대용량 전량 조회는 **동시 2개 상한 + 429**, 비공개 세션은 env `WEB_REPORT_API_KEY` +
+헤더 `X-Report-Api-Key` 를 제시할 때만 보인다(기본은 공개 세션만).
+
 외부 소비자용 접근 규약(Base URL·에러 형식·버저닝)은 [public_api/README.md](public_api/README.md).
+제공 중인 함수·입출력은 관리자 패널 **public API** 탭 맨 위 표에서도 볼 수 있다.
 
 ### 기타
 

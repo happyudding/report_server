@@ -24,7 +24,9 @@ let cpkLowOp = "lt";
 let cpkAbnormalMode = "exclude";
 let cpkHideCodeUnit = false;  // 켜면 Unit(단위)이 CODE 인 항목(디지털 code 값) 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
-let cpkSourceFilter = "";     // 특정 source 만 표시 (빈 문자열 = 전체 source)
+// 표시할 source 집합 — **빈 Set = 전체 source**(선택 없음 = 필터 없음). 여러 개를 함께
+// 볼 수 있어야 하므로 단일 선택 드롭다운이 아니라 토글 칩 바(cpkSourceBarHtml)로 고른다.
+let cpkSourceFilter = new Set();
 let cpkPage = 1;              // 현재 페이지 (1-base)
 let cpkPanelBound = false;    // panel-cpk 페이저 클릭 위임 1회 바인딩 플래그
 let cpkTargetMode = false;    // "Limit 계산" 토글 — 켜지면 체크박스 열 + 목표 Cpk 역산 컨트롤 노출
@@ -106,16 +108,29 @@ function cpkIsAbnormal(r) {
 function cpkFilterRows(rows) {
   if (cpkHideCodeUnit)
     rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
-  if (cpkSourceFilter) rows = rows.filter(r => String(r.source || "") === cpkSourceFilter);
+  if (cpkSourceFilter.size) rows = rows.filter(r => cpkSourceFilter.has(String(r.source || "")));
   const term = cpkSearchTerm.trim().toLowerCase();
   if (!term) return rows;
   return rows.filter(r => String(r.subject || "").toLowerCase().includes(term)
     || String(r.source || "").toLowerCase().includes(term));
 }
 
-// CPK 행에서 등장 순서대로 중복 제거한 source 목록 (드롭다운 옵션용).
+// CPK 행에서 등장 순서대로 중복 제거한 source 목록 (선택 바 옵션용).
 function cpkSourceList(rows) {
   return [...new Set((rows || []).map(r => String(r.source || "")).filter(Boolean))];
+}
+
+// Source 다중 선택 바 — "전체" + source 별 토글 칩. 빈 Set = 전체이므로 "전체"는 곧
+// 선택 해제다. source 가 1개뿐이면 고를 것이 없어 바 자체를 감춘다.
+function cpkSourceBarHtml(list) {
+  if (list.length < 2) return "";
+  const all = `<button type="button" class="btn-sm${cpkSourceFilter.size ? "" : " active"}"` +
+    ` data-cpk-src-all="1" title="전체 source 표시 (개별 선택 모두 해제)">전체</button>`;
+  const chips = list.map(s =>
+    `<button type="button" class="btn-sm${cpkSourceFilter.has(s) ? " active" : ""}"` +
+    ` data-cpk-src="${esc(s)}" title="클릭해 선택/해제 — 여러 source 를 함께 볼 수 있다">${esc(s)}</button>`
+  ).join("");
+  return `<div class="cpk-src-bar"><span class="cpk-tool-label">Source</span>${all}${chips}</div>`;
 }
 
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
@@ -150,8 +165,10 @@ function cpkBodyRows(rows) {
 // 재정렬이 0회가 된다. 원본 rows 는 identity 로 비교한다(payload 교체 시 자동 무효화).
 let _cpkRowsMemo = null;
 function cpkDisplayRows(rows) {
+  // cpkSourceFilter 는 Set 이라 JSON.stringify 가 {} 로 접는다 — 정렬한 배열로 펴서
+  // 선택이 바뀌면 반드시 메모가 무효화되게 한다(안 그러면 옛 표가 그대로 남는다).
   const sig = JSON.stringify([cpkAbnormalMode, cpkShowLowOnly,
-    cpkLowThreshold, cpkLowOp, cpkHideCodeUnit, cpkSearchTerm, cpkSourceFilter]);
+    cpkLowThreshold, cpkLowOp, cpkHideCodeUnit, cpkSearchTerm, [...cpkSourceFilter].sort()]);
   if (_cpkRowsMemo && _cpkRowsMemo.rows === rows && _cpkRowsMemo.sig === sig) {
     return _cpkRowsMemo.out;
   }
@@ -266,13 +283,16 @@ function renderCpk() {
       `<button type="button" id="cpkClearResBtn" class="btn-sm" title="누적된 역산값을 모두 지운다 (체크해제·선택 해제로는 지워지지 않음)">역산값 지우기</button>` +
       `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
     : "";
-  const sourceOpts = `<option value="">전체 source</option>` +
-    cpkSourceList(rows).map(s =>
-      `<option value="${esc(s)}"${cpkSourceFilter === s ? " selected" : ""}>${esc(s)}</option>`).join("");
+  // 전처리(항목/소스 축소)로 사라진 source 가 선택에 남아 있으면 표가 통째로 비어 보인다
+  // — 실제 목록에 없는 선택은 그릴 때 걷어낸다.
+  const sourceList = cpkSourceList(rows);
+  if (cpkSourceFilter.size) {
+    const alive = new Set(sourceList);
+    for (const s of [...cpkSourceFilter]) if (!alive.has(s)) cpkSourceFilter.delete(s);
+  }
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" data-no-dirty placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
-    `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">CPK 구분</span>` +
     `<select id="cpkLowOpSel" title="임계값 비교 방향 — '<'=이 값 미만(기본) · '>'=이 값 초과">` +
     `<option value="lt"${cpkLowOp === "lt" ? " selected" : ""}>&lt;</option>` +
@@ -285,6 +305,7 @@ function renderCpk() {
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button>` +
     `<button type="button" class="btn-sm tab-excel-btn" id="cpkExcelBtn" title="Honey Excel Download 의 CPK 시트와 동일한 xlsx 다운로드 (Bin1 기준·화면 필터 무관)">Excel Down</button></div>` +
+    cpkSourceBarHtml(sourceList) +
     targetBar +
     `<div id="cpkTableHost"></div>`;
   renderCpkTable();
@@ -327,11 +348,6 @@ function renderCpk() {
     cpkSearchTerm = e.target.value;
     cpkPage = 1;
     renderCpkTableDebounced();
-  });
-  document.getElementById("cpkSourceSel").addEventListener("change", (e) => {
-    cpkSourceFilter = e.target.value;
-    cpkPage = 1;
-    renderCpkTable();
   });
   document.getElementById("cpkTargetBtn").addEventListener("click", () => {
     cpkTargetMode = !cpkTargetMode;
@@ -389,6 +405,23 @@ function renderCpk() {
   // panel-cpk 는 재렌더돼도 요소 자체는 유지되므로 페이저 클릭·체크박스 위임은 1회만 바인딩한다.
   if (!cpkPanelBound) {
     panel.addEventListener("click", (e) => {
+      // Source 칩: 개별 토글(다중 선택) / "전체"=선택 전부 해제. 칩의 active 표시가
+      // 함께 바뀌어야 하므로 표만이 아니라 패널을 다시 그린다(다른 토글 버튼과 동일).
+      const sb = e.target.closest("[data-cpk-src]");
+      if (sb) {
+        const s = sb.dataset.cpkSrc;
+        if (cpkSourceFilter.has(s)) cpkSourceFilter.delete(s);
+        else cpkSourceFilter.add(s);
+        cpkPage = 1;
+        renderCpk();
+        return;
+      }
+      if (e.target.closest("[data-cpk-src-all]")) {
+        cpkSourceFilter.clear();
+        cpkPage = 1;
+        renderCpk();
+        return;
+      }
       const pb = e.target.closest("[data-cpk-page]");
       if (!pb || pb.disabled) return;
       cpkPage = parseInt(pb.dataset.cpkPage, 10) || 1;

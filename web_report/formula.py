@@ -12,10 +12,18 @@ Honey 의 Rawdata 허브 `신규 Item(수식) 추가` 탭이 쓰는 파서·평�
 같은 이유로 **`tabs.*` 를 import 하지 않는다** — Honey 클라(honey_ui/excel_edit)가 이 모듈을
 import 하므로 의존을 numpy/pandas 로 묶는다(`num()` 은 아래에 자체 구현).
 
-**수식은 평문이 아니라 토큰 배열이다.** item 이름에는 공백·`( )`·`+ - * /` 가 전부 합법이고
-(honeyform 은 중복·메타충돌만 검사한다) 따옴표조차 이름에 들어갈 수 있어서, 평문을 원래
-토큰으로 되돌리는 렉서는 원리적으로 존재할 수 없다. UI 는 `@` 자동완성으로 고른 항목만
-item 토큰으로 만들고, `render_formula` 가 만드는 표시 문자열은 **절대 재파싱하지 않는다**.
+**저장·평가의 정본은 평문이 아니라 토큰 배열이다.** item 이름에는 공백·`( )`·`+ - * /` 가
+전부 합법이고(honeyform 은 중복·메타충돌만 검사한다) 따옴표조차 이름에 들어갈 수 있어서,
+`VDD-VSS + 1` 이라는 글자만 보고 `[VDD-VSS][+][1]` 인지 `[VDD][-][VSS][+][1]` 인지 가리는
+렉서는 원리적으로 존재할 수 없다. `render_formula` 가 만드는 표시 문자열도 그래서
+**절대 재파싱하지 않는다**.
+
+**그럼에도 사용자는 수식을 줄글로 친다** — `lex()` 가 그 입력을 토큰으로 바꾼다(2026-08-25).
+위 모호성은 item 을 글자에서 *찾아내지 않는 것*으로 푼다: item 은 오직 `@"이름"` 인용
+표기로만 들어오고(에디터의 `@` 자동완성이 자동 삽입한다 — 이름 안의 `"` 는 `""` 로 escape),
+인용 밖에서는 숫자·연산자·괄호·함수명만 받는다. 구분자가 명시적이라 이름에 무엇이 들어
+있어도 해석이 하나뿐이고, `SUM(...)`=함수 / `@"SUM"`=항목 충돌도 같이 사라진다.
+`lex` 는 토큰마다 문자 오프셋 span 을 함께 돌려줘 UI 가 틀린 자리에 밑줄을 긋는다.
 
 **gap_chart.py 와의 관계**: 파서 구조(재귀하강·위반 토큰 인덱스·eval 금지)를 그대로 따르되
 함수 호출과 비교 연산자를 더한 **별개 사본**이다. gap_chart 를 확장해 공유하지 않은 이유는
@@ -29,7 +37,9 @@ item 토큰으로 만들고, `render_formula` 가 만드는 표시 문자열은 
 """
 from __future__ import annotations
 
+import difflib
 import math
+import re
 from functools import reduce
 
 import numpy as np
@@ -61,11 +71,16 @@ class FormulaError(ValueError):
     """수식 문법 오류. ``index`` 는 문제가 된 토큰 위치(0-based, 모르면 None).
 
     UI 가 그 인덱스의 칩만 빨갛게 칠할 수 있게 위치를 함께 담는다
-    (gap_chart.GapFormulaError 와 같은 계약)."""
+    (gap_chart.GapFormulaError 와 같은 계약).
 
-    def __init__(self, message, index=None):
+    ``span`` 은 렉싱 단계 오류의 ``(start, end)`` 문자 오프셋이다 — 아직 토큰이 되지
+    못한 글자에는 인덱스를 붙일 수 없어서 위치를 이쪽으로 싣는다. 파서가 내는 오류는
+    ``index`` 만 갖고, `error_span` 이 그걸 문자 위치로 되돌린다."""
+
+    def __init__(self, message, index=None, span=None):
         super().__init__(message)
         self.index = index
+        self.span = span
 
 
 def num(value):
@@ -195,6 +210,171 @@ def render_formula(tokens) -> str:
         parts.append(text)
         prev = kind
     return "".join(parts)
+
+
+# ── 평문 렉서 ─────────────────────────────────────────────────────────────────
+#
+# 모듈 docstring 참조: item 을 글자에서 찾아내지 않고 `@"이름"` 인용으로만 받기 때문에
+# 이름에 공백·괄호·연산자·따옴표가 들어 있어도 해석이 하나뿐이다.
+
+MAX_TEXT = 4000
+
+_NUM_RE = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+_OP2 = (">=", "<=", "<>")
+# `!=`·`==` 는 **별칭으로 받지 않는다** — 문법 표면을 넓히면 "어떤 건 되고 어떤 건 안 되는"
+# 상태가 된다. 거부하되 무엇을 쓰면 되는지 정확히 알려 준다.
+_OP2_REJECT = {"!=": "같지 않음은 <> 로 씁니다", "==": "같음은 = 하나로 씁니다"}
+_OP1 = "+-*/><="
+_PAREN = {"(": "lp", ")": "rp", ",": "comma"}
+
+
+def quote_item(name) -> str:
+    """item 이름 → `@"이름"` 인용 표기. 이름 안의 `"` 는 `""` 로 escape 한다."""
+    return '@"' + str(name).replace('"', '""') + '"'
+
+
+def _lex_item_name(text, start):
+    """`@"` 로 시작하는 인용을 읽어 (이름, 끝 오프셋)."""
+    i, n, buf = start + 2, len(text), []
+    while True:
+        if i >= n:
+            raise FormulaError('항목 이름의 닫는 " 가 없습니다', None, (start, n))
+        ch = text[i]
+        if ch == '"':
+            if i + 1 < n and text[i + 1] == '"':
+                buf.append('"')
+                i += 2
+                continue
+            return "".join(buf), i + 1
+        buf.append(ch)
+        i += 1
+
+
+def _resolve_item(name, known, span):
+    """인용된 이름 → 목록의 **원본 이름**.
+
+    대소문자는 *조회*에만 관대하다 — 토큰에 들어가는 것은 언제나 목록의 정식 이름이다.
+    소문자로 눕혀 저장하면 source 별 참조가 어긋나거나 엉뚱한 컬럼을 덮어쓴다.
+    """
+    if name in known:
+        return name
+    hits = [n for n in known if n.lower() == name.lower()]
+    if len(hits) == 1:
+        return hits[0]
+    if hits:
+        raise FormulaError(
+            f"대소문자만 다른 항목이 여러 개입니다 ({', '.join(sorted(hits)[:3])}) — "
+            "@ 목록에서 고르세요", None, span)
+    near = difflib.get_close_matches(name, known, n=3, cutoff=0.6)
+    hint = f" (혹시 {', '.join(near)}?)" if near else ""
+    raise FormulaError(f"'{name}' 라는 항목이 없습니다{hint}", None, span)
+
+
+def lex(text, known_items=()):
+    """평문 수식 → ``(tokens, spans)``. 항목은 `@"이름"` 표기로만 받는다.
+
+    ``spans[i]`` 는 ``tokens[i]`` 가 차지한 ``(start, end)`` 문자 오프셋이다 —
+    파서가 주는 ``FormulaError.index``(토큰 인덱스)를 화면 위치로 되돌리는 데 쓴다
+    (`error_span`). 함수명과 항목 조회는 **대소문자를 가리지 않는다**.
+    돌려준 토큰은 아직 문법 검사를 통과한 것이 아니다 — `normalize_tokens` 로 넘길 것.
+    오류로 끝나면 예외에 그때까지 읽은 ``tokens``/``spans`` 가 실린다(에디터가 앞부분
+    색칠을 유지하는 데 쓴다).
+    """
+    raw = str(text or "")
+    if len(raw) > MAX_TEXT:
+        raise FormulaError(f"수식이 너무 깁니다 ({MAX_TEXT}자 이하)", None, (0, len(raw)))
+    known = [str(n) for n in known_items or []]
+    tokens, spans = [], []
+    i, n = 0, len(raw)
+    try:
+        _lex_scan(raw, known, tokens, spans)
+    except FormulaError as exc:
+        # 오류 지점까지 읽은 것을 예외에 실어 보낸다 — 에디터가 앞부분 색칠을 유지한다.
+        exc.tokens, exc.spans = tokens, spans
+        raise
+    return tokens, spans
+
+
+def _lex_scan(raw, known, tokens, spans):
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch.isspace():
+            i += 1
+            continue
+        start = i
+
+        if ch == "@":
+            if i + 1 >= n or raw[i + 1] != '"':
+                word = _IDENT_RE.match(raw, i + 1)
+                raise FormulaError(
+                    '항목은 @ 를 누르고 목록에서 고르세요 (@"항목명" 형태여야 합니다)',
+                    None, (start, word.end() if word else min(n, i + 1)))
+            name, i = _lex_item_name(raw, i)
+            tokens.append({"t": "item", "item": _resolve_item(name, known, (start, i))})
+            spans.append((start, i))
+            continue
+
+        matched = _NUM_RE.match(raw, i)
+        if matched:
+            i = matched.end()
+            tokens.append({"t": "num", "v": float(matched.group())})
+            spans.append((start, i))
+            continue
+
+        pair = raw[i:i + 2]
+        if pair in _OP2:
+            i += 2
+            tokens.append({"t": "op", "v": pair})
+            spans.append((start, i))
+            continue
+        if pair in _OP2_REJECT:
+            raise FormulaError(f"'{pair}' 는 쓸 수 없습니다 — {_OP2_REJECT[pair]}",
+                               None, (start, start + 2))
+        if ch in _OP1:
+            i += 1
+            tokens.append({"t": "op", "v": ch})
+            spans.append((start, i))
+            continue
+        if ch in _PAREN:
+            i += 1
+            tokens.append({"t": _PAREN[ch]})
+            spans.append((start, i))
+            continue
+
+        matched = _IDENT_RE.match(raw, i)
+        if matched:
+            i = matched.end()
+            name = matched.group().upper()
+            if name not in FUNCS:
+                raise FormulaError(
+                    f"'{matched.group()}' 은 쓸 수 없는 함수입니다. 항목이라면 @ 로 "
+                    f"넣으세요 (쓸 수 있는 함수: {', '.join(sorted(FUNCS))})",
+                    None, (start, i))
+            tokens.append({"t": "fn", "v": name})
+            spans.append((start, i))
+            continue
+
+        raise FormulaError(
+            f"'{ch}' 는 수식에 쓸 수 없는 문자입니다. 항목이라면 @ 로 넣으세요",
+            None, (start, start + 1))
+
+
+def error_span(spans, index, text_len):
+    """토큰 인덱스 → 문자 오프셋 span. **위치 없는 오류를 만들지 않는다.**
+
+    닫는 괄호 누락처럼 문자열 끝에서 나는 오류는 index 가 토큰 범위를 벗어난다 —
+    그럴 땐 마지막 토큰 끝부터 글 끝까지를, 그마저 비면 마지막 토큰 자체를 가리킨다.
+    """
+    if index is not None and 0 <= index < len(spans):
+        return spans[index]
+    if not spans:
+        return (0, text_len)
+    last_start, last_end = spans[-1]
+    end = max(text_len, last_end)
+    return (last_end if last_end < end else last_start, end)
 
 
 # ── 파서 (재귀하강) ───────────────────────────────────────────────────────────

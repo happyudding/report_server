@@ -489,6 +489,26 @@ body { position: relative; }
 <!-- ═══ public API ═══ -->
 <div id="pPublicApi" class="panel">
   <div class="card">
+    <h2>제공 중인 API 규약 <span class="hint">외부 시스템·챗봇·MCP 가 부를 수 있는 함수와 입·출력 ·
+      정본은 각 기능의 contracts.py (탭을 열 때 1회 조회)</span>
+      <select id="paCtGroup" class="sel" style="float:right" title="기능 그룹"></select></h2>
+    <div class="det" id="paCtHead" style="line-height:1.7">-</div>
+    <div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr><th>함수</th><th>경로</th><th>설명</th><th>입력</th><th>출력</th>
+        <th>비용</th><th>상태</th></tr></thead>
+      <tbody id="paCtBody"><tr class="empty-row"><td colspan="7">-</td></tr></tbody>
+    </table></div>
+    <div class="det" style="margin-top:12px;line-height:1.7">
+      <b>비용</b>은 호출 부담입니다 — <b>cheap</b> 은 DB·메모리 조회라 폴링해도 되고,
+      <b>warm</b> 은 계산된 리포트를 잘라 주며(아직 계산 전이면 202),
+      <b>heavy</b> 는 전량 데이터라 동시 2개까지만 받고 넘으면 429 로 돌려보냅니다.<br>
+      <b>상태</b>가 <span class="warn-chip warn">규약만</span> 이면 문서에는 있는데 라우트가 없다는 뜻입니다
+      (그 반대는 아래 '규약에 없는 라우트' 에 나옵니다).
+    </div>
+    <div id="paCtUndoc" style="margin-top:10px"></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
     <h2>공개 API 부하 <span class="hint">/pe/api/v1 — 사내에 열어 둔 무인증 읽기 전용 API ·
       이 탭이 보일 때만 10초 갱신 (메모리 집계라 서버 재시작 시 초기화)</span>
       <select id="paWindow" class="sel" style="float:right" title="집계 구간">
@@ -1966,7 +1986,72 @@ function paStatusCell(st) {
   const color = st >= 500 ? "#d33" : st >= 400 ? "var(--st-warn)" : "";
   return `<td class="num"${color ? ` style="color:${color}"` : ""}>${st}</td>`;
 }
-async function loadPublicApiTab() { loadPublicApi(); loadPublicApiHistory(); }
+async function loadPublicApiTab() { loadPublicApi(); loadPublicApiHistory(); loadPublicApiContract(); }
+
+// ── 제공 중인 API 규약 ──────────────────────────────────────────────────────
+// 데이터는 서버가 각 기능의 contracts.py 에서 만들어 준다(여기서 목록을 적지 않는다).
+// 부하 표와 달리 자주 바뀌지 않으므로 탭을 열 때 1회만 조회한다.
+let paContract = null;
+function paCostBadge(cost) {
+  if (cost === "heavy") return `<span class="warn-chip warn">heavy</span>`;
+  return esc(cost || "-");
+}
+function paParamText(params) {
+  const keys = Object.keys(params || {});
+  if (!keys.length) return "-";
+  return keys.map(k => {
+    const p = params[k] || {};
+    const req = p.required ? "*" : "";
+    const cap = p.maximum != null ? `≤${p.maximum}` : (p.enum ? p.enum.join("|") : "");
+    return esc(k + req + (cap ? `(${cap})` : ""));
+  }).join(", ");
+}
+function paRenderContract() {
+  const g = (paContract && paContract.groups || [])
+    .find(x => x.name === $("paCtGroup").value) || (paContract && paContract.groups || [])[0];
+  if (!g) {
+    $("paCtHead").textContent = "규약을 선언한 기능이 없습니다 (contracts.py 미제공).";
+    $("paCtBody").innerHTML = `<tr class="empty-row"><td colspan="7">-</td></tr>`;
+    return;
+  }
+  const auth = g.auth || {};
+  $("paCtHead").innerHTML =
+    `<b>${esc(g.base_path)}</b> · schema_version ${esc(g.schema_version)} ·
+     인증: ${esc(auth.mode || "none")}${auth.header ? ` (헤더 <code>${esc(auth.header)}</code>)` : ""}<br>
+     <span class="hint">${esc(auth.note || "")}</span>`;
+  const rows = (g.functions || []).map(f => `<tr>
+    <td>${esc(f.name)}</td>
+    <td><code>${esc(f.path)}</code></td>
+    <td>${esc(f.summary || "")}${f.notes ? `<br><span class="hint">${esc(f.notes)}</span>` : ""}</td>
+    <td>${paParamText(f.params)}</td>
+    <td>${esc(f.returns || "")}</td>
+    <td>${paCostBadge(f.cost)}</td>
+    <td>${f.implemented ? "구현됨" : `<span class="warn-chip warn">규약만</span>`}</td>
+  </tr>`).join("");
+  $("paCtBody").innerHTML = rows || `<tr class="empty-row"><td colspan="7">-</td></tr>`;
+
+  // 규약에 없는 라우트 = 문서 누락. 있으면 눈에 띄게 알린다(없으면 아무것도 안 그린다).
+  const un = paContract.undocumented || [];
+  $("paCtUndoc").innerHTML = un.length
+    ? `<div class="det"><b style="color:var(--st-warn)">규약에 없는 라우트 ${un.length}개</b>
+       — contracts.py 에 추가해야 외부 시스템이 발견할 수 있습니다:<br>
+       ${un.map(r => `<code>${esc(r.rule)}</code>`).join(", ")}</div>`
+    : "";
+}
+async function loadPublicApiContract() {
+  if (paContract) return;                       // 탭 재방문 시 재조회하지 않는다
+  try {
+    paContract = await getJSON("api/public_api/contract");
+    const sel = $("paCtGroup");
+    sel.innerHTML = (paContract.groups || [])
+      .map(g => `<option value="${esc(g.name)}">${esc(g.name)}</option>`).join("");
+    sel.onchange = paRenderContract;
+    paRenderContract();
+  } catch (e) {
+    paContract = null;
+    $("paCtHead").innerHTML = `<span style="color:var(--st-warn)">규약 조회 실패</span> — ${esc(e)}`;
+  }
+}
 async function loadPublicApi() {
   try {
     const d = await getJSON("api/public_api?window=" + $("paWindow").value);

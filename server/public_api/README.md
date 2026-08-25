@@ -132,6 +132,30 @@ category·surface·status 또는 200자를 넘는 `q`는 `400 bad_request`다.
 {"error": "bad_request", "message": "unknown status: disabled (...)"}
 ```
 
+### `GET /web-report/...` — web_report 조회 API
+
+세션의 계산 결과(수율·CPK·Issue Table·Map·Distribution·raw data 등)를 읽는 함수 22개.
+**규약 정본은 [web_report/CONTRACT.md](web_report/CONTRACT.md)** 이고, 살아 있는 목록은
+서버에서 직접 받는다:
+
+```bash
+curl "http://12.81.220.117:8080/pe/api/v1/web-report/capabilities"
+```
+
+위 product-info/help 와 다른 점 세 가지만 여기 적는다:
+
+- **202 가 정상 흐름이다.** 리포트가 아직 계산되지 않은 세션(콜드)은 200 도 500 도 아니라
+  `202 {"building":true, "status_url", "retry_after_sec"}` 다. 서버는 요청 스레드에서
+  계산을 기다리지 않고 백그라운드 빌드만 예약한다 — 기다리게 하면 외부 폴러 하나가
+  사람 요청까지 굶긴다. 호출 측은 `status_url` 을 폴링한 뒤 재요청한다.
+- **인증이 선택적으로 붙는다.** 기본은 다른 기능과 같은 무인증이며 **공개 세션만** 보인다.
+  서버에 env `WEB_REPORT_API_KEY` 가 설정돼 있고 요청이 헤더 `X-Report-Api-Key` 로 같은
+  값을 제시하면 비공개 세션까지 조회된다. 키가 틀려도 차단이 아니라 공개 범위다.
+- **404 는 "없음"과 "권한 없음"을 합친 응답이다.** 비공개 세션의 존재 자체를 숨기기 위해
+  둘을 구분하지 않는다.
+
+대용량 응답(ECDF 전량·map die 전량·raw CSV)은 동시 2개까지만 처리하고 넘으면 `429` 다.
+
 ### `GET /help/features/<id>`
 
 기능 ID 한 건을 같은 envelope 형식으로 반환한다. 없는 ID는 `404 not_found`다.
@@ -197,9 +221,18 @@ server/public_api/
 ├── README.md              이 문서 (외부 소비자용 접근 규약)
 ├── product_info/
 │   └── routes.py          public_api_product_info — /pe/api/v1/product-info/*
-└── help/
-    └── routes.py          public_api_help — /pe/api/v1/help/*
+├── help/
+│   └── routes.py          public_api_help — /pe/api/v1/help/*
+├── web_report/            public_api_web_report — /pe/api/v1/web-report/*
+│   ├── contracts.py       ★규약 정본(FUNCTION_SPECS) — /capabilities·MCP·관리자 탭이 파생
+│   ├── facade.py          Flask 무의존 조회 함수층 (MCP·챗봇도 이걸 쓴다)
+│   ├── routes.py          HTTP 층 (분기키→상태코드 변환 + 대용량 세마포어)
+│   └── CONTRACT.md        사람이 읽는 규약 문서
+└── client_functions/      (껍데기) client 기능의 서버 이전 자리 — 미등록, 외부 담당자 소유
 ```
+
+규약(contracts.py)이 있는 기능은 **관리자 패널 'public API' 탭 맨 위**에 함수·입출력 표로
+자동 표시되고, 규약↔실제 라우트의 어긋남(문서 누락/앞서감)도 거기서 바로 보인다.
 
 새 기능(예: eval 이력 조회)을 붙일 때:
 

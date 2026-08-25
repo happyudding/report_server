@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
 
 from honey_ui.source_name_dialog import load_palette
 
-_MOVE_BTN_W = 36
+_MOVE_BTN_W = 56               # ">>" / "<<" 가 36px 에서 잘려 보였다(2026-08-25 요청)
 _SWATCH = 14                  # 항목 앞 색 사각형 한 변(px)
 _HEAD_BG = "#DCFCE7"          # After 최상단(= limit 기준) 강조 배경
 
@@ -75,9 +75,9 @@ class CompareArrangeDialog(QDialog):
     def __init__(self, parent, names, colors=None):
         super().__init__(parent)
         self.setWindowTitle("Compare — Before / After 배치 / 색")
-        # 가로 150% — source(파일)명이 길면 QListWidget 기본 ElideRight 로 잘려
-        # 어느 파일인지 구분이 안 됐다(2026-08-20 요청). 세로는 그대로.
-        self.resize(1020, 460)
+        # source(파일)명이 길면 QListWidget 기본 ElideRight 로 잘려 어느 파일인지 구분이
+        # 안 된다(2026-08-20 요청 → 2026-08-25 재확대: 1020 → 1400). 세로는 그대로.
+        self.resize(1400, 460)
         self._original = [str(n) for n in names]
         self._colors = list(colors) if colors else load_palette()
         self._colors_changed = False
@@ -114,7 +114,9 @@ class CompareArrangeDialog(QDialog):
         mid = QVBoxLayout()
         mid.addStretch(1)
         for b in (btn_all_right, btn_sel_right, btn_sel_left, btn_all_left):
-            b.setFixedWidth(_MOVE_BTN_W)
+            # 고정폭이 글자보다 좁으면 Qt 가 텍스트를 잘라낸다(고DPI·큰 글꼴 PC).
+            # sizeHint 이상을 보장해 어떤 환경에서도 ">>"/"<<" 가 온전히 보이게 한다.
+            b.setFixedWidth(max(_MOVE_BTN_W, b.sizeHint().width()))
             mid.addWidget(b)
         mid.addStretch(1)
 
@@ -128,7 +130,9 @@ class CompareArrangeDialog(QDialog):
         right = QVBoxLayout()
         right.addStretch(1)
         for b in (btn_up, btn_down):
-            b.setFixedWidth(_MOVE_BTN_W)
+            # 고정폭이 글자보다 좁으면 Qt 가 텍스트를 잘라낸다(고DPI·큰 글꼴 PC).
+            # sizeHint 이상을 보장해 어떤 환경에서도 ">>"/"<<" 가 온전히 보이게 한다.
+            b.setFixedWidth(max(_MOVE_BTN_W, b.sizeHint().width()))
             right.addWidget(b)
         right.addStretch(1)
 

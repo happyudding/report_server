@@ -22,6 +22,7 @@
   (g) **inf → NaN 정규화** (핵심 2)
   (h) 스칼라 수식·길이 정합
   (i) **gap_chart 동치** — 산술 전용 토큰의 AST·평가 결과 일치 (핵심 3)
+  (j) 평문 렉싱 `lex` — `@"이름"` 인용·대소문자·escape·거부 문구·span 오프셋
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert). 서버·DB 불필요.
 """
@@ -313,6 +314,100 @@ def test_gap_chart_equivalence():
     print(f"  [ok] (i) gap_chart 동치 {len(cases)}종 - AST·평가 결과 일치")
 
 
+def test_lex():
+    """(j) 평문 렉싱 — 항목은 `@"이름"` 인용으로만, 나머지는 자유 타이핑."""
+    items = ["VDD_A", "VDD_B", "VDD-VSS", "IDD (1.8V)", 'A"B', "SUM", "Vref", "vref"]
+
+    def toks(text, known=items):
+        return F.lex(text, known)[0]
+
+    def kinds(text, known=items):
+        return [t.get("item") if t["t"] == "item" else t.get("v", t["t"])
+                for t in toks(text, known)]
+
+    def bad(text, needle, known=items):
+        try:
+            tokens, spans = F.lex(text, known)
+            F.normalize_tokens(tokens)
+        except F.FormulaError as exc:
+            assert needle in str(exc), (text, str(exc))
+            span = exc.span or F.error_span(spans, exc.index, len(text))
+            assert span and 0 <= span[0] < span[1] <= len(text), (text, span)
+            return str(exc)
+        raise AssertionError(f"거부되지 않았다: {text!r}")
+
+    # 대소문자 — 함수명·항목 조회 둘 다 무관, 토큰은 목록의 **원본 이름**
+    assert kinds('if(@"vdd_a" > min(@"VDD_B", 2), 0, 1)') == [
+        "IF", "lp", "VDD_A", ">", "MIN", "lp", "VDD_B", "comma", 2.0, "rp",
+        "comma", 0.0, "comma", 1.0, "rp"]
+    assert toks('@"VDD_A"')[0]["item"] == "VDD_A"
+
+    # 이름에 연산자·공백·괄호·따옴표가 있어도 안전 (인용이 구분자)
+    assert kinds('@"VDD-VSS" * 2') == ["VDD-VSS", "*", 2.0]
+    assert kinds('@"IDD (1.8V)" + @"A""B"') == ["IDD (1.8V)", "+", 'A"B']
+    assert F.quote_item('A"B') == '@"A""B"'
+    assert toks(F.quote_item('IDD (1.8V)'))[0]["item"] == "IDD (1.8V)"
+
+    # 함수명과 같은 이름의 항목 — 인용이 충돌을 없앤다
+    got = toks('SUM(@"SUM", 1)')
+    assert got[0]["t"] == "fn" and got[2]["t"] == "item"
+
+    # 숫자 형태 3종 + 2글자 비교 연산자
+    assert kinds('@"VDD_A" > 1.5') == ["VDD_A", ">", 1.5]
+    assert kinds('@"VDD_A" >= .5') == ["VDD_A", ">=", 0.5]
+    assert kinds('@"VDD_A" <> 2e-3') == ["VDD_A", "<>", 0.002]
+    assert kinds('@"VDD_A" <= 1') == ["VDD_A", "<=", 1.0]
+
+    # 자유 텍스트는 항목이 될 수 없다 / 별칭은 받지 않는다 / 특수문자 거부
+    bad("VDD_A + 1", "쓸 수 없는 함수")
+    bad('vlookup(@"VDD_A")', "쓸 수 없는 함수")
+    bad('@"VDD_A" != 1', "<> 로 씁니다")
+    bad('@"VDD_A" == 1', "= 하나로 씁니다")
+    bad('@"VDD_A" ※ 1', "쓸 수 없는 문자")
+    bad('@VDD_A', '@"항목명"')
+    bad('@"VDD_A', '닫는 " 가 없습니다')
+
+    # 없는 항목 — 근접 후보를 알려 준다 (이름 한 글자를 지운 상황)
+    message = bad('@"VDD_" + 1', "항목이 없습니다")
+    assert "VDD_A" in message, message
+
+    # 대소문자만 다른 항목이 둘이면 추측하지 않는다
+    bad('@"VREF" + 1', "대소문자만 다른 항목")
+    assert toks('@"Vref" + 1')[0]["item"] == "Vref"      # 정확 일치는 그대로 통과
+
+    # span 오프셋 정확도
+    tokens, spans = F.lex('@"VDD_A" + 12', items)
+    assert spans == [(0, 8), (9, 10), (11, 13)], spans
+    text = 'if(@"VDD_A" > 1, 0, 1)'
+    tokens, spans = F.lex(text, items)
+    assert text[spans[0][0]:spans[0][1]] == "if"
+    assert text[spans[2][0]:spans[2][1]] == '@"VDD_A"'
+
+    # 오류 지점까지 읽은 부분 결과가 예외에 실린다 (에디터 색칠 유지용)
+    try:
+        F.lex('@"VDD_A" + %', items)
+    except F.FormulaError as exc:
+        assert [t["t"] for t in exc.tokens] == ["item", "op"], exc.tokens
+        assert exc.spans == [(0, 8), (9, 10)], exc.spans
+    else:
+        raise AssertionError("특수문자가 통과했다")
+
+    # 파서 오류의 토큰 index → 문자 위치 (위치 없는 오류를 만들지 않는다)
+    text = 'IF(@"VDD_A" > MIN(@"VDD_B", 1), 0, 1'
+    tokens, spans = F.lex(text, items)
+    try:
+        F.normalize_tokens(tokens)
+    except F.FormulaError as exc:
+        start, end = F.error_span(spans, exc.index, len(text))
+        assert 0 <= start < end <= len(text), (start, end)
+    else:
+        raise AssertionError("닫는 괄호 누락이 통과했다")
+
+    # 길이 상한
+    bad("1 " * (F.MAX_TEXT // 2 + 10), "너무 깁니다")
+    print("  [ok] (j) 평문 렉싱 — 인용 항목·대소문자·escape·거부 7종·span·부분결과")
+
+
 def main():
     print("[신규 Item 수식 엔진]")
     test_normalize()
@@ -323,6 +418,7 @@ def main():
     test_infinite()
     test_shape()
     test_gap_chart_equivalence()
+    test_lex()
     print("[통과] 수식 파서·평가 계약 정상")
 
 

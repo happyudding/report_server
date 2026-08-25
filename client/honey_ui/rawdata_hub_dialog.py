@@ -608,7 +608,12 @@ class RawdataHubDialog(QDialog):
 
         from honey_ui.formula_editor import FormulaEditor
 
-        layout.addWidget(QLabel("수식"))
+        guide = QLabel(
+            '수식 — 항목은 <b>@</b> 로 넣고 나머지는 그대로 타이핑하세요 (대소문자 무관).<br>'
+            '예: <code>if(@"VREF_TRIM" &gt; min(@"VDD_A", @"VDD_B"), 0, 1)</code>')
+        guide.setTextFormat(Qt.TextFormat.RichText)
+        guide.setWordWrap(True)
+        layout.addWidget(guide)
         self.ni_expr = FormulaEditor()
         self.ni_expr.changed.connect(self._on_new_item_changed)
         layout.addWidget(self.ni_expr)
@@ -727,6 +732,15 @@ class RawdataHubDialog(QDialog):
         else:
             self.ni_status.setText("")
 
+    def _new_item_error_box(self, error):
+        """수식 오류를 **원문에서 문제 구간을 칠해** 보여 준다.
+
+        상태줄 한 줄로는 긴 수식의 어디가 틀렸는지 짚어 주지 못한다. QMessageBox 는
+        본문이 HTML 로 보이면 알아서 rich text 로 그리므로 별도 설정이 필요 없다.
+        """
+        QMessageBox.warning(self, "신규 Item 추가",
+                            self.ni_expr.error_html() or error or "수식을 입력하세요.")
+
     def _preview_new_item(self):
         if self._ni_tables is None:
             self._ensure_new_item_loaded()
@@ -737,6 +751,7 @@ class RawdataHubDialog(QDialog):
         if error or not tokens:
             self.ni_status.setText("⚠ " + (error or "수식을 입력하세요."))
             self.ni_expr.mark_error(index)
+            self._new_item_error_box(error)
             return
         issues = item_add.validate_meta(self._new_item_meta(), self._ni_tables)
         if issues:
@@ -806,7 +821,7 @@ class RawdataHubDialog(QDialog):
         tokens, error, index = self.ni_expr.validate()
         if error or not tokens:
             self.ni_expr.mark_error(index)
-            QMessageBox.warning(self, "신규 Item 추가", error or "수식을 입력하세요.")
+            self._new_item_error_box(error)
             return
         issues = item_add.validate_meta(self._new_item_meta(), self._ni_tables or [])
         if issues:

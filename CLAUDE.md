@@ -580,6 +580,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 |--------------|-------|
 | 소유권/수정 권한 경계 (정본) | [docs/15_ownership.md](docs/15_ownership.md) (자유/사전승인/외부 담당자 영역) |
 | API 엔드포인트·환경변수 (정본) | [server/README.md](server/README.md) |
+| **web_report 를 외부/챗봇/MCP 에 개방** (`/pe/api/v1/web-report`) | 규약 정본 [public_api/web_report/contracts.py](server/public_api/web_report/contracts.py) `FUNCTION_SPECS` → `/capabilities`·MCP tool·관리자 규약 탭이 전부 여기서 파생. 조회 [facade.py](server/public_api/web_report/facade.py)(Flask 무의존) · HTTP [routes.py](server/public_api/web_report/routes.py) · 문서 [CONTRACT.md](server/public_api/web_report/CONTRACT.md) · MCP 골격 [server/web_report_mcp/](server/web_report_mcp/README.md). ⚠ 새 계산 금지(payload 슬라이스만) · `viewer=None` 금지 · 콜드는 202(동기 대기 금지) · 캐시 공유 객체는 복사 후 가공 |
 | xlsx 업로드 라우트 | [server/upload_xlsx.py](server/upload_xlsx.py) · grid 파싱 [xlsx_parser.py](server/xlsx_parser.py) |
 | web_report 업로드/파이프라인 | [server/upload_webreport.py](server/upload_webreport.py) → [docs/10](docs/10_web_report_pipeline.md) |
 | 라우트 (세션/web_report/기타) | [routes_session.py](server/report/routes_session.py) / [routes_webreport.py](server/report/routes_webreport.py) / [routes_misc.py](server/report/routes_misc.py) |
