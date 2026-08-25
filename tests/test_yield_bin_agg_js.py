@@ -15,7 +15,8 @@
   (c) 항목 1개 Bin 은 집계행도 토글도 없다 (사용자 확정)
   (d) Issue Table 집계행은 Map/Distribution 이 빈 칸(st-empty) — 미니셀이 빠져 행이 좁아진다
   (e) 집계행은 comment 저장 키가 없고(issueRowKey === "") Status 키는 갖는다
-  (f) Issue Table Temp(대표행이 항목 행 자체)는 행 구성이 **불변**
+  (f) Issue Table Temp 도 같은 펼침 모양이되 헤더행 수치는 **빈칸**이고, 대표행(고유 항목)은
+      상세행으로 복제돼 사라지지 않는다. 헤더행에 항목 링크·체크박스·저장 키가 새지 않는다
   (g) 라벨 문자열이 파이썬 정본(web_report/yield_agg.py)과 **글자 그대로** 같다
   (h) 분할 JS 는 classic script 유지 (import/export 금지)
   (i) 웹 Excel Down 2경로가 화면 펼침과 **같은 행 구성**을 내보낸다 (사용자 확정)
@@ -273,24 +274,34 @@ def test_issue_table_rows():
         "    return td.textContent.replace(/[\\u25b2\\u25bc]/g,'').trim();}),"
         "  empties:Array.prototype.map.call(tr.cells,function(td){"
         "    return td.className.indexOf('st-empty')>=0;})};});"
-        "out.head=Array.prototype.map.call("
-        "  box.querySelectorAll('tbody tr')[0].cells,function(td){return td.textContent.trim();});"
+        # 셀 인덱스 기준 = renderSheetTable 이 쓰는 것과 **같은** 컬럼 순서
+        "function colsOf(rs){var cs=[];rs.forEach(function(rr){Object.keys(rr)"
+        "  .forEach(function(k){if(cs.indexOf(k)<0)cs.push(k);});});"
+        "  return orderColumns(cs,'issue');}"
+        "out.cols=colsOf(rows);out.tempCols=colsOf(temp);"
         # (아래는 파이썬 주석) 저장 키 규약 - 집계행에 comment 키가 새면 코멘트가 고립된다
         "var agg={Bin:'15',Item:" + js_literal(LABEL) + ",_agg:true,_grp:'y0',_detail:false};"
         "out.aggRowKey=issueRowKey(agg,'Yield');"
         "out.aggStatusKey=issueHideStatusKey(agg,'Yield');"
         "out.repRowKey=issueRowKey(rows[0],'Yield');"
-        # (아래는 파이썬 주석) Issue Table Temp 표는 손대지 않는다
+        # (아래는 파이썬 주석) Issue Table Temp — 헤더행 숫자는 비어야 한다
         "var tbox=document.createElement('div');"
         "tbox.innerHTML=renderSheetTable(temp,{kind:'issue'});"
-        "out.tempAll=Array.prototype.map.call(tbox.querySelectorAll('tbody tr'),"
-        "  function(tr){return (tr.className||'(none)')+'::'+tr.cells[3].textContent.trim();});"
         "out.tempRows=Array.prototype.slice.call(tbox.querySelectorAll('tbody tr'))"
         "  .filter(function(tr){return !/issue-shead/.test(tr.className);})"
-        "  .map(function(tr){return tr.className;});"
+        "  .map(function(tr){return {cls:tr.className,hidden:tr.style.display==='none',"
+        "    cells:Array.prototype.map.call(tr.cells,function(td){"
+        "      return td.textContent.replace(/[\\u25b2\\u25bc]/g,'').trim();}),"
+        "    empties:Array.prototype.map.call(tr.cells,function(td){"
+        "      return td.className.indexOf('st-empty')>=0;})};});"
         "out.allRows=Array.prototype.map.call(box.querySelectorAll('tbody tr'),"
         "  function(tr){return (tr.className||'(none)');});"
         "out.tempAgg=tbox.querySelectorAll('tr.issue-bin-agg').length;"
+        "out.tempAggLink=!!tbox.querySelector('tr.issue-bin-agg .item-detail-link');"
+        "out.tempAggChk=tbox.querySelectorAll('tr.issue-bin-agg .issue-del-chk').length;"
+        "var tagg={Bin:'3',Item:'BIN 3    (3 items)',_agg:true,_grp:'t0',_detail:false};"
+        "out.tempAggStatusKey=issueHideStatusKey(tagg,'TEMP');"
+        "out.tempAggRowKey=issueRowKey(tagg,'TEMP');"
         "out.toggles=box.querySelectorAll('.issue-toggle[data-grp=\"y0\"]').length;"
         "out.aggToggleUp=(function(b){return b?b.getAttribute('aria-expanded'):'';})"
         "  (box.querySelector('tr.issue-bin-agg .issue-toggle'));"
@@ -307,10 +318,12 @@ def test_issue_table_rows():
     assert rep["hidden"] is False
     assert "issue-bin-agg" in agg["cls"] and agg["hidden"] is True, agg["cls"]
 
-    head = r["head"]
-    idx = {name: i for i, name in enumerate(head)}
-    for want in ("Map", "Distribution", "Item", "TNO"):
-        assert want in idx, head
+    idx = {name: i for i, name in enumerate(r["cols"])}
+    tidx = {name: i for i, name in enumerate(r["tempCols"])}
+    # ⚠ source 가 1개면 orderColumns 가 avg 열을 뺀다(= S1_yield 와 같은 값이라 무의미).
+    #    그래서 수치 확인은 avg 가 아니라 소스 열로 한다.
+    for want in ("Map", "Distribution", "Item", "TNO", "S1_yield", "Status", "PTE comment"):
+        assert want in idx, r["cols"]
 
     # (d) 집계행의 Map/Distribution 은 빈 칸 — 미니셀이 빠져 행이 좁아진다
     assert agg["empties"][idx["Map"]] is True, agg
@@ -336,11 +349,27 @@ def test_issue_table_rows():
     assert r["aggToggleUp"] == "true", r["aggToggleUp"]
     print("[d3] 토글 rep+agg 양쪽, 집계행 토글은 펼침 상태(▲) OK")
 
-    # (f) Issue Table Temp 는 불변 (대표행 1 + 상세 2, 집계행 0)
-    assert r["tempAgg"] == 0, r["tempRows"]
-    assert len(r["tempRows"]) == 3, (r["tempRows"], r.get("tempAll"), r.get("allRows"))
-    assert "issue-bin-rep" in r["tempRows"][0] and "has-agg" not in r["tempRows"][0]
-    print("[f] Issue Table Temp 행 구성 불변 OK")
+    # (f) Issue Table Temp — 같은 펼침 모양이되 헤더행 숫자는 빈칸
+    tr_ = r["tempRows"]
+    assert r["tempAgg"] == 1, tr_
+    # 대표행(접힘 전용) + 헤더행 + 항목 3행(ITEM_A 복제 포함)
+    assert [x["cells"][tidx["Item"]] for x in tr_] == \
+        ["ITEM_A", "BIN 3    (3 items)", "ITEM_A", "ITEM_B", "ITEM_C"], tr_
+    trep, tagg, tdet = tr_[0], tr_[1], tr_[2:]
+    assert "has-agg" in trep["cls"] and trep["hidden"] is False, trep["cls"]
+    assert "issue-bin-agg" in tagg["cls"] and tagg["hidden"] is True, tagg["cls"]
+    # 접힘 대표행은 종전대로 자기 숫자를 보여준다
+    assert trep["cells"][tidx["S1_yield"]] == "1", trep["cells"]
+    # 헤더행은 수치·편집 열이 전부 빈칸 (항목끼리 die 가 겹쳐 합산이 뜻을 갖지 않는다)
+    for col in ("S1_yield", "Status", "Map", "Distribution", "PTE comment"):
+        assert tagg["empties"][tidx[col]] is True, (col, tagg["cells"][tidx[col]])
+    # 복제된 ITEM_A 가 자기 값을 그대로 들고 있다 (없으면 펼침에서 항목이 사라진다)
+    assert tdet[0]["cells"][tidx["S1_yield"]] == "1", tdet[0]["cells"]
+    assert all("issue-bin-detail" in d["cls"] for d in tdet), tdet
+    # 헤더행에 항목 링크·체크박스·저장 키가 새면 안 된다 (Item 이 라벨이므로)
+    assert r["tempAggLink"] is False and r["tempAggChk"] == 0, r
+    assert r["tempAggStatusKey"] == "" and r["tempAggRowKey"] == "", r
+    print("[f] Issue Table Temp = 헤더행(빈칸) + 항목 전체, 키 미부여 OK")
 
 
 # ── (i) Excel 내보내기 행 구성 = 화면 펼침과 동일 ────────────────────────────

@@ -136,6 +136,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     없고, 항목끼리 die 가 겹쳐 합산이 뜻을 갖지 않는다. Bin 이 빈 항목은 묶지 않고 뒤에
     붙인다. **Excel(웹/Honey 둘 다)은 TEMP 접힘 행을 대표행에 합치지 않는다** — 화면
     접기일 뿐 행 하나가 독립 항목이라, 합치면 항목이 사라진다.
+    2026-08-25 부터 이 표도 **펼치면 Bin 집계 헤더행이 선다**(수치는 빈칸, 대표행은 상세행으로
+    복제) — 아래 §"Bin 그룹 펼침 = 집계 헤더행 분리" 의 ② 경로다.
   - **Yield 탭 하단 Temp Corner 섹션은 요약**이다 — 편집 열(Map/Distribution/Status/comment)
     을 뺀 읽기 전용이고 행은 전량 청크 렌더한다(Bin 묶음·접기는 위와 동일, 토글은
     `.yield-toggle`). 편집은 "Issue Table Temp 탭에서".
@@ -265,7 +267,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   나간다 — 계산에 쓴 규격과 화면 규격이 다르면 CPK 탭의 한계값 역산(avg ± 3·Cpk·stdev)이
   맞지 않는다. 값이 바뀌므로 `REPORT_SCHEMA_VERSION` v29(**서버 재시작 필요**).
   회귀 고정: [tests/test_cpk_temperature_basis.py](../tests/test_cpk_temperature_basis.py).
-- **Bin 그룹 펼침 = 집계 헤더행 분리 (2026-08-25)**: Yield 탭과 Issue Table Yield 섹션 모두,
+- **Bin 그룹 펼침 = 집계 헤더행 분리 (2026-08-25)**: Bin 묶음을 쓰는 표 전부
+  (Yield 탭 · Issue Table Yield 섹션 · Issue Table Temp · Yield 탭 Temp Corner)에서,
   같은 Bin 에 항목이 **여럿일 때만** 접힘/펼침의 첫 줄이 달라진다.
 
   | 상태 | 첫 줄 | 그 아래 |
@@ -298,9 +301,25 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     접힘 대표행과 상호 배타로 보이므로 한쪽만 보인다). 같은 키의 셀이 DOM 에 2개 생기므로
     comment blur·Status 변경은 [edit_mode.js](../server/report/static/webreport/edit_mode.js)
     `mirrorCommentCell` / Status 낙관 갱신이 **같은 키 전부**를 맞춘다.
-  - ⚠ **Issue Table Temp·Compare 는 대상이 아니다.** 같은 `_grp`/`_detail` 규약을 쓰지만
-    대표행이 **항목 행 자체**라 합계 개념이 없다 — `rep.Item == 첫 상세행.Item` 가드가
-    자동으로 제외한다(종전 `dropIssueMostFailDetailRows` 의 가드를 그대로 승계).
+  - ⚠ **`_grp` 을 쓰는 표가 둘인데 대표행의 성격이 달라 처리가 갈린다.** 판정은
+    `rep.Item == 첫 상세행.Item` 하나 — 구조상 항상 참/거짓이 갈린다.
+
+    | | 대표행 | 헤더행 수치 | 대표행 처리 |
+    |---|---|---|---|
+    | **Yield 섹션** (`yield_tab._bin_total_row`) | Bin **합계**(이름만 most-fail 항목) | rep 승계 | 헤더행이 **대신**(펼침에서 숨김) — 그 항목의 진짜 행은 첫 상세행 |
+    | **Issue Table Temp** (`temp_fail._group_by_bin`) | avg 최대 **항목 행 자체** | **빈칸** | 상세행으로 **복제**(안 하면 펼침에서 그 항목이 사라진다) |
+
+    Temp 헤더행을 비우는 이유는 두 가지다 — 항목끼리 die 가 겹쳐 **합산이 틀린 값**이 되고
+    (`temp_fail` 모듈 docstring), bin 단위 저장 키가 없다(키는 `TEMP|<item>`). 그래서
+    Temp 헤더행에는 Status·comment·체크박스·Item_detail 링크를 **일절 달지 않는다**
+    (`issueHideStatusKey` 가 `_agg && section !== "Yield"` 를 `""` 로 돌린다).
+    복제 상세행은 `Category` 를 비운다 — 값이 남으면 `emitRows` 가 섹션 divider 로 보고
+    그 행을 건너뛴다.
+  - **Yield 탭 하단 Temp Corner 요약표**도 같은 표라 함께 적용된다(`renderSheetTable` 이
+    `kind:"yield"` + `_grp` 인 표에도 `insertBinAggRows` 를 태운다). 토글은 종전대로
+    `.yield-toggle`.
+  - ⚠ **Issue Table Compare 는 대상이 아니다** — `_grp`/`_detail` 자체를 만들지 않는
+    평평한 표라 첫 분기에서 빠진다.
   - **검색 강제 펼침**(`.yield-searching`/`.issue-searching`)도 대표행을 감추고 집계행을
     띄운다(`tr.*-bin-rep.has-agg`) — 안 그러면 검색 결과에서 옛 혼동이 그대로 재발한다.
   - **Excel 3경로도 화면과 같은 구성**(사용자 확정): 웹 Yield Excel Down / 웹 Issue Table

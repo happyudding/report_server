@@ -77,18 +77,35 @@ def expand_bin_group(group):
 AGG_BLANK_COLS = ("Map", "Distribution", "AI Comment", "Signature",
                   "PTE comment", "개발 comment")
 
+# 대표행이 **항목 행 자체**인 표(Issue Table Temp)의 헤더행에서 값을 남길 열.
+# 나머지 수치·편집 열은 전부 비운다 — 그 표는 항목끼리 die 가 겹쳐 합산이 뜻을 갖지 않고
+# (tabs/temp_fail.py `_group_by_bin` docstring), bin 단위 저장 키도 없다(키는 `TEMP|<item>`).
+AGG_ID_COLS = ("Category", "Step", "Bin", "TNO", "Item")
+
 
 def insert_bin_agg_rows(issue_rows, blank_cols=AGG_BLANK_COLS):
     """Issue Table 행 목록 → **펼침 표시 구성** (sheets.js ``insertBinAggRows`` 의 파이썬 짝).
 
-    대표행 뒤에 집계 헤더행을 끼우고, 종전에 "대표행과 중복"이라며 빼던 첫 상세행
-    (= most-fail 항목)을 되살린다. 항목이 1개뿐인 Bin 은 집계행을 만들지 않고 그 중복
-    상세행만 뺀다(= 종전 표시와 동일).
+    Bin 그룹마다 대표행 뒤에 집계 헤더행을 끼워, 펼쳤을 때 첫 줄이 항상
+    ``BIN 15    (3 items)`` 가 되고 그 아래에 그 Bin 의 **모든 항목 행**이 자기 값으로 서게
+    한다. 접힘(대표행 1줄)은 종전 그대로다.
 
-    ⚠ 대표행이 **집계행인 표에만** 적용해야 한다. Issue Table Temp
-    (``tabs/temp_fail._group_by_bin``)는 같은 ``_grp``/``_detail`` 규약을 쓰지만 대표행이
-    항목 행 자체라 합계 개념이 없다 — ``rep["Item"] == 첫 상세행["Item"]`` 가드가 그 표를
-    자동으로 제외한다(프런트가 쓰던 가드를 그대로 승계).
+    ``_grp`` 규약을 공유하는 표가 둘인데 **대표행의 성격이 달라** 처리가 갈린다.
+    판정은 ``rep["Item"] == 첫 상세행["Item"]`` 하나로 한다 — 구조상 항상 참/거짓이 갈린다.
+
+    ① **합계 대표행** (Yield 섹션, ``tabs/yield_tab._bin_total_row``)
+       대표행 = Bin 합계인데 이름만 most-fail 항목 것이고, 그 항목의 진짜 행이 첫 상세행이다
+       (= Item 이 같다). → 헤더행이 **대표행을 대신**하고 숫자를 그대로 승계한다.
+    ② **항목 대표행** (Issue Table Temp, ``tabs/temp_fail._group_by_bin``)
+       대표행 = avg 최대 **항목 행 그 자체**라 합계가 없고 첫 상세행은 다른 항목이다.
+       → 헤더행은 숫자를 **비우고**(합산이 틀린 값이 된다), 대표행을 상세행으로 **복제**해
+       펼침에서 그 항목이 사라지지 않게 한다. 접힘은 종전대로 대표행이 숫자를 보여준다.
+
+    두 경우 모두 결과 DOM 구조가 같아 프런트 토글 코드 한 벌로 처리된다
+    (접힘=대표행 / 펼침=헤더행+상세행 전부).
+
+    항목이 1개뿐인 Bin 은 헤더행을 만들지 않는다(사용자 확정) — ①은 중복 상세행을 빼
+    종전과 같은 1행이 되고, ②는 애초에 상세행이 없다.
 
     원본 dict 은 바꾸지 않는다(사본만 만든다).
     """
@@ -104,28 +121,49 @@ def insert_bin_agg_rows(issue_rows, blank_cols=AGG_BLANK_COLS):
         if not r or not r.get("_grp") or r.get("_detail"):
             continue
         first = first_detail.get(r["_grp"])
-        if first is None or str(r.get("Item") or "") != str(first.get("Item") or ""):
-            continue
-        n_items = int(r.get("_ndetail") or 0)
+        if first is None:
+            continue                    # 상세행이 없는 그룹 — 접을 것이 없다
+        # 대표행이 합계행인가(①), 항목 행 자체인가(②)
+        totals_rep = str(r.get("Item") or "") == str(first.get("Item") or "")
+        n_detail = int(r.get("_ndetail") or 0)
+        # 그 Bin 의 항목 수 — ① 은 상세행이 곧 전 항목, ② 는 대표행이 한 항목 더 든다.
+        n_items = n_detail if totals_rep else n_detail + 1
         if n_items <= 1:
-            cp = dict(r)
-            cp["_ndetail"] = 0
-            out[-1] = cp
-            drop.append(id(first))
+            if totals_rep:
+                cp = dict(r)
+                cp["_ndetail"] = 0
+                out[-1] = cp
+                drop.append(id(first))
             continue
         agg = dict(r)
         agg["TNO"] = BIN_AGG_TNO
         agg["Item"] = bin_agg_label(r.get("Bin"), n_items)
         agg["_agg"] = True
-        for col in blank_cols:
-            if col in agg:
-                agg[col] = ""
+        agg["_ndetail"] = n_items
+        if totals_rep:
+            for col in blank_cols:
+                if col in agg:
+                    agg[col] = ""
+        else:
+            for col in list(agg):
+                if not col.startswith("_") and col not in AGG_ID_COLS:
+                    agg[col] = ""
         agg.pop("_sig", None)
         agg.pop("_sigrev", None)
         rep_cp = dict(r)
         rep_cp["_hasAgg"] = True
+        rep_cp["_ndetail"] = n_items
         out[-1] = rep_cp
         out.append(agg)
+        if not totals_rep:
+            # 대표행을 상세행으로 복제 — 이게 없으면 펼쳤을 때 그 항목이 사라진다.
+            # Category 는 비운다: 값이 남으면 프런트가 섹션 divider 로 보고 행을 건너뛴다.
+            clone = dict(r)
+            clone["_detail"] = True
+            clone["Category"] = ""
+            clone.pop("_ndetail", None)
+            clone.pop("_hasAgg", None)
+            out.append(clone)
     if not drop:
         return out
     dropped = set(drop)

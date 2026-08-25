@@ -418,7 +418,8 @@ def build_issue_matrix(issue_rows, source_names, *, header_row=3, start_col=2):
             # 아래 항목 행들과 그림이 같다).
             if not is_pass and bin_text and section in ("Yield", "ETC") and not r.get("_agg"):
                 map_rows.append((bin_text, excel_row))
-            elif section == "TEMP" and str(r.get("Item") or "").strip():
+            elif (section == "TEMP" and str(r.get("Item") or "").strip()
+                  and not r.get("_agg")):
                 temp_rows.append((str(r["Item"]).strip(), excel_row))
 
         # 집계 헤더행의 Item 은 측정 항목이 아니라 라벨이라 Distribution 썸네일 대상이 아니다.

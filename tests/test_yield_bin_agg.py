@@ -143,21 +143,61 @@ def test_issue_rows_layout():
     print("[f] Issue Table 배치 OK - Status 는 집계행, comment 는 첫 TNO 행")
 
 
-def test_temp_style_group_untouched():
-    """Issue Table Temp: 대표행이 **항목 행 자체**라 집계 개념이 없다 — 손대지 않는다."""
-    rows = [
-        {"Category": "TEMP", "Bin": "3", "Item": "ITEM_A", "avg": 1.0,
+def _temp_rows():
+    """Issue Table Temp 모양 — 대표행이 **항목 행 자체**(avg 최대)라 합계 개념이 없다."""
+    return [
+        {"Category": "", "Step": "", "Bin": "3", "TNO": "", "Item": "ITEM_A", "avg": 1.0,
+         "S1_yield": 1.0, "Map": "", "Distribution": "", "Status": "Open",
+         "PTE comment": "A 코멘트", "개발 comment": "",
          "_grp": "t0", "_detail": False, "_ndetail": 2},
-        {"Category": "", "Bin": "3", "Item": "ITEM_B", "avg": 0.5,
-         "_grp": "t0", "_detail": True},
-        {"Category": "", "Bin": "3", "Item": "ITEM_C", "avg": 0.2,
-         "_grp": "t0", "_detail": True},
+        {"Category": "", "Step": "", "Bin": "3", "TNO": "", "Item": "ITEM_B", "avg": 0.5,
+         "S1_yield": 0.5, "Map": "", "Distribution": "", "Status": "",
+         "PTE comment": "", "개발 comment": "", "_grp": "t0", "_detail": True},
+        {"Category": "", "Step": "", "Bin": "3", "TNO": "", "Item": "ITEM_C", "avg": 0.2,
+         "S1_yield": 0.2, "Map": "", "Distribution": "", "Status": "",
+         "PTE comment": "", "개발 comment": "", "_grp": "t0", "_detail": True},
     ]
+
+
+def test_temp_style_group_gets_blank_header():
+    """Issue Table Temp 도 같은 펼침 모양을 갖되 헤더행 숫자는 **비운다**.
+
+    Temp 는 항목끼리 die 가 겹쳐 합산이 뜻을 갖지 않고(tabs/temp_fail.py `_group_by_bin`),
+    bin 단위 저장 키도 없다(키는 `TEMP|<item>`) — 그래서 헤더행은 순수 그룹 라벨이다.
+    대표행(ITEM_A)은 자기 값을 가진 고유 데이터라 상세행으로 **복제**해 보존한다.
+    """
+    out = insert_bin_agg_rows(_temp_rows())
+    # 대표행(접힘 전용) + 헤더행 + 항목 3행
+    assert [r["Item"] for r in out] == \
+        ["ITEM_A", "BIN 3    (3 items)", "ITEM_A", "ITEM_B", "ITEM_C"], \
+        [r["Item"] for r in out]
+    rep, agg, clone = out[0], out[1], out[2]
+
+    # 접힘 대표행은 종전 그대로 자기 숫자를 보여준다
+    assert rep["_hasAgg"] is True and rep["avg"] == 1.0 and rep["Status"] == "Open"
+
+    # 헤더행: 식별 열만 남고 수치·편집 열은 전부 빈칸 (사용자 확정)
+    assert agg["_agg"] is True and agg["Bin"] == "3" and agg["TNO"] == "-"
+    for col in ("avg", "S1_yield", "Status", "PTE comment", "개발 comment",
+                "Map", "Distribution"):
+        assert agg[col] == "", (col, agg[col])
+
+    # 복제된 항목 행이 자기 값을 그대로 들고 있다 — 이게 없으면 ITEM_A 가 펼침에서 사라진다
+    assert clone["_detail"] is True and clone["avg"] == 1.0
+    assert clone["PTE comment"] == "A 코멘트"
+    # Category 는 비운다 — 값이 남으면 프런트가 섹션 divider 로 보고 행을 건너뛴다
+    assert clone["Category"] == "", clone
+    print("[g] Issue Table Temp = 헤더행(빈칸) + 항목 전체, 대표행 복제 OK")
+
+
+def test_temp_single_item_bin():
+    """Temp 도 항목이 1개뿐인 Bin 은 헤더행을 만들지 않는다(상세행이 아예 없다)."""
+    rows = [{"Category": "", "Bin": "9", "Item": "ONLY", "avg": 0.4,
+             "_grp": "t0", "_detail": False, "_ndetail": 0}]
     out = insert_bin_agg_rows(rows)
-    assert len(out) == 3, [r["Item"] for r in out]
-    assert not any(r.get("_agg") for r in out)
-    assert [r["Item"] for r in out] == ["ITEM_A", "ITEM_B", "ITEM_C"]
-    print("[g] Issue Table Temp 표 무변경 OK")
+    assert len(out) == 1 and out[0]["Item"] == "ONLY", out
+    assert not out[0].get("_agg") and not out[0].get("_hasAgg")
+    print("[g2] Temp 항목 1개 Bin - 종전과 동일 1행 OK")
 
 
 def test_single_item_issue_group():
@@ -186,6 +226,14 @@ def test_originals_not_mutated():
     print("[h] 원본 불변 OK")
 
 
+def test_temp_originals_not_mutated():
+    src = _temp_rows()
+    snap = copy.deepcopy(src)
+    insert_bin_agg_rows(src)
+    assert src == snap, "Temp 경로가 원본 dict 을 변형했습니다"
+    print("[h2] Temp 원본 불변 OK")
+
+
 if __name__ == "__main__":
     test_label_format()
     test_agg_inherits_numbers()
@@ -193,7 +241,9 @@ if __name__ == "__main__":
     test_totals_match_details()
     test_most_fail_row_is_restored()
     test_issue_rows_layout()
-    test_temp_style_group_untouched()
+    test_temp_style_group_gets_blank_header()
+    test_temp_single_item_bin()
     test_single_item_issue_group()
     test_originals_not_mutated()
+    test_temp_originals_not_mutated()
     print("\n전부 통과")

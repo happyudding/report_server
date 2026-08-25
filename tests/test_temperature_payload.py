@@ -239,7 +239,9 @@ def test_issue_table_row_key_roundtrip():
     from server.chatbot import rowkey as chatbot_rowkey
     from web_report.eval_export import _parse_row_key, _status_key
 
-    assert _parse_row_key("TEMP|ItemA") == (None, "ItemA")
+    # 반환은 (bin, item, condition) 3-tuple 이다 — condition 은 CMPDIST/CMPETC 와 함께
+    # 2026-08-20 에 추가됐고 TEMP 는 "TEMP" 를 싣는다(eval case 의 test_condition).
+    assert _parse_row_key("TEMP|ItemA") == (None, "ItemA", "TEMP")
     assert _status_key("TEMP|ItemA") == "TEMP|ItemA"
     parsed = chatbot_rowkey.parse("TEMP|ItemA")
     assert parsed is not None and parsed.category == "TEMP" and parsed.item == "ItemA", parsed

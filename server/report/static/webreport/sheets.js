@@ -730,6 +730,10 @@ function issueRowKey(r, section) {
 // ETC 행 "ETC|<item>".
 function issueHideStatusKey(r, section) {
   const item = String((r && r["Item"]) ?? "").trim();
+  // 집계 헤더행의 Item 은 측정 항목이 아니라 "BIN 3    (3 items)" 라벨이다.
+  // Yield 만 bin 단위 키(Yield|<bin>)라 헤더행에 줄 수 있고, item 단위 키를 쓰는 섹션
+  // (TEMP|/CPK|/ETC|/CMP*)은 라벨로 키를 만들면 존재하지 않는 항목을 가리킨다.
+  if (r && r._agg && section !== "Yield") return "";
   if (section === "Yield") {
     const bin = String((r && r["Bin"]) ?? "").trim();
     return (bin && bin !== "1" && r && r._grp && !r._detail) ? `Yield|${bin}` : "";
@@ -834,22 +838,25 @@ function issueSectionHeadRowsHtml(cols, sec) {
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
 }
 
-// Issue Table Yield 섹션: Bin 그룹의 표시 형태를 접힘/펼침 2단으로 만든다(2026-08-25).
+// Bin 그룹의 표시 형태를 접힘/펼침 2단으로 만든다 (2026-08-25).
 //
-//   접힘  = 대표행(rep) 1줄 — 숫자는 Bin 합계, 이름은 most-fail 항목. **종전과 동일**.
-//   펼침  = 집계 헤더행(BIN 15    (3 items), Bin 합계) + 그 Bin 의 **모든** TNO 행.
+//   접힘  = 대표행(rep) 1줄 — **종전과 동일**.
+//   펼침  = 집계 헤더행(BIN 15    (3 items)) + 그 Bin 의 **모든 항목 행**(각자 실제 값).
 //
-// 종전에는 첫 상세행(= most-fail TNO)을 "대표행과 중복"이라며 지웠는데, 대표행의 숫자는
-// 그 항목 값이 아니라 Bin 합계여서 **그 항목의 실제 fail 수가 화면 어디에도 없었다**
-// (TEST1 이 2개 fail 인데 5 로 보임). 이제 그 행을 되살리고, 합계는 정체가 분명한 집계
-// 헤더행으로 옮긴다. rep 와 agg 는 서로 배타로 표시된다(setIssueGroup).
+// 종전에는 Yield 섹션에서 첫 상세행(= most-fail 항목)을 "대표행과 중복"이라며 지웠는데,
+// 대표행의 숫자는 그 항목 값이 아니라 Bin 합계여서 **그 항목의 실제 fail 수가 화면 어디에도
+// 없었다**(TEST1 이 2개 fail 인데 5 로 보임). 이제 그 행을 되살리고 합계는 정체가 분명한
+// 헤더행으로 옮긴다.
 //
-// 서버 payload(캐시 포함)는 그대로 두고 표시 직전에만 사본을 가공한다 — 집계행은 rep 에서
-// 파생될 뿐 저장 대상이 아니다(row_key 없음 → 편집·저장 경로에 잡히지 않는다).
+// 서버 payload(캐시 포함)는 그대로 두고 표시 직전에만 사본을 가공한다 — 헤더행은 rep 에서
+// 파생될 뿐 저장 대상이 아니다(comment row_key 없음 → 편집·저장 경로에 잡히지 않는다).
 //
-// ⚠ 대표행이 **집계행인 표에만** 적용해야 한다. Issue Table Temp(tabs/temp_fail._group_by_bin)
-// 는 같은 _grp/_detail 규약을 쓰지만 대표행이 항목 행 자체라 합계 개념이 없다 —
-// `rep.Item === 첫 상세행.Item` 가드가 그 표를 자동으로 제외한다(종전 가드 그대로 승계).
+// ⚠ `_grp` 규약을 공유하는 표가 둘인데 **대표행의 성격이 달라** 처리가 갈린다. 판정은
+// `rep.Item === 첫 상세행.Item` 하나 — 구조상 항상 참/거짓이 갈린다(정본 규약과 상세 설명은
+// 파이썬 짝 web_report/yield_agg.py insert_bin_agg_rows).
+//   ① 합계 대표행 (Yield 섹션)      → 헤더행이 대표행을 **대신**하고 숫자를 승계
+//   ② 항목 대표행 (Issue Table Temp) → 헤더행은 숫자를 **비우고**(항목끼리 die 가 겹쳐
+//      합산이 틀린 값이 된다) 대표행을 상세행으로 **복제**해 펼침에서 안 사라지게 한다
 function insertBinAggRows(rows) {
   const src = rows || [];
   const firstDetail = {};   // _grp → 첫 상세행
@@ -862,33 +869,56 @@ function insertBinAggRows(rows) {
     out.push(r);
     if (!r || !r._grp || r._detail) return;
     const first = firstDetail[r._grp];
-    // 대표행이 집계행인 표(Yield 섹션)인지 판정 — 아니면 종전 그대로 둔다.
-    if (!first || String(r.Item ?? "") !== String(first.Item ?? "")) return;
-    const nItems = Number(r._ndetail) || 0;
+    if (!first) return;                       // 상세행이 없는 그룹 — 접을 것이 없다
+    const totalsRep = String(r.Item ?? "") === String(first.Item ?? "");
+    const nDetail = Number(r._ndetail) || 0;
+    // 그 Bin 의 항목 수 — ① 은 상세행이 곧 전 항목, ② 는 대표행이 한 항목 더 든다.
+    const nItems = totalsRep ? nDetail : nDetail + 1;
     if (nItems <= 1) {
-      // 항목이 1개뿐인 Bin: 집계행을 만들지 않고 종전처럼 중복 상세행만 뺀다.
-      const cp = Object.assign({}, r);
-      cp._ndetail = 0;
-      out[out.length - 1] = cp;
-      drop.add(first);
+      if (totalsRep) {
+        // 항목이 1개뿐인 Bin: 헤더행을 만들지 않고 종전처럼 중복 상세행만 뺀다.
+        const cp = Object.assign({}, r);
+        cp._ndetail = 0;
+        out[out.length - 1] = cp;
+        drop.add(first);
+      }
       return;
     }
-    // 집계 헤더행 — 숫자는 rep 그대로, 식별정보만 Bin 집계 표기. 편집 열은 비운다:
-    // comment/Signature 는 첫 TNO 행이 갖고(저장 키가 Yield|<bin>|<item> 이라 그쪽이 주인),
-    // Status 만 rep 에서 승계한다(저장 키가 bin 단위 Yield|<bin> 이라 집계행이 자연스럽다).
-    const agg = yieldBinAggRow(r, String(r["Bin"] ?? ""), nItems, {
-      Map: "", Distribution: "", "AI Comment": "", Signature: "",
-      "PTE comment": "", "개발 comment": "",
-    });
+    // ① 편집 열만 비운다: comment/Signature 는 첫 항목 행이 갖고(저장 키가
+    //    Yield|<bin>|<item> 이라 그쪽이 주인), Status 만 rep 에서 승계한다(키가 bin 단위).
+    // ② 식별 열만 남기고 전부 비운다 — 합계도 없고 bin 단위 저장 키도 없다(키는 TEMP|<item>).
+    const blanks = totalsRep
+      ? { Map: "", Distribution: "", "AI Comment": "", Signature: "",
+          "PTE comment": "", "개발 comment": "" }
+      : (() => {
+        const b = {};
+        Object.keys(r).forEach(k => {
+          if (!k.startsWith("_") && !BIN_AGG_ID_COLS.includes(k)) b[k] = "";
+        });
+        return b;
+      })();
+    const agg = yieldBinAggRow(r, String(r["Bin"] ?? ""), nItems, blanks);
     if (!agg) return;
+    agg._ndetail = nItems;
     delete agg._sig;
     delete agg._sigrev;
-    // 대표행에 has-agg 마킹 — 검색 강제 펼침 CSS 가 "집계행이 있는 그룹의 대표행"만
-    // 감추기 위해 쓴다(Issue Table Temp 처럼 집계행이 없는 표는 대표행을 감추면 안 된다).
+    // 대표행에 has-agg 마킹 — 검색 강제 펼침 CSS 가 "헤더행이 있는 그룹의 대표행"만
+    // 감추기 위해 쓴다(헤더행이 없는 그룹은 대표행을 감추면 안 된다).
     const repCp = Object.assign({}, r);
     repCp._hasAgg = true;
+    repCp._ndetail = nItems;
     out[out.length - 1] = repCp;
     out.push(agg);
+    if (!totalsRep) {
+      // 대표행을 상세행으로 복제 — 이게 없으면 펼쳤을 때 그 항목이 사라진다.
+      // Category 는 비운다: 값이 남으면 emitRows 가 섹션 divider 로 보고 행을 건너뛴다.
+      const clone = Object.assign({}, r);
+      clone._detail = true;
+      clone.Category = "";
+      delete clone._ndetail;
+      delete clone._hasAgg;
+      out.push(clone);
+    }
   });
   // 단일 항목 Bin 의 중복 상세행 제거(위에서 표시만 해 두고 여기서 한 번에 거른다).
   return drop.size ? out.filter(r => !drop.has(r)) : out;
@@ -913,7 +943,11 @@ function renderSheetTable(rows, opts) {
   // tabs/temp_fail._group_by_bin 이 이미 정렬해 보낸다).
   const hasBinGroups = (bodyRows || []).some(r => r && r._grp);
   if (opts.kind === "yield" && !opts.edit && !hasBinGroups) bodyRows = reorderYieldRows(bodyRows, cols);
-  if (opts.kind === "issue") bodyRows = insertBinAggRows(bodyRows);
+  // Bin 묶음(_grp)이 실린 표는 종류를 가리지 않고 같은 접힘/펼침 규약을 쓴다 —
+  // Issue Table(Yield/Temp)과 Yield 탭 하단 Temp Corner 요약표가 그 대상이다.
+  if (opts.kind === "issue" || (opts.kind === "yield" && hasBinGroups)) {
+    bodyRows = insertBinAggRows(bodyRows);
+  }
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
   // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.
@@ -1016,7 +1050,8 @@ function renderSheetTable(rows, opts) {
         }
         // TEMP 섹션(Issue Table Temp 탭)은 항목별 fail die 를 강조한 미니맵을 넣는다.
         // Bin 은 있지만 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를 보여야 한다.
-        const tempItem = String((r && r["Item"]) ?? "").trim();
+        // 집계 헤더행은 Item 이 라벨이라 그 항목의 맵이 없다 — 빈 칸으로 둔다(Yield 와 동일).
+        const tempItem = (r && r._agg) ? "" : String((r && r["Item"]) ?? "").trim();
         if (opts.kind === "issue" && !subhead && issueRowSec === "TEMP" && tempItem !== "") {
           // ⤢ 는 CT/HT 소스가 2개 이상일 때만 — 실제로 그 항목이 fail 난 소스만
           // 나열되므로(openTempExpand) 여기서는 상한 판단만 한다.
@@ -1177,7 +1212,8 @@ function renderSheetTable(rows, opts) {
       const etcFreeform = opts.kind === "issue" && rowSection[ri] === "ETC"
         && String((r && r["TNO"]) ?? "").trim() === "";
       const itemClickable = (opts.kind === "issue" || opts.kind === "yield") && !subhead && !isEmpty
-        && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1" && !etcFreeform;
+        && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1" && !etcFreeform
+        && !(r && r._agg);            // 집계 헤더행 Item 은 라벨 — 측정 항목이 아니다
       let cellHtml;
       if (itemClickable) {
         cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;

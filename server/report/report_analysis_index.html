@@ -32,36 +32,38 @@ body {
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0; }
+.page-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0; }
 /* 제목을 누르면 시작 화면(/pe) 으로 — 헤더 배경이 검정이라 링크 색을 따로 잡는다 */
 .page-title-link { text-decoration: none; color: inherit; }
 .page-title-link:hover .page-title { opacity: .82; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 16px; font-weight: 700; cursor: pointer;
+  font-size: 19px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 6px 0; white-space: nowrap;
 }
 
-/* 상단바는 한 줄이다 — 제품군 버튼 5개 · My Upload · 검색창 · 🔍 · ⚙ 검색옵션 ·
-   (남는 폭) · 👤 사용자 · 로그아웃. 검색창이 남는 폭을 먹지 않고 300px 에서 멈추므로
+/* 상단바는 한 줄이다 — [제품군 버튼 5개] ······(빈 폭)······ [My Upload · 검색창 · 🔍 ·
+   ⚙ 검색옵션 · 👤 사용자 · 로그아웃]. 검색창이 남는 폭을 먹지 않고 300px 에서 멈추므로
    (.top-search 의 grow=0) 그 폭이 좌우 여백과 File name 열로 간다.
    좁은 폭에서는 flex-wrap 이 알아서 2줄로 접는다(컨트롤이 잘리는 것보다 낫다). */
 .top-bar {
   display: flex; align-items: center; gap: 9px;
   background: #fff; border-radius: 10px; padding: 5px 12px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 5px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 14px;
   flex-wrap: wrap;
 }
 .pt-col { display: flex; gap: 6px; flex: 0 0 auto; }
-.login-first { margin-left: auto; }      /* 👤 사용자 묶음만 오른쪽 끝으로 */
+/* My Upload 부터 끝까지를 오른쪽에 바짝 붙인다 — 빈 폭은 제품군 버튼과 My Upload 사이
+   한 곳에만 생긴다. auto margin 을 두 군데 주면 공간이 나뉘므로 여기 하나만 둘 것. */
+.mine-toggle { margin-left: auto; }
 .pt-btn {
   /* 한 줄 배치라 높이를 고정한다. (종전 2행 구조에서는 align-items:stretch 로 오른쪽
      컬럼 높이를 따라가야 해서 height 를 주면 안 됐다 — 그 전제는 사라졌다.) */
-  flex: 0 0 auto; min-width: 78px; height: 30px; padding: 0 10px;
+  flex: 0 0 auto; min-width: 92px; height: 34px; padding: 0 12px;
   border: 1px solid var(--pt-color, #d0d5dd);
   border-radius: 6px; background: var(--pt-color, #fff); cursor: pointer;
-  font-size: 14px; font-weight: 800; color: #fff;
+  font-size: 17px; font-weight: 800; color: #fff;
   text-shadow: 0 1px 2px rgba(0,0,0,.20);
   transition: all .15s; opacity: .82;
 }
@@ -80,7 +82,7 @@ body {
 /* 배지는 4글자 라벨(SECURITY 만 SECU)이라 열 폭을 늘리지 않도록 글자를 작게 잡는다 */
 .pt-badge {
   display: inline-block; padding: 2px 6px; border-radius: 4px;
-  font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
 .pt-badge.PDDI { background: #1e3a8a; }
@@ -92,8 +94,8 @@ body {
    / T=Temperature). 흰 글자 대비를 위해 배경은 파스텔이 아닌 포화 톤을 쓴다. */
 .mode-badge {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 50%;
-  font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap;
+  width: 24px; height: 24px; border-radius: 50%;
+  font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap;
   vertical-align: middle;
 }
 .mode-badge.Normal { background: #64748b; }
@@ -104,19 +106,19 @@ body {
 .mode-badge.none {
   width: auto; height: auto; background: transparent; color: #94a3b8; font-weight: 400;
 }
-.star-important { color: #f59e0b; font-size: 14px; margin-right: 4px; }
+.star-important { color: #f59e0b; font-size: 17px; margin-right: 4px; }
 /* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
 .star-fav {
-  color: #cbd5e1; font-size: 14px; margin-right: 4px;
+  color: #cbd5e1; font-size: 17px; margin-right: 4px;
   cursor: pointer; user-select: none;
 }
 .star-fav.on { color: #2563eb; }
 /* 별표+배지가 줄바꿈되어 행이 두 줄 높이가 되지 않게 한 줄 고정 */
 td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip {
-  flex: 0 0 auto; height: 30px; padding: 0 12px;
+  flex: 0 0 auto; height: 34px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
-  font-size: 13px; font-weight: 600; color: #475569; cursor: pointer;
+  font-size: 16px; font-weight: 600; color: #475569; cursor: pointer;
   white-space: nowrap; max-width: 190px; overflow: hidden; text-overflow: ellipsis;
 }
 .user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
@@ -127,10 +129,10 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip.needs-pin:hover { background: #d97706; border-color: #d97706; color: #fff; }
 
 .honey-dl-btn {
-  flex: 0 0 auto; height: 30px; padding: 0 14px;
+  flex: 0 0 auto; height: 34px; padding: 0 14px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
-  background: #16a34a; color: #fff; font-size: 16px; font-weight: 600;
+  background: #16a34a; color: #fff; font-size: 19px; font-weight: 600;
   text-decoration: none; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
@@ -142,7 +144,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 
 .help-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 16px; font-weight: 700; cursor: pointer;
+  font-size: 19px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 6px 0; white-space: nowrap;
 }
@@ -162,17 +164,17 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .search-group.top-search { position: relative; flex: 0 1 300px; min-width: 150px; }
 /* input 은 flex item 이 아니라 그 안의 자식이라 늘어나지 않는다 — 없으면 컨테이너만
    넓어지고 입력칸은 기본 폭(약 238px)에 머문다. */
-.top-search .filter-input { width: 100%; height: 30px; font-size: 14px; }
+.top-search .filter-input { width: 100%; height: 34px; font-size: 17px; }
 .mine-toggle {
-  height: 30px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
-  font-size: 13px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
+  height: 34px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+  font-size: 16px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
 }
-.mine-toggle input { width: 16px; height: 16px; cursor: pointer; }
+.mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
 .filter-actions { margin-left: auto; }
-.filter-label { font-size: 15px; color: #666; font-weight: 600; }
+.filter-label { font-size: 18px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
-  height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
-  border-radius: 6px; font-size: 17px; outline: none;
+  height: 40px; padding: 0 10px; border: 1px solid #d0d5dd;
+  border-radius: 6px; font-size: 20px; outline: none;
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
@@ -184,7 +186,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .suggest-box.show { display: block; }
 .suggest-item {
-  padding: 7px 10px; cursor: pointer; font-size: 15px; color: #333;
+  padding: 7px 10px; cursor: pointer; font-size: 18px; color: #333;
   border-bottom: 1px solid #f1f3f5;
 }
 .suggest-item:last-child { border-bottom: none; }
@@ -193,24 +195,24 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .suggest-sub { color: #777; margin-top: 2px; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
-  height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 17px; cursor: pointer; font-weight: 500;
+  height: 40px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; color: #333; font-size: 20px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
 /* 상단바 안에서만 컨트롤을 낮춘다 — 전역 36px 은 모달·검색옵션 패널이 함께 쓰므로 유지. */
-.top-bar .btn-action { height: 30px; font-size: 14px; }
+.top-bar .btn-action { height: 34px; font-size: 17px; }
 /* 돋보기 조회 버튼 (구 '조회' 텍스트 버튼) */
-.icon-btn { flex: 0 0 auto; width: 40px; padding: 0; font-size: 18px; }
-.top-bar .icon-btn { width: 34px; font-size: 16px; }
+.icon-btn { flex: 0 0 auto; width: 40px; padding: 0; font-size: 22px; }
+.top-bar .icon-btn { width: 38px; font-size: 19px; }
 /* 접이식 검색옵션 토글 — 뒤의 배지는 '기본값이 아닌 옵션 개수'다. 패널이 접혀 있어도
    필터가 걸려 있음을 알리는 유일한 단서라 지우지 말 것. */
-.opt-btn { font-size: 15px; padding: 0 12px; white-space: nowrap; }
+.opt-btn { font-size: 18px; padding: 0 12px; white-space: nowrap; }
 .opt-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; margin-left: 6px; padding: 0 4px;
   border-radius: 9px; background: #4a90e2; color: #fff;
-  font-size: 12px; font-weight: 700;
+  font-size: 14px; font-weight: 700;
 }
 
 .results-card {
@@ -218,28 +220,32 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
-  font-size: 16px; font-weight: 600; color: #333;
+  font-size: 19px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 7px;
 }
-.results-count { font-size: 15px; color: #888; font-weight: 400; }
-.refreshing-badge { font-size: 12px; color: #aaa; font-weight: 400; }
+.results-count { font-size: 18px; color: #888; font-weight: 400; }
+.refreshing-badge { font-size: 14px; color: #aaa; font-weight: 400; }
 
 /* min-width 는 열 폭의 하한이다 — 이 값 미만으로 좁아지면 열을 뭉개는 대신 .table-wrap
-   가로 스크롤로 넘긴다. 1160px = colgroup 고정 7열 합계 774 + File name 하한 386.
-   1366px 화면에서 여백(63×2)·카드 padding(28)·세로 스크롤바(15)를 뺀 본문 폭(≈1173)에
-   맞춘 값이라 이보다 올리면 1366 에서 가로 스크롤이 생긴다(headless 실측). */
+   가로 스크롤로 넘긴다. 1360px = colgroup 고정 7열 합계 1000 + File name 하한 360.
+   글자를 1.2배로 키우고 Product·LOT ID·Owner 를 "…" 안 나게 넓힌 결과라, 1366 화면은
+   이제 가로 스크롤이 난다(그쪽은 카드형·스크롤로 받는다 — 주 해상도는 1920). */
 table {
-  width: 100%; min-width: 1160px; border-collapse: collapse;
-  font-size: 15px; table-layout: fixed;
+  width: 100%; min-width: 1360px; border-collapse: collapse;
+  font-size: 18px; table-layout: fixed;
 }
 th, td {
   padding: 3px 8px; border-bottom: 1px solid #eef0f3; text-align: left;   /* 행 세로폭 축소 */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 14px; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 17px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
 /* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
 th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 10px; }
+/* Mode 는 원형 배지 하나뿐이라 열 가운데에 둔다 (헤더도 같이) */
+th.mode-col, td.mode-col { text-align: center; }
+/* LOT ID 와 File name 사이만 시각적으로 더 벌린다 — 열 폭이 아니라 오른쪽 여백으로. */
+th.lot-col, td.lot-col { padding-right: 26px; }
 tr.result-row { cursor: pointer; transition: background .1s; }
 /* 결과 행만 세로 여백을 더한다(~1.15배). 헤더(th)와 카드형(≤1024px)은 대상이 아니라
    이 규칙은 반드시 아래 @media 블록보다 **앞**에 있어야 한다 — 미디어 쿼리는 특이도를
@@ -254,7 +260,7 @@ tr.result-row.mine:hover { background: #fff3c4; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 2px 8px; font-size: 15px; border-radius: 4px;
+  padding: 2px 8px; font-size: 18px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
@@ -273,31 +279,31 @@ td.fname-cell .fname-txt {
 
 /* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
 .btn-icon {
-  padding: 2px 6px; font-size: 18px; line-height: 1; border-radius: 4px;
+  padding: 2px 6px; font-size: 22px; line-height: 1; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
 .btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
 .btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
-.lock-badge { font-size: 17px; opacity: .7; padding: 0 4px; }
+.lock-badge { font-size: 20px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; align-items: center;
   margin-top: 8px; flex-wrap: nowrap;
 }
 .pager .pg-btn {
-  min-width: 30px; height: 28px; padding: 0 8px; font-size: 14px;
+  min-width: 34px; height: 32px; padding: 0 9px; font-size: 17px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .pager .pg-btn:disabled { color: #cbd5e1; cursor: default; }
 /* 생략 표시(…) — 버튼이 아니라 자리표시라 클릭 대상이 아니다 */
-.pager .pg-gap { color: #94a3b8; font-size: 14px; padding: 0 2px; user-select: none; }
+.pager .pg-gap { color: #94a3b8; font-size: 17px; padding: 0 2px; user-select: none; }
 
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
-  font-size: 18px; opacity: 0; transition: opacity .2s;
+  font-size: 22px; opacity: 0; transition: opacity .2s;
   pointer-events: none; z-index: 1000;
 }
 .toast.show { opacity: 1; }
@@ -312,27 +318,28 @@ td.fname-cell .fname-txt {
   background: #fff; border-radius: 10px; padding: 24px;
   width: 360px; max-width: 90%;
 }
-.modal-title { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
-.modal-desc { font-size: 18px; color: #666; margin: 0 0 14px; }
+.modal-title { font-size: 26px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 22px; color: #666; margin: 0 0 14px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
-  padding: 8px 16px; font-size: 18px; border-radius: 6px;
+  padding: 8px 16px; font-size: 22px; border-radius: 6px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
-/* 로그인 모달만 버튼이 4개(Honey 다운로드/회원가입/취소/로그인)라 19px·padding 16px 로는
-   modal-box 안쪽 폭을 넘겨 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄이고(13px·
-   padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다. */
-#idModal .modal-box { width: 420px; }
+/* 로그인 모달만 버튼이 4개(Honey 다운로드/회원가입/취소/로그인)라 기본 크기로는
+   modal-box 안쪽 폭을 넘겨 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄이고(14px·
+   padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다.
+   (전역 글자를 1.2배 키운 뒤 460px 로 함께 넓혔다 — 실측 4버튼 합계 ≈420px) */
+#idModal .modal-box { width: 460px; }
 #idModal .modal-actions { gap: 6px; }
-#idModal .modal-btn { font-size: 12px; padding: 8px 10px; white-space: nowrap; }
+#idModal .modal-btn { font-size: 14px; padding: 8px 10px; white-space: nowrap; }
 /* ── 세션 로드 오버레이 ─────────────────────────────────────────────── */
 .load-overlay {
   position: fixed; inset: 0; background: rgba(255,255,255,.72);
   display: none; align-items: center; justify-content: center; z-index: 9999;
 }
 .load-overlay.show { display: flex; }
-.load-msg { font-size: 18px; color: #475569; }
+.load-msg { font-size: 22px; color: #475569; }
 .load-bar {
   width: 240px; height: 6px; border-radius: 3px; background: #e5e7eb;
   overflow: hidden; margin: 12px auto 0;
@@ -344,7 +351,7 @@ td.fname-cell .fname-txt {
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 
 /* ── 반응형: 좁은 폭에서 핵심 정보가 잘리지 않게 ─────────────────────────────
-   >1160px: 기존 테이블 그대로. ≤1160px(= table 의 min-width): 가로 스크롤로 열 크러시
+   >1360px: 기존 테이블 그대로. ≤1360px(= table 의 min-width): 가로 스크롤로 열 크러시
    방지(핵심 정보 안 잘림). ≤1024px: 카드형으로 전환 — 세션 정보(파일명·Product·LOT)를
    위에, 보조 정보(모드·업로더·날짜)를 그 아래로 라벨과 함께 이동.
    데스크톱 열 구성은 그대로 둔다. */
@@ -368,17 +375,17 @@ td.fname-cell .fname-txt {
   td.pt-cell   { order: 1; white-space: normal; }
   td.act-cell  { order: 2; margin-left: auto; padding-left: 0; }
   /* 세션 정보(핵심): 파일명 → Product → LOT (각 줄) */
-  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 20px; }
+  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 24px; }
   td.fname-cell .fname-txt { direction: ltr; white-space: normal; }
-  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 17px; }
-  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 17px; }
+  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 20px; }
+  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 20px; }
   td[data-col="product"]::before, td[data-col="lot"]::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 13px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 16px;
   }
   /* 보조 정보: 라벨 붙여 세션 정보 아래에 한 줄로 흐른다 */
-  td.sub-cell { order: 6; color: #64748b; font-size: 15px; }
+  td.sub-cell { order: 6; color: #64748b; font-size: 18px; }
   td.sub-cell::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 12px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 14px;
   }
   .empty-row td { flex-basis: 100%; }
   .results-header { flex-wrap: wrap; }
@@ -389,9 +396,9 @@ td.fname-cell .fname-txt {
    기존 규칙은 수정하지 않고 html[data-theme="dark"] 스코프 규칙만 얹는다.
    배지(pt-badge/mode-badge)·HONEY 버튼은 포화 배경 + 대비 글자라 다크에서도 그대로 둔다. */
 .theme-toggle {
-  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
-  font-size: 20px; line-height: 1; padding: 0; cursor: pointer;
+  font-size: 24px; line-height: 1; padding: 0; cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,.15); }
 
@@ -503,7 +510,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   <button class="btn-action opt-btn" id="optToggle" aria-expanded="false"
           aria-controls="optPanel" title="자주 쓰지 않는 검색 조건을 펼칩니다">⚙ 검색옵션<span
           class="opt-badge" id="optBadge" hidden></span></button>
-  <button class="user-chip login-first" id="userChip"
+  <button class="user-chip" id="userChip"
           title="singleID + 비밀번호로 로그인">👤 로그인</button>
   <button class="user-chip" id="pwKeyBtn" style="display:none;" title="웹 로그인 비밀번호 설정">🔑</button>
   <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
@@ -564,25 +571,26 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <!-- 열 폭은 **px 고정, File name 만 auto** 다. %로 주면 화면이 넓어질 때 Date 처럼
          내용이 고정된 열까지 같은 비율로 넓어져 그 폭이 버려진다 — File name 의 width 를
          비워 두면 table-layout:fixed 의 잔여 폭 배분이 그 열 하나에 전부 간다.
-         아래 px 는 canvas measureText 실측(데이터 18px / 헤더 600 16px) + 셀 padding 16.
-         고정 7열 합계 = 774px → table min-width 1160px(= 774 + 파일명 하한 386).
+         아래 px 는 글자 1.2배(데이터 18px) 기준으로 "…" 생략이 안 나게 잡은 값이다 —
+         Product·LOT ID·Owner 는 실제 값이 잘리던 열이라 특히 넉넉히 준다.
+         고정 7열 합계 = 1000px → table min-width 1360px(= 1000 + 파일명 하한 360).
          Family(Contactless) · Process 열은 세션 상세에서 보는 값이라 목록에서 뺐다. -->
     <colgroup>
-      <col style="width:100px">   <!-- Prod Type : 별 2개 + 4글자 배지 -->
-      <col style="width:58px">    <!-- Mode      : 원형 배지 (하한=헤더 "Mode" 43) -->
-      <col style="width:141px">   <!-- Product -->
-      <col style="width:111px">   <!-- LOT ID -->
+      <col style="width:112px">   <!-- Prod Type : 별 2개 + 4글자 배지 -->
+      <col style="width:76px">    <!-- Mode      : 원형 배지 (가운데 정렬) -->
+      <col style="width:180px">   <!-- Product   : 생략 안 나게 확대 -->
+      <col style="width:156px">   <!-- LOT ID    : 생략 안 나게 확대 + File name 과 간격 -->
       <col>                       <!-- File name : width 없음 = 남는 폭 전부 -->
-      <col style="width:151px">   <!-- Owner     : 13자 "HONG GILDONG"=135 수용 -->
-      <col style="width:126px">   <!-- Date      : 260721_14:30 = 109 수용 -->
-      <col style="width:87px">    <!-- 액션(자물쇠/삭제) -->
+      <col style="width:190px">   <!-- Owner     : '이름(ID)' 표기가 잘리지 않게 확대 -->
+      <col style="width:140px">   <!-- Date      : 260721_14:30 수용 -->
+      <col style="width:96px">    <!-- 액션(자물쇠/삭제) -->
     </colgroup>
     <thead>
       <tr>
         <th>Prod Type</th>
-        <th>Mode</th>
+        <th class="mode-col">Mode</th>
         <th>Product</th>
-        <th>LOT ID</th>
+        <th class="lot-col">LOT ID</th>
         <th>File name</th>
         <th>Owner</th>
         <th>Date</th>
@@ -612,7 +620,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
              maxlength="4" autocomplete="current-password" placeholder="PW"
              style="flex:0 0 76px; width:76px; padding:0 6px; letter-spacing:3px; text-align:center;">
     </div>
-    <p style="font-size:13px; color:#888; margin:10px 0 0; line-height:1.55;">
+    <p style="font-size:16px; color:#888; margin:10px 0 0; line-height:1.55;">
       계정이 없으면 [회원가입] 을 눌러 만드세요 (Honey 사용 이력이 있는 계정은
       Honey 앱에서 비밀번호를 설정합니다)<br>
       web 환경에서는 수정이 제한됩니다. (조회전용)<br>
@@ -648,11 +656,11 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <input type="password" class="filter-input" id="signupPw2Input" inputmode="numeric"
            maxlength="4" autocomplete="new-password" placeholder="비밀번호 확인"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:13px; color:#888; margin:10px 0 0; line-height:1.55;">
+    <p style="font-size:16px; color:#888; margin:10px 0 0; line-height:1.55;">
       본인의 singleID 로 가입해주세요. PC 비밀번호와 <b>다른 값</b>을 쓰세요.<br>
       이름은 <b>한글 2~10자</b>로만 입력할 수 있습니다.
     </p>
-    <p id="signupHint" style="display:none; font-size:13px; color:#b45309; margin:8px 0 0;
+    <p id="signupHint" style="display:none; font-size:16px; color:#b45309; margin:8px 0 0;
        line-height:1.55;"></p>
     <div class="modal-actions">
       <button class="modal-btn" id="signupCancel">취소</button>
@@ -666,7 +674,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 <div class="modal-overlay" id="pwChangeModal">
   <div class="modal-box">
     <p class="modal-title">웹 로그인 비밀번호 설정</p>
-    <p style="font-size:16px; color:#888; margin:0 0 10px;">
+    <p style="font-size:19px; color:#888; margin:0 0 10px;">
       Honey 밖의 <b>일반 브라우저</b>에서 이 계정(<span id="pwSetWho"></span>)으로
       로그인할 때 쓸 비밀번호입니다. Honey 접속에는 필요 없습니다.<br>
       PC 비밀번호와 <b>다른 값</b>을 쓰세요.
@@ -1413,9 +1421,9 @@ function renderResults() {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row${isMine(r) ? " mine" : ""}" data-sid="${esc(r.session_id)}">
         <td class="pt-cell" data-act="fav" data-sid="${esc(r.session_id)}" title="클릭하여 즐겨찾기 켜기/끄기"><span class="star-fav ${_favorites.has(r.session_id) ? 'on' : ''}">${_favorites.has(r.session_id) ? '★' : '☆'}</span>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
-        <td class="sub-cell" data-col="mode" data-label="모드">${modeBadge(r)}</td>
+        <td class="sub-cell mode-col" data-col="mode" data-label="모드">${modeBadge(r)}</td>
         <td data-col="product" data-label="Product">${esc(r.product || '-')}</td>
-        <td data-col="lot" data-label="LOT">${esc(r.lot_id || '-')}</td>
+        <td class="lot-col" data-col="lot" data-label="LOT">${esc(r.lot_id || '-')}</td>
         <td class="fname-cell" data-col="fname" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
         <td class="sub-cell" data-col="uploader" data-label="업로더" title="${esc(UserName.fromMap(r.uploaded_by, _uploaderNames) || r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${esc(UserName.fromMap(r.uploaded_by, _uploaderNames) || stripUploader(r.uploaded_by) || '-')}</td>
         <td class="sub-cell" data-col="date" data-label="날짜">${fmtDate(r.created_at)}</td>

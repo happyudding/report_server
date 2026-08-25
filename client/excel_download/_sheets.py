@@ -521,7 +521,8 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
                 map_rows.append((bin_text, excel_row))
             # TEMP 행은 Bin 이 있어도 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를
             # 그린다 — 항목명으로 temp_map 인덱스를 찾는다(웹 map-cell-temp 와 동일).
-            elif section == "TEMP" and str(r.get("Item") or "").strip():
+            elif (section == "TEMP" and str(r.get("Item") or "").strip()
+                  and not r.get("_agg")):
                 temp_rows.append((str(r["Item"]).strip(), excel_row))
 
         # 집계 헤더행의 Item 은 측정 항목이 아니라 라벨이라 Distribution 썸네일 대상이 아니다.

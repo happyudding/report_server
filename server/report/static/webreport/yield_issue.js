@@ -15,6 +15,10 @@ let yieldPanelBound = false;
 // build_bin_agg_row) — Excel 내보내기가 같은 라벨을 쓰므로 문자열을 여기서 다시 만들지 말고
 // 이 함수 하나만 호출할 것. 라벨 가운데 공백 4칸은 CSS `white-space: pre` 로 지킨다.
 const BIN_AGG_TNO = "-";
+// 대표행이 **항목 행 자체**인 표(Issue Table Temp)의 헤더행에서 값을 남길 열 — 나머지
+// 수치·편집 열은 전부 비운다(합산이 뜻을 갖지 않고 bin 단위 저장 키도 없다).
+// 파이썬 짝: web_report/yield_agg.py AGG_ID_COLS.
+const BIN_AGG_ID_COLS = ["Category", "Step", "Bin", "TNO", "Item"];
 function binAggLabel(binValue, nItems) {
   return `BIN ${binValue}    (${nItems} items)`;
 }
@@ -332,12 +336,15 @@ function setYieldGroup(gi, expand, btn, skipSync) {
     b.textContent = expand ? "▲" : "▼";
   });
   // 3행 규칙: rep(접힘 전용) ↔ agg(펼침 전용) 상호 배타 + detail 일괄.
-  document.querySelectorAll(`#panel-yield tr.yield-bin-rep[data-grp="${gi}"]`).forEach(tr => {
-    tr.style.display = expand ? "none" : "";
-  });
-  document.querySelectorAll(`#panel-yield tr.yield-bin-agg[data-grp="${gi}"]`).forEach(tr => {
-    tr.style.display = expand ? "" : "none";
-  });
+  // 집계 헤더행이 없는 그룹에서 rep 를 감추면 그 행이 통째로 사라지므로 있을 때만 바꾼다
+  // (setIssueGroup 과 같은 가드).
+  const aggRows = document.querySelectorAll(`#panel-yield tr.yield-bin-agg[data-grp="${gi}"]`);
+  if (aggRows.length) {
+    document.querySelectorAll(`#panel-yield tr.yield-bin-rep[data-grp="${gi}"]`).forEach(tr => {
+      tr.style.display = expand ? "none" : "";
+    });
+    aggRows.forEach(tr => { tr.style.display = expand ? "" : "none"; });
+  }
   document.querySelectorAll(`#panel-yield tr.yield-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
