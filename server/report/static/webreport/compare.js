@@ -16,7 +16,8 @@ function _cmpServer(v) {
   return esc(String(v));
 }
 // stdev 는 서버가 유일하게 반올림하지 않고 내려보내는 값이라(Limit 역산이 원값에 의존)
-// 표시할 때만 유효숫자를 맞춘다 — CPK 탭·Item_detail 과 같은 fmtStdev(core.js)를 쓴다.
+// 표시할 때만 유효숫자를 맞춘다 — Item_detail 과 같은 fmtStdev(core.js)를 쓴다
+// (CPK 탭은 2026-08-25 부터 min~stdev 5컬럼을 fmtSig5 유효숫자 5자리로 축약).
 function _cmpStdev(v) {
   if (v === null || v === undefined || v === "") return "–";
   return esc(fmtStdev(v));

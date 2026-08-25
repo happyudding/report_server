@@ -3,6 +3,13 @@ const CPK_COLUMNS = ["subject", "lower_limit", "upper_limit", "units", "source",
   "n", "min", "median", "max", "average", "stdev", "cpl", "cpu", "cp", "cpk"];
 const CPK_NUMERIC = new Set(["lower_limit", "upper_limit", "n", "min", "median", "max",
   "average", "stdev", "cpl", "cpu", "cp", "cpk"]);
+// 자리수가 길어지면 컬럼이 계속 넓어지는 통계 컬럼 — 유효숫자 5자리로 줄여 표시한다
+// (core.js fmtSig5, 표시 전용 — row 원값은 Limit 역산이 그대로 쓴다).
+const CPK_SIG5_COLS = new Set(["min", "median", "max", "average", "stdev"]);
+// 컬럼 리사이저 상태 — 폭(px)은 재렌더(페이지 이동 등)에도 유지, cpkColFull 에 든 컬럼은
+// 사용자가 넓힌 것이라 유효숫자 축약 대신 원값 전체를 보여준다(좁히면 다시 축약).
+let cpkColWidths = {};
+let cpkColFull = new Set();
 const CPK_WARN_THRESHOLD = 1.33;   // 기본 임계값 (item_detail/Issue Table 하이라이트는 이 고정값 사용)
 const CPK_PAGE_SIZE = 100;    // 페이지당 표시 행 수
 
@@ -202,7 +209,12 @@ function cpkTableHtml(rows) {
   const allSelected = cpkTargetMode && bodyRows.every(r => cpkSelected.has(r._key));
   const selTh = cpkTargetMode
     ? `<th class="cpk-sel-col"><input type="checkbox" id="cpkSelAll"${allSelected ? " checked" : ""}></th>` : "";
-  const head = "<thead><tr>" + selTh + displayCols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const head = "<thead><tr>" + selTh + displayCols.map(c => {
+    const w = cpkColWidths[c];
+    const style = w ? ` style="width:${w}px;min-width:${w}px"` : "";
+    return `<th data-col="${esc(c)}"${style}>${esc(c)}` +
+      `<span class="cpk-col-resizer" data-col="${esc(c)}" title="드래그해 컬럼 폭 조절 — 축약된 숫자는 넓히면 원값 전체가 보인다"></span></th>`;
+  }).join("") + "</tr></thead>";
   const body = "<tbody>" + pageRows.map(row => {
     const cpkVal = parseFloat(row.cpk);
     const isWarn = !isNaN(cpkVal) && cpkMatchThreshold(cpkVal);
@@ -216,18 +228,22 @@ function cpkTableHtml(rows) {
         return `<td class="${cls}">${esc(String(tv))}</td>`;
       }
       const v = row[c];
-      // stdev 만 서버가 반올림하지 않고 내려보내므로 표시할 때 유효숫자를 맞춘다(core.js).
-      // row.stdev 원값은 그대로 남아 cpkComputeTargets 의 Limit 역산이 계속 쓴다.
-      const txt = (v === null || v === undefined) ? ""
-        : (c === "stdev" ? fmtStdev(v) : String(v));
+      // min/median/max/average/stdev 는 자리수가 길면 컬럼이 계속 넓어져 유효숫자 5자리로
+      // 축약해 보여준다(core.js fmtSig5, 표시 전용 — 원값은 title 툴팁으로). 리사이저로
+      // 넓힌 컬럼(cpkColFull)은 원값 전체를 보여준다. row 원값은 그대로 남아
+      // cpkComputeTargets 의 Limit 역산이 계속 쓴다.
+      const full = (v === null || v === undefined) ? "" : String(v);
+      const txt = (full !== "" && CPK_SIG5_COLS.has(c) && !cpkColFull.has(c))
+        ? fmtSig5(v) : full;
       const cls = [];
       if (txt === "") cls.push("st-empty");
       else if (CPK_NUMERIC.has(c)) cls.push("st-num");
       if (c === "cpk" && isWarn) cls.push("cpk-warn");
+      const titleAttr = txt !== full ? ` title="${esc(full)}"` : "";
       // subject 셀(비어있지 않을 때) → Item_detail 링크
       const inner = (c === "subject" && txt !== "")
         ? `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>` : esc(txt);
-      return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</td>`;
+      return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}${titleAttr}>${inner}</td>`;
     }).join("");
     return `<tr>${selTd}${tds}</tr>`;
   }).join("") + "</tbody>";
@@ -445,6 +461,34 @@ function renderCpk() {
         updateCpkSelInfo();
         renderCpkTable();
       }
+    });
+    // 컬럼 리사이저 드래그 — 폭은 cpkColWidths 에 저장돼 페이지 이동·재렌더에도 유지된다.
+    // 유효숫자 5자리로 축약하는 컬럼(CPK_SIG5_COLS)은 넓히면 원값 전체 표시로 전환,
+    // 다시 좁히면 축약 표시로 복귀한다.
+    panel.addEventListener("mousedown", (e) => {
+      const rz = e.target.closest(".cpk-col-resizer");
+      if (!rz) return;
+      e.preventDefault();
+      const th = rz.closest("th");
+      const col = rz.dataset.col;
+      const startX = e.clientX, startW = th.offsetWidth;
+      const move = (ev) => {
+        const w = Math.max(40, startW + ev.clientX - startX);
+        th.style.width = w + "px"; th.style.minWidth = w + "px";
+      };
+      const up = (ev) => {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        const dx = ev.clientX - startX;
+        cpkColWidths[col] = Math.max(40, startW + dx);
+        if (CPK_SIG5_COLS.has(col)) {
+          if (dx > 4) cpkColFull.add(col);
+          else if (dx < -4) cpkColFull.delete(col);
+        }
+        renderCpkTable();
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
     });
     cpkPanelBound = true;
   }

@@ -251,12 +251,9 @@ tr.result-row { cursor: pointer; transition: background .1s; }
    이 규칙은 반드시 아래 @media 블록보다 **앞**에 있어야 한다 — 미디어 쿼리는 특이도를
    올리지 않으므로 뒤에 두면 카드형의 `padding: 0` 을 이겨 모바일 레이아웃이 깨진다. */
 tr.result-row td { padding-top: 3px; padding-bottom: 3px; }
-/* 내가 올린 세션 = 옅은 노랑. .mine 과 :hover 는 특이도가 같아(0,2,1) 순서가 곧 규칙이다 —
-   .mine 을 hover 앞에 둬야 마우스 오버가 이기고, .mine:hover 를 뒤에 둬야 내 행은
-   노랑 계열을 유지한다. 순서를 바꾸면 조용히 한쪽이 사라진다. */
-tr.result-row.mine { background: #fffbe6; }
+/* 내가 올린 세션 = File name 파란색 (구 노란 행 음영은 배경과 구분이 안 돼 폐기, 2026-08-25). */
+tr.result-row.mine td.fname-cell .fname-txt { color: #1a6fd4; }
 tr.result-row:hover { background: #f5f8ff; }
-tr.result-row.mine:hover { background: #fff3c4; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
@@ -434,10 +431,8 @@ html[data-theme="dark"] th { background: #22262e; color: #9aa3b0; }
 html[data-theme="dark"] th,
 html[data-theme="dark"] td { border-bottom-color: #2a2e37; }
 html[data-theme="dark"] tr.empty-row td { color: #767f8c; }
-/* 라이트와 같은 순서 규칙(.mine → :hover → .mine:hover) */
-html[data-theme="dark"] tr.result-row.mine { background: #2e2a1c; }
+html[data-theme="dark"] tr.result-row.mine td.fname-cell .fname-txt { color: #7fb3ef; }
 html[data-theme="dark"] tr.result-row:hover { background: #262c38; }
-html[data-theme="dark"] tr.result-row.mine:hover { background: #3a331d; }
 html[data-theme="dark"] .btn-mini { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
 html[data-theme="dark"] .btn-mini.edit { color: #7fb3ef; border-color: #33507a; }
 html[data-theme="dark"] .btn-mini.edit:hover { background: #243044; border-color: #4a90e2; }
@@ -707,9 +702,9 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 </div>
 
 <script>
-// 한 페이지 max 15개 — 페이저까지 스크롤 없이 한 화면에 들어오는 수다(1366×768 기준).
-// 늘리면 페이저가 화면 밖으로 밀린다. (즐겨찾기 상단 정렬은 서버 ORDER BY 가 담당)
-const PAGE_SIZE = 15;
+// 한 페이지 max 17개 — 즐겨찾기 포함 한 화면에 들어오는 수(2026-08-25, 15→17 상향).
+// (즐겨찾기 상단 정렬은 서버 ORDER BY 가 담당)
+const PAGE_SIZE = 17;
 // 페이저에 한 번에 그리는 최대 버튼 수 — 창(현재±2)+처음/마지막+‹/›. 전체 페이지를
 // 다 그리면 세션이 늘수록 페이저가 여러 줄로 접혀 화면 밖으로 밀린다.
 const PAGER_WINDOW = 2;
@@ -1590,7 +1585,7 @@ if (_histCached) {
     // 신원만 복원한다(그 왕복이 원래 목록+신원을 함께 실어오기 때문).
     applyViewer(_histCached.viewer);
     // 위 캐시 렌더는 _userId 가 비어 있는 상태에서 그려졌다 — 신원이 방금 채워졌으므로
-    // 다시 그려야 '내 업로드' 노란 음영이 나타난다(이 경로만 loadHistory 를 안 탄다).
+    // 다시 그려야 '내 업로드' 파란 File name 이 나타난다(이 경로만 loadHistory 를 안 탄다).
     renderResults();
   } else {
     await loadHistory(true, !!_histCached);  // state.productType(readUrl) 반영, URL page 유지

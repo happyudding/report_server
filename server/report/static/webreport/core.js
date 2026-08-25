@@ -240,6 +240,25 @@ function fmtStdev(v) {
   return n.toFixed(digits);
 }
 
+// 표시 전용 유효숫자 5자리 포맷 — CPK 탭 min/median/max/average/stdev 컬럼용(cpk.js).
+// |v|>=1 은 정수부를 그대로 두고 소수 자리만 잘라 총 유효숫자가 5자리를 넘지 않게,
+// |v|<1 은 유효숫자 5자리가 나올 때까지 소수 자리수를 늘린다(1e-7 미만 지수표기 방지 toFixed).
+//   1235213.3331212 → 1235213 / 3.3123456 → 3.3123 / 0.00012345678 → 0.00012346
+// **표시 전용**이다 — 원값은 반올림하지 않는다(CPK Limit 역산 등은 row 원값을 그대로 쓴다).
+function fmtSig5(v) {
+  if (v === null || v === undefined || v === "") return "";   // Number(null)=0 오인 방지
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n === 0) return "0";
+  const a = Math.abs(n);
+  // |v|<1: 4 - floor(log10|v|) = 유효숫자 5자리에 필요한 소수 자리수(toFixed 상한 100 캡).
+  // |v|>=1: 5자리에서 정수 자리수를 뺀 만큼만 소수 허용(정수부가 5자리 이상이면 소수 0자리).
+  const digits = a < 1 ? Math.min(100, 4 - Math.floor(Math.log10(a)))
+                       : Math.max(0, 4 - Math.floor(Math.log10(a)));
+  // 끝자리 0 은 떼서 짧은 값(3.5 등)이 3.5000 으로 늘어나지 않게 한다.
+  return n.toFixed(digits).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+}
+
 function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);
