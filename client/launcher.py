@@ -27,6 +27,7 @@
 import ctypes
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -51,7 +52,158 @@ ELEVATED_TIMEOUT_SEC = 900   # 승격 업데이트가 이 시간 안에 안 끝�
 # 런처 빌드 식별자 — .update_fail 기록에 함께 남는다. **런처를 고쳐 배포하면 이 값을
 # 올려라**: 과거의 "3회 실패로 포기" 기록이 자동으로 풀려, 그 버그로 멈춰 있던 PC 가
 # 새 런처를 받는 즉시 다시 시도한다 (transport/app_update.read_fail_count).
-LAUNCHER_BUILD = "2026.08.26-process-role-fix"
+LAUNCHER_BUILD = "2026.08.26-parent-pid-fix"
+
+# ── 대기 중 보여 줄 한 줄 문구 ──────────────────────────────────────────────
+# 진행창은 길면 수 분을 서 있는다. 그동안 화면이 고정돼 있어 지루하다는 피드백을
+# 받아, 기다리는 동안 한 줄씩 보여 준다. 브랜드 색과 같은 이유로 리소스 파일이
+# 아니라 코드 상수다 (onefile 이라 datas 를 늘리지 않는다).
+QUIP_ROTATE_MS = 7000    # 문구 교체 주기
+
+QUIPS = (
+    "아기 공룡 둘리가 입학한 고등학교는? 빙하타고",
+    "세상에서 가장 쎈 대학교 이름은? 와세다 대학",
+    "가장 지루하고 지겨운 중학교 이름은? 로딩중",
+    "해리포터는 어떤 사람일까? 해를 취재하는 사람",
+    "우리 몸에 좋지 않은 청바지 이름은? 유해진",
+    "도둑놈이 가장 좋아하는 아이스크림은? 보석바",
+    "이 세상에서 가장 뜨거운 과일은? 천도복숭아",
+    "반성문을 영어로 표현하면? 글로벌",
+    "우리나라에서 가장 오래된 화장실은? 전봇대",
+    "아픈 사람들이 원하는 반지는? 힐링",
+    "서울에서 조금 뚱뚱한 사람들이 사는 동네는? 반포동",
+    "아이스크림이 죽다를 네 자로 줄이면? 다이하드",
+    "김밥이 경찰서에 간 이유는? 참기름이 고소해서",
+    "김밥이 죽으면 어디로 갈까? 김밥천국",
+    "바나나가 웃으면? 바나나킥",
+    "아버지가 정말 강한 사람이다를 세 자로? 부가세",
+    "할아버지 할머니가 좋아하는 폭포는? 나이야가라",
+    "할아버지가 좋아하는 돈은? 할머니",
+    "조금 전에 울다 그친 사람을 다섯 자로? 아까운사람",
+    "한의사가 가장 좋아하는 말은? 인생은 한방이여",
+    "먹으면 자연스럽게 웃게 되는 죽은? 히죽",
+    "이 세상에서 가장 쉬운 숫자는? 190000 (쉽구만)",
+    "도둑놈이 훔치는 돈을 뭐라고 할까? 슬그머니",
+    "채소 장수가 가장 싫어하는 도시는? 시드니",
+    "사람의 머리가 세 개 있다를 영어로? 헤드셋",
+    "인디언 추장보다 높은 사람은? 고추장",
+    "어부들이 싫어하는 가수는? 배철수",
+    "많은 모자가 뭉쳐 있는 것을 네 자로? 밀짚모자",
+    "제일 억울한 도형은? 원통",
+    "모든 사람들을 일어나게 하는 숫자는? 5 (다~섯)",
+    "치과 의사가 살지 않는 아파트는? 이편한세상",
+    "세계에서 가장 인기 있는 벌레는? 스타벅스",
+    "지방 흡입의 반대말은? 수도권배출",
+    "소금의 유통기간은? 천일 (천일염)",
+    "이 세상에서 가장 잔인한 비빔밥은? 산채비빔밥",
+    "고등학생이 가장 싫어하는 나무는? 야자나무",
+    "비가 한 시간 동안 내린다를 다섯 자로? 추적육십분",
+    "승용차 문을 세게 닫으면 안 되는 이유는? 문에 네개니까",
+    "미소의 반대말은? 당기소",
+    "몸무게가 가장 많이 나갈 때는? 철들 때",
+    "자동차를 발로 차다를 네 자로? 카놀라유",
+    "단무지가 버스를 타면서 하는 말은? 저 무임 승차요",
+    "전화를 가지고 세운 건물의 이름은? 콜로세움",
+    "신데렐라가 잠을 못 잔다를 네 자로? 모짜렐라",
+    "신이 화를 내고 있다를 세 자로? 신발끈",
+    "우리나라에서 땅값이 가장 싼 동네는? 일원동",
+    "술과 커피를 팔지 않습니다를 사자성어로? 주차금지",
+    "송혜교 송대관 송윤아 송중기의 공통점은? 성동일",
+    "한국에서 가장 싸움을 잘하는 오리는? 을지문덕",
+    "딱 세 사람밖에 탈 수 없는 차는? 인삼차",
+    "일본산 귤이 까먹으라고 하는 말은? 나까무라",
+    "새우가 주인공인 드라마는? 대하드라마",
+    "호랑이가 새 차를 탄 여자에게 하는 말은? 타이거",
+    "못 팔고도 돈을 잘 버는 사람은? 철물점 아저씨",
+    "곰돌이 푸가 세 마리 있으면? 삼푸",
+    "얼음이 죽다를 세 자로 줄이면? 다이빙",
+    "왼쪽으로 절하는 것을 뭐라고 할까? 좌절",
+    "신발 한 통에 오천원, 두 통엔? 게보린",
+    "곰은 사과를 어떻게 먹을까? 베어먹지",
+    "돌잔치를 하다를 영어로 하면? 락페스티벌",
+    "세상에서 가장 뜨거운 바다는? 열받아",
+    "바람이 가볍게 부는 동네는? 분당",
+    "손가락은 핑거, 주먹은? 오므린거",
+    "아주 오래전에 건설된 다리는? 구닥다리",
+    "침대를 밀고 돌리다를 네 자로? 배드민턴",
+    "우리나라 왕 중에 성형한 왕은? 인조임금",
+    "세상에서 돈을 가장 많이 가진 새는? 백조",
+    "복 중에서 가장 작은 복은? 복분자",
+    "땅이 슬프면 어떻게 울까? 흙흙",
+    "베를린에서 밥을 먹으면 안 되는 이유는? 독일수도",
+    "파 중에서 가장 인기 있는 파는? 파스타",
+    "빵이 시골에 가는 이유는? 소보로",
+    "담배가 시골에 가는 이유는? 말보로",
+    "미국에서 비가 온다를 영어로 하면? usb",
+    "과자가 자기를 소개하며 하는 말은? 저는 전과자입니다",
+    "항상 미안한 마음으로 사는 동물은? 오소리 (오, 쏘리)",
+    "이 세상에서 가장 뜨거운 전화는? 화상전화",
+    "우리나라에서 가장 바쁜 대학교는? 부산대학교",
+    "호주의 화폐단위는? 호주머니",
+    "머리 아플 때 약을 얼마나 먹어야 할까? 두통",
+    "아마존에는 누가 살고 있을까? 아마... 존이",
+    "이 세상에서 가장 가난한 임금은? 최저임금",
+    "성적이 나와도 말하지 못하는 이유는? 내성적이라서",
+    "달걀을 팔아서 번 돈을 뭐라고 할까? 에그머니",
+    "가장 싼 사냥 도구는? 파리채",
+    "개가 사람을 가르치다를 사자성어로? 개인지도",
+    "사우디 석유가 우리나라까지 오는 기간은? 오일",
+    "식인종이 우사인 볼트를 보면 하는 말은? 패스트푸드",
+    "말이 분노하고 있다를 네 자로? 마리화나",
+    "동생이 형을 너무 좋아한다를 세 자로? 형광펜",
+    "인천 앞바다의 반대말은? 인천 엄마다",
+    "세상에서 가장 무서운 전화는? 무선전화",
+    "천 리 길도 한 걸음부터.",
+    "시작이 반이다. 나머지 반은 끝내는 것이다.",
+    "오늘 걷지 않으면 내일은 뛰어야 한다.",
+    "느리게 가도 좋다. 멈추지만 않으면 된다.",
+    "가장 어두운 시간은 해 뜨기 직전이다.",
+    "실패는 넘어지는 것이 아니라 일어나지 않는 것이다.",
+    "완벽한 때는 오지 않는다. 지금이 그때다.",
+    "어제의 나보다 나아지면 그것으로 충분하다.",
+    "작은 일에 최선을 다하면 큰 일이 따라온다.",
+    "기다림도 하나의 일이다.",
+    "쉬는 것은 게으름이 아니라 준비다.",
+    "길이 없으면 만들면서 가면 된다.",
+    "포기하고 싶을 때가 조금 남았다는 뜻이다.",
+    "비교는 나를 갉아먹고, 성장은 나를 채운다.",
+    "결과보다 방향이 중요하다.",
+    "매일 조금씩이 어느 날 전부가 된다.",
+    "잘하는 것보다 계속하는 것이 어렵다.",
+    "지금의 수고는 나중의 여유가 된다.",
+    "생각이 길어질수록 시작은 멀어진다.",
+    "노력은 배신하지 않는다, 다만 늦게 온다.",
+    "좋은 하루는 좋은 마음에서 시작된다.",
+    "서두르지 말되 멈추지도 말라.",
+    "오늘 한 걸음이 내일의 지름길이다.",
+    "누구에게나 처음은 서툴다.",
+    "잘 쉰 사람이 멀리 간다.",
+    "할 수 있다고 믿는 순간 절반은 이룬 것이다.",
+    "어려움은 지나가고 경험은 남는다.",
+    "지금 하는 일이 미래의 나를 만든다.",
+    "묵묵함이 가장 큰 재능이다.",
+    "때로는 기다리는 것이 최선의 행동이다.",
+    "실수는 배움의 다른 이름이다.",
+    "큰 산도 한 삽씩 옮긴다.",
+    "마음이 급할수록 천천히 하라.",
+    "끝까지 가 본 사람만 아는 풍경이 있다.",
+    "오늘의 인내가 내일의 자유다.",
+    "성실함은 재능을 이긴다.",
+    "잘 되는 날도, 안 되는 날도 모두 지나간다.",
+    "무엇을 하든 즐길 수 있다면 이미 성공이다.",
+    "충분히 잘하고 있다.",
+    "한 번에 하나씩이면 못 할 일이 없다.",
+    "고민의 시간이 곧 성장의 시간이다.",
+    "괜찮다, 아직 시간은 많다.",
+    "가장 좋은 계획은 지금 시작하는 것이다.",
+    "지치면 쉬어라. 포기하지만 않으면 된다.",
+    "남과 다른 속도로 가도 목적지는 같다.",
+    "오늘도 무사히, 그것으로 충분하다.",
+    "습관이 쌓이면 실력이 된다.",
+    "조급함은 실수를 부르고 여유는 답을 준다.",
+    "누구도 처음부터 잘하지는 않았다.",
+    "끝내는 사람이 결국 이긴다.",
+)
 
 # ── 브랜드 색 (꿀단지 = 노란 계열) ───────────────────────────────────────────
 # 런처는 리소스 파일을 들고 다니지 않는다(onefile 이라 풀어 쓰는 비용이 있고, 아이콘
@@ -155,6 +307,9 @@ def running_honey_processes(root):
     root_text = os.path.normcase(str(Path(root).resolve())).rstrip("\\") + "\\"
     roles = {"honey.exe": "launcher", "honeyapp.exe": "app",
              "qtwebengineprocess.exe": "helper"}
+    # onefile 부트로더 부모는 자식(=이 코드)이 끝날 때까지 같은 Honey.exe 경로로
+    # 살아 있다 — 부모를 "다른 런처"로 오인하면 모든 실행이 자기 자신에게 막힌다.
+    self_pids = {os.getpid(), os.getppid()}
     found = []
     try:
         entry = _ProcessEntry32W()
@@ -164,7 +319,7 @@ def running_honey_processes(root):
             pid = int(entry.th32ProcessID)
             name = str(entry.szExeFile)
             name_lower = name.lower()
-            if pid != os.getpid() and name_lower in roles:
+            if pid not in self_pids and name_lower in roles:
                 image_path = _process_image_path(pid)
                 normalized = os.path.normcase(image_path)
                 if normalized.startswith(root_text):
@@ -601,6 +756,48 @@ def style_bar(ttk):
     return "Honey.Horizontal.TProgressbar"
 
 
+def attach_quip(tk, root, frame):
+    """기다리는 동안 볼 한 줄 문구를 붙이고 주기적으로 갈아 준다.
+
+    돌려주는 함수는 로테이션을 멈추고 문구를 감춘다. **창을 닫기 전에 반드시**
+    불러야 한다 — after 로 예약된 콜백이 죽은 창을 건드리면 Tcl 오류가 난다
+    (진행바를 stop() 먼저 하는 것과 같은 이유).
+    """
+    label = tk.Label(frame, text=random.choice(QUIPS), bg=BG_CREAM, fg=INK_SUB,
+                     anchor="w", justify="left", wraplength=400,
+                     font=(UI_FONT, 9, "italic"))
+    label.pack(fill="x", pady=(12, 0))
+    state = {"job": None, "stopped": False}
+
+    def rotate():
+        state["job"] = None
+        if state["stopped"]:
+            return
+        try:
+            if not label.winfo_exists():
+                return
+            label.config(text=random.choice(QUIPS))
+            state["job"] = root.after(QUIP_ROTATE_MS, rotate)
+        except Exception:   # noqa: BLE001 - 문구 때문에 업데이트가 멈추면 안 된다
+            state["stopped"] = True
+
+    def stop():
+        state["stopped"] = True
+        if state["job"] is not None:
+            try:
+                root.after_cancel(state["job"])
+            except Exception:   # noqa: BLE001 - 이미 지나간 예약이면 그만이다
+                pass
+            state["job"] = None
+        try:
+            label.pack_forget()
+        except Exception:   # noqa: BLE001 - 창이 이미 죽었으면 할 일이 없다
+            pass
+
+    state["job"] = root.after(QUIP_ROTATE_MS, rotate)
+    return stop
+
+
 def center_window(win, y_divisor=3):
     win.update_idletasks()
     w, h = win.winfo_width(), win.winfo_height()
@@ -646,6 +843,7 @@ class ProgressWindow:
             bg=BG_CREAM, fg=GOLD_DARK, anchor="w", justify="left",
             font=(UI_FONT, 9, "bold"))
         self.notice.pack(fill="x", pady=(10, 0))
+        self._stop_quip = attach_quip(tk, self.root, frame)
         self.buttons = tk.Frame(frame, bg=BG_CREAM)
         self.buttons.pack(fill="x", pady=(14, 0))
         self.cancel_btn = tk.Button(self.buttons, text="취소", width=12,
@@ -683,6 +881,7 @@ class ProgressWindow:
         self.bar.stop()
         self.bar.pack_forget()
         self.notice.pack_forget()   # 실패했으니 "기다려 주세요" 는 더 이상 맞지 않는다
+        self._stop_quip()           # 실패 안내 옆에서 농담이 도는 것도 마찬가지다
         self.label.config(text=f"업데이트에 실패했습니다.\n{message}")
         self.sub.config(text="기존 버전으로 실행합니다. 설치파일을 직접 받아 "
                              "압축을 풀고 Honey.exe 를 실행해도 됩니다.")
@@ -712,6 +911,10 @@ class ProgressWindow:
         self._center()
 
     def close(self):
+        try:
+            self._stop_quip()
+        except Exception:
+            pass
         try:
             self.bar.stop()   # StartupWindow.close 와 같은 이유 (죽은 창 갱신 방지)
         except Exception:
@@ -790,6 +993,7 @@ class StartupWindow:
         tk.Label(frame, text="Honey 를 다시 실행하지 마세요. 창이 곧 나타납니다.",
                  bg=BG_CREAM, fg=GOLD_DARK, anchor="w",
                  font=(UI_FONT, 9, "bold")).pack(fill="x", pady=(10, 0))
+        self._stop_quip = attach_quip(tk, self.root, frame)
         center_window(self.root)
 
     def wait_until(self, proc, timeout_sec, logf):
@@ -825,6 +1029,11 @@ class StartupWindow:
     def close(self):
         # 애니메이션을 먼저 멈춘다 — indeterminate 진행바는 after 로 다음 프레임을
         # 예약해 두므로, 그냥 destroy 하면 그 콜백이 죽은 창을 건드려 Tcl 오류를 뱉는다.
+        # 문구 로테이션도 같은 after 예약이라 함께 멈춘다.
+        try:
+            self._stop_quip()
+        except Exception:
+            pass
         try:
             self.bar.stop()
         except Exception:

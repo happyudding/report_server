@@ -208,6 +208,7 @@ python -m PyInstaller --noconfirm --onefile --console --name HoneyUpdateServer ^
 | 12 | 6번 실패 화면에서 아무것도 안 누름 | 10초 뒤 3.1.1 자동 실행 |
 | 13 | 6번 실패 화면에서 [설치파일 직접 받기] | 브라우저가 열려 다운로드 시작, 앱도 실행됨 |
 | 14 | 설치 폴더를 읽기 전용으로 만들고 실행 | 받기 전에 판정해 즉시 3.1.1 실행 |
+| 15 | **빌드된 런처(onefile)를 빈 폴더에 단독으로 놓고 `--no-ui` 로 실행** | log 에 "다른 Honey 런처 대기" 가 **없어야** 하고 "no runnable version" 까지 진행. 이 줄이 보이면 런처가 자기 onefile 부트로더 부모를 "다른 런처"로 오인하는 회귀다 (2026-08-26 실제 장애 — `running_honey_processes` 의 `os.getppid()` 제외가 빠짐). ※ `check_launcher.py` 는 python 으로 실행해 부트로더 부모가 없으므로 이 회귀를 못 잡는다 — 반드시 **빌드된 exe** 로 확인할 것 |
 
 각 경우 `log\launcher.log` / `log\update.log` 에 **원인이 한 줄로 남는지**까지 본다 —
 조용히 실패하면 현장에서 원인을 못 찾는다.

@@ -11,18 +11,52 @@
 - DB 백업 스케줄러 기동 (db_backup 참조).
 """
 import logging
+import re
 import sqlite3
 import time
 import traceback
 from concurrent.futures.process import BrokenProcessPool
 
-from flask import g, jsonify, request
+from flask import g, jsonify, make_response, request
 from werkzeug.exceptions import HTTPException
 
 import diagnostics
 
 _log = logging.getLogger(__name__)
 _STARTED_AT = time.time()
+
+# abort(code, "...") 의 영문 개발자 문구를 대신할 상태코드별 한국어 안내.
+# 4xx/5xx 공통 폴백은 code//100*100 (400/500) 키로 찾는다.
+_HANGUL_RE = re.compile(r"[가-힣]")
+_KO_BY_STATUS = {
+    400: "요청이 올바르지 않습니다.",
+    401: "권한이 없습니다 — Honey 접속(또는 로그인)이 필요합니다.",
+    403: "권한이 없습니다.",
+    404: "요청한 데이터를 찾을 수 없습니다 (삭제되었거나 비공개일 수 있습니다).",
+    405: "허용되지 않는 요청입니다.",
+    409: "다른 변경과 충돌했습니다 — 새로고침 후 다시 시도해 주세요.",
+    413: "업로드 용량이 상한을 넘었습니다.",
+    429: "요청이 너무 잦습니다 — 잠시 후 다시 시도해 주세요.",
+    500: "서버 처리 중 오류가 발생했습니다 — 잠시 후 다시 시도해 주세요. "
+         "계속되면 관리자에게 오류 번호를 알려주세요.",
+    503: "서버가 붐비거나 일시적으로 응답할 수 없습니다 — 잠시 후 다시 시도해 주세요.",
+}
+
+
+def _error_html(code, msg, rid):
+    """브라우저 내비게이션용 최소 한국어 오류 페이지 (템플릿 무의존, 인라인 단색)."""
+    rid_line = (f'<p style="color:#888;font-size:12px">오류 번호: {rid}</p>' if rid else "")
+    return (
+        '<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+        f'<title>{code} 오류</title></head>'
+        '<body style="font-family:sans-serif;max-width:560px;margin:80px auto;'
+        'padding:0 20px;color:#333">'
+        f'<h1 style="font-size:48px;margin:0 0 8px">{code}</h1>'
+        f'<p style="font-size:15px;line-height:1.6">{msg}</p>'
+        f'{rid_line}'
+        '<p><a href="/pe/report/" style="color:#2563eb">&larr; 검색결과로 돌아가기</a></p>'
+        '</body></html>'
+    )
 
 # SQLite 잠금 경합 누적 카운터 (관리자 패널 노출용). busy_timeout(5s)을 넘겨 실패한
 # 횟수 — 0 이 아니면 동시 쓰기가 실제로 대기 한계를 넘고 있다는 신호다.
