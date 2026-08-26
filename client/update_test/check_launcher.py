@@ -21,6 +21,7 @@ CLIENT_DIR = Path(__file__).resolve().parent.parent
 SYS32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
 STUB_OK = SYS32 / "hostname.exe"      # exit 0
 STUB_CRASH = SYS32 / "where.exe"      # 인자 없이 실행하면 exit 2
+STUB_WAIT = SYS32 / "ping.exe"        # 여러 번 ping 시 수 초간 생존
 
 
 def make_version(root, version, stub, internal=True):
@@ -69,7 +70,7 @@ def check(name, condition):
 
 
 def main():
-    for stub in (STUB_OK, STUB_CRASH):
+    for stub in (STUB_OK, STUB_CRASH, STUB_WAIT):
         if not stub.exists():
             raise SystemExit(f"스텁으로 쓸 시스템 exe 가 없습니다: {stub}")
 
@@ -127,6 +128,21 @@ def main():
         check("9.0.1 을 실행하지 않았다", "launch 9.0.1" not in log)
         check("9.0.0 을 실행했다", "launch 9.0.0" in log)
 
+        print("[4-2] 직접 설치 중단 폴더는 파일이 있어도 실행하지 않는다")
+        root = work / "installing"
+        root.mkdir()
+        shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+        make_version(root, "9.0.0", STUB_OK)
+        partial = make_version(root, "9.0.1", STUB_OK)
+        (partial / ".installing").write_text(
+            '{"install_id":"partial","version":"9.0.1","release":"r1"}',
+            encoding="utf-8")
+        write_current(root, "9.0.1\n9.0.0\n")
+        check("중단 폴더를 건너뛰고 구버전 실행", run_launcher(root) == 0)
+        log = launcher_log(root)
+        check("중단된 9.0.1 미실행", "launch 9.0.1" not in log)
+        check("정상 9.0.0 실행", "launch 9.0.0" in log)
+
         print("[5] --wait-pid: 살아 있는 프로세스를 기다린다")
         root = work / "waitpid"
         root.mkdir()
@@ -147,6 +163,7 @@ def main():
         check("실제로 기다렸다 (2초 이상)", waited >= 2.0)
         check("로그에 wait for pid", f"wait for pid {sleeper.pid}" in launcher_log(root))
 
+        check_running_process_detection(work)
         check_apply_update(work)
 
         print("\nALL OK")
@@ -154,19 +171,50 @@ def main():
         shutil.rmtree(work, ignore_errors=True)
 
 
-def check_apply_update(work):
-    """_apply_update 의 실패 분류 — 서버·UI 없이 함수만 직접 부른다.
+def check_running_process_detection(work):
+    """같은 설치 루트의 실행 프로세스만 찾고, 무UI에서는 종료하지 않는다."""
+    sys.path.insert(0, str(CLIENT_DIR))
+    import importlib
 
-    여기서 지키려는 계약은 하나다: **로컬 권한 실패는 전체 zip 으로 폴백하지 않는다.**
-    폴백하면 331MB 를 받고 같은 자리에서 또 실패한다(2026-08-26 현장 증상).
-    """
+    launcher = importlib.import_module("launcher")
+    print("[5-1] 업데이트 전 실행 중 Honey 탐지")
+    root = work / "running"
+    app_dir = root / "versions" / "9.0.0"
+    app_dir.mkdir(parents=True)
+    exe = app_dir / "HoneyApp.exe"
+    shutil.copy2(STUB_WAIT, exe)
+    proc = subprocess.Popen(
+        [str(exe), "127.0.0.1", "-n", "20"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+    try:
+        import time
+        time.sleep(0.5)
+        found = launcher.running_honey_processes(root)
+        check("같은 루트 HoneyApp.exe 탐지", any(p["pid"] == proc.pid for p in found))
+        logs = []
+        check("무UI에서는 실행 프로세스를 종료하지 않고 업데이트 보류",
+              launcher.ask_and_close_running_honey(root, found, logs.append, False) is False
+              and proc.poll() is None)
+        check("동의 후 강제 종료에 쓰는 Windows 핸들 경로",
+              launcher._terminate_process(proc.pid))
+        proc.wait(timeout=10)
+        check("탐지한 Honey 프로세스 종료 확인", proc.poll() is not None)
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=10)
+
+
+def check_apply_update(work):
+    """_apply_update 의 대상 준비 — 불완전 폴더를 rename 하지 않고 복구 경로로 보낸다."""
     sys.path.insert(0, str(CLIENT_DIR))
     import importlib
 
     launcher = importlib.import_module("launcher")
     au = importlib.import_module("transport.app_update")
 
-    print("[6] _apply_update 실패 분류")
+    print("[6] _apply_update 직접 설치 준비")
     root = work / "apply"
     (root / "versions").mkdir(parents=True)
     (root / "updates").mkdir()
@@ -175,7 +223,7 @@ def check_apply_update(work):
     def logf(message):
         logs.append(message)
 
-    # 잠긴 폴더 → prepare_target 이 LocalWriteError → 다운로드 시도 자체가 없어야 한다.
+    # 불완전/잠긴 폴더를 치우지 않고 그대로 둔 채 전체 zip 설치로 진행해야 한다.
     locked = root / "versions" / "9.9.9"
     locked.mkdir()
     (locked / "HoneyApp.exe").write_bytes(b"x")
@@ -184,18 +232,23 @@ def check_apply_update(work):
     holder.flush()
     downloads = []
     real_download = au.download
-    au.download = lambda *a, **k: downloads.append(a[0]) or real_download(*a, **k)
+    au.download = lambda *a, **k: downloads.append(a[0]) or (_ for _ in ()).throw(
+        RuntimeError("download-stub"))
     try:
-        launcher._apply_update(
-            root, "http://127.0.0.1:1", "9.9.9", {"file": "x.zip"}, None,
-            lambda *a: True, logf)
-        raise AssertionError("잠긴 폴더인데 설치가 진행됐다")
-    except au.LocalWriteError as exc:
-        check("LocalWriteError 가 그대로 올라온다", str(exc.path).endswith("9.9.9"))
+        try:
+            launcher._apply_update(
+                root, "http://127.0.0.1:1", "9.9.9", {"file": "x.zip"}, None,
+                lambda *a: True, logf)
+            raise AssertionError("다운로드 스텁 예외가 전달되지 않았다")
+        except RuntimeError as exc:
+            check("repair 뒤 설치 다운로드로 진행", str(exc) == "download-stub")
     finally:
         au.download = real_download
         holder.close()
-    check("전체 zip 을 받지 않았다 (중복 실패 제거)", not downloads)
+    check("전체 zip 다운로드를 한 번 시도", len(downloads) == 1)
+    check("대상 폴더를 rename/delete 하지 않음",
+          locked.exists() and (locked / "locked.dll").read_bytes() == b"in-use"
+          and not list((root / "versions").glob("*.old-*")))
 
     # 완성된 폴더 → adopt. 역시 아무것도 받지 않는다.
     done = root / "versions" / "9.8.0"

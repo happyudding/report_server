@@ -7,14 +7,13 @@
   - current.txt 읽기/쓰기 (원자 교체, 이전 버전 2행)
   - zip 안 앱 폴더 자동 탐지 (zip 루트 구조와 무관)
   - 압축 해제 진행률 / 사용자 취소 / zip-slip 거부
-  - install_version 의 tmp -> rename, 기존 폴더 교체, 실패 시 잔재 없음
+  - install_version 의 최종 폴더 직접 설치, 완료 마커, 실패 후 제자리 복구
   - startup_cleanup 의 n-1 유지, updates zip 수거
   - 파일 매니페스트 생성/저장/읽기 (델타의 전제인 로컬 캐시)
-  - **델타 조립** — 안 바뀐 파일 재사용(하드링크), 바뀐 것만 다운로드, sha256 거부,
-    실패 시 잔재 없음. 미니 HTTP 서버를 띄워 실제 다운로드까지 돈다.
+  - **델타 조립** — 안 바뀐 파일 독립 복사, 바뀐 것만 다운로드, sha256 거부,
+    실패 폴더 복구. 미니 HTTP 서버를 띄워 실제 다운로드까지 돈다.
   - 런처가 쓰는 나머지 헬퍼 (is_newer / can_write / 서버주소 우선순위 / 실패 카운터)
-  - **prepare_target** — 완성된 폴더 채택(adopt), 깨진 잔재 치우기, 잠긴 폴더에서
-    LocalWriteError + **전체 zip 을 받지 않는다**(2026-08-26 현장 재현)
+  - **prepare_target** — 완성 폴더 채택(adopt), 깨진/잠긴 잔재를 rename 없이 제자리 복구
 """
 import os
 import shutil
@@ -150,7 +149,9 @@ def main():
         final = au.install_version(root, "9.0.1", zip_a)
         check("versions/9.0.1 생성", final == root / "versions" / "9.0.1"
               and (final / "HoneyApp.exe").exists())
-        check("tmp 잔재 없음", not list((root / "versions").glob("*.tmp-*")))
+        check("완료 마커 일치", au.version_ready(final, "9.0.1"))
+        check("폴더 rename용 tmp를 만들지 않는다",
+              not list((root / "versions").glob("*.tmp-*")))
 
         zip_b = make_zip(work / "b.zip", "9.0.1", extra_files=[("new.txt", b"second")])
         au.install_version(root, "9.0.1", zip_b)
@@ -162,20 +163,39 @@ def main():
             raise AssertionError("잘못된 zip 이 설치됐다")
         except RuntimeError:
             check("잘못된 zip → 설치 실패", True)
-        check("실패해도 tmp/최종 폴더 잔재 없음",
-              not list((root / "versions").glob("*.tmp-*"))
-              and not (root / "versions" / "9.0.2").exists())
+        failed = root / "versions" / "9.0.2"
+        check("실패 폴더는 복구용으로 남는다", failed.exists())
+        check("실패 폴더는 실행 불가", not au.version_ready(failed, "9.0.2"))
+        au.install_version(root, "9.0.2", make_zip(work / "recover.zip", "9.0.2"))
+        check("다음 시도에서 같은 폴더 복구", au.version_ready(failed, "9.0.2")
+              and (failed / "HoneyApp.exe").exists())
+
+        real_rename = Path.rename
+        Path.rename = lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("설치 경로에서 폴더 rename 호출"))
+        try:
+            no_rename = au.install_version(
+                root, "9.0.3", make_zip(work / "no_rename.zip", "9.0.3"))
+        finally:
+            Path.rename = real_rename
+        check("폴더 rename API 없이 전체 설치 성공", au.version_ready(no_rename, "9.0.3"))
 
         print("[5] 정리/조회")
         au.install_version(root, "9.0.0", make_zip(work / "c.zip", "9.0.0"))
         au.install_version(root, "8.9.9", make_zip(work / "d.zip", "8.9.9"))
         check("sorted_versions 최신순",
-              au.sorted_versions(root) == ["9.0.1", "9.0.0", "8.9.9"])
+              au.sorted_versions(root) == ["9.0.3", "9.0.2", "9.0.1", "9.0.0", "8.9.9"])
         (root / "updates" / "Honey-9.0.1.zip").write_bytes(b"leftover")
         (root / "versions" / "9.9.9.tmp-123").mkdir()
+        partial = root / "versions" / "9.9.8"
+        partial.mkdir()
+        (partial / au.INSTALLING_FILENAME).write_text(
+            '{"install_id":"partial","version":"9.9.8","release":"version:9.9.8"}',
+            encoding="utf-8")
         removed = au.startup_cleanup(root, keep_versions=("9.0.1", "9.0.0"))
         check("keep 외 버전 삭제", not (root / "versions" / "8.9.9").exists())
         check("중단된 tmp 삭제", not list((root / "versions").glob("*.tmp-*")))
+        check("직접 설치 중단 폴더는 다음 복구를 위해 유지", partial.exists())
         check("updates zip 수거", not list((root / "updates").glob("*.zip")))
         check("유지 대상은 살아 있음",
               (root / "versions" / "9.0.1" / "HoneyApp.exe").exists()
@@ -196,7 +216,10 @@ def main():
         check("저장 후 다시 읽으면 같다", au.read_file_manifest(cur_dir) == local_files)
         check("매니페스트 자신은 목록에 없다",
               all(f["p"] != au.MANIFEST_FILENAME for f in au.build_file_manifest(cur_dir)))
-        check("없으면 None", au.read_file_manifest(root / "versions" / "9.0.0") is None)
+        check("설치 상태 마커도 매니페스트에서 제외",
+              all(f["p"] not in {au.INSTALLING_FILENAME, au.READY_FILENAME}
+                  for f in au.build_file_manifest(cur_dir)))
+        check("없는 폴더면 None", au.read_file_manifest(root / "versions" / "7.7.7") is None)
 
         print("[8] 델타 — 변경분만 받고 나머지는 재사용")
         newdir = work / "release_9.1.0"
@@ -218,6 +241,8 @@ def main():
                 progress_cb=lambda d, t: seen.append((d, t)) or True)
             check(f"재사용 2 / 받기 2 (stats={stats})",
                   stats["reuse"] == 2 and stats["fetch"] == 2)
+            check("구버전과 하드링크를 공유하지 않는다",
+                  stats["linked"] == 0 and stats["copied"] == 2)
             check("바뀐 파일은 새 내용",
                   (final / "HoneyApp.exe").read_bytes() == b"app-stub-9.1.0")
             check("신규 파일 받아짐",
@@ -230,9 +255,7 @@ def main():
             check("진행 콜백이 불렸다", bool(seen))
             check("tmp 잔재 없음", not list((root / "versions").glob("*.tmp-*")))
 
-            # adopt 판정은 여기서 한다 — 뒤쪽 [10] 이 9.0.1\honey.env 를 덮어쓰는데,
-            # 델타가 그 파일을 하드링크로 재사용하므로 9.1.0 의 크기까지 함께 변한다
-            # (실체 공유의 실제 성질이다). 그 뒤에 검사하면 미완성으로 보인다.
+            # adopt 판정은 설치 직후 서버 매니페스트와 함께 확인한다.
             print("[8-1] adopt — 완성된 폴더는 다시 받지 않는다")
             check("델타로 설치된 폴더는 완성 상태", au.verify_version_dir(final))
             check("완성 폴더는 adopt",
@@ -240,8 +263,8 @@ def main():
             check("adopt 는 폴더를 건드리지 않는다",
                   (final / "HoneyApp.exe").read_bytes() == b"app-stub-9.1.0")
             check("다른 버전의 매니페스트면 adopt 하지 않는다",
-                  au.prepare_target(root, "9.1.0", local_files) == "cleared"
-                  and not final.exists())
+                  au.prepare_target(root, "9.1.0", local_files) == "repair"
+                  and final.exists())
 
             print("[9] 델타 sha256 불일치 → 설치 안 됨")
             tampered = [dict(f) for f in remote_files]
@@ -253,9 +276,13 @@ def main():
                 raise AssertionError("해시가 틀린 파일이 설치됐다")
             except RuntimeError as exc:
                 check(f"거부됨 ({exc})", "sha256" in str(exc))
-            check("실패해도 잔재 없음",
-                  not list((root / "versions").glob("*.tmp-*"))
-                  and not (root / "versions" / "9.1.1").exists())
+            failed_delta = root / "versions" / "9.1.1"
+            check("델타 실패 폴더는 실행 불가 상태로 남음",
+                  failed_delta.exists() and not au.version_ready(failed_delta, "9.1.1"))
+            au.install_delta(root, "9.1.1", base_url, remote_files, cur_dir, local_files)
+            check("델타 실패 폴더도 다음 시도에서 복구",
+                  au.version_ready(failed_delta, "9.1.1")
+                  and au.verify_version_dir(failed_delta, remote_files, full_hashes=True))
         finally:
             server.shutdown()
 
@@ -300,15 +327,15 @@ def main():
         print("[12] prepare_target — 대상 폴더 준비 (다운로드 전에 끝낸다)")
         check("없으면 absent", au.prepare_target(root, "7.0.0") == "absent")
 
-        # 깨진 잔재 = 옆으로 치우고 정리. rmtree 로 반쯤 파괴하지 않는다.
+        # 깨진 잔재 = 지우거나 rename 하지 않고 다음 설치에서 제자리 복구한다.
         broken = root / "versions" / "9.3.0"
         (broken / "_internal").mkdir(parents=True)
         (broken / "HoneyApp.exe").write_bytes(b"partial")     # 매니페스트 없음 = 미완성
-        check("깨진 잔재는 cleared", au.prepare_target(root, "9.3.0") == "cleared")
-        check("치운 뒤 자리가 비었다", not broken.exists())
-        check("old- 잔재도 정리됨", not list((root / "versions").glob("*.old-*")))
+        check("깨진 잔재는 repair", au.prepare_target(root, "9.3.0") == "repair")
+        check("복구 대상으로 그대로 유지", broken.exists())
+        check("rename 잔재가 생기지 않는다", not list((root / "versions").glob("*.old-*")))
 
-        print("[13] 잠긴 폴더 — LocalWriteError + 전체 zip 을 받지 않는다")
+        print("[13] 잠긴 폴더 — prepare 단계에서 rename 하지 않는다")
         locked = root / "versions" / "9.4.0"
         locked.mkdir()
         (locked / "HoneyApp.exe").write_bytes(b"x")
@@ -316,15 +343,11 @@ def main():
         holder.write(b"in-use")
         holder.flush()
         try:
-            au.prepare_target(root, "9.4.0")
-            raise AssertionError("잠긴 폴더가 통과했다")
-        except au.LocalWriteError as exc:
-            check(f"LocalWriteError ({exc.path and Path(exc.path).name})",
-                  str(exc.path).endswith("9.4.0"))
-            check("실패 경로를 진단에 담는다", "failing_path" in exc.details())
+            check("잠긴 파일이 있어도 폴더를 옮기지 않고 repair",
+                  au.prepare_target(root, "9.4.0") == "repair")
         finally:
             holder.close()
-        check("치우기 실패해도 원본은 온전하다",
+        check("prepare가 원본을 건드리지 않는다",
               (locked / "locked.dll").read_bytes() == b"in-use")
 
         print("[14] 런처 자가교체 — 앱이 루트 Honey.exe 를 갱신한다")

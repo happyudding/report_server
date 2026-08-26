@@ -9,19 +9,17 @@
     ├── updates\\                 다운로드 zip 임시 보관
     └── versions\\<ver>\\HoneyApp.exe + _internal\\ + honey.env
 
-업데이트는 **실행 중인 파일을 하나도 건드리지 않는다** — 새 버전을
-versions\\<ver>.tmp-<pid> 에 풀고, 완성되면 versions\\<ver> 로 rename 한 뒤
-current.txt 만 원자적으로 바꾸고 런처를 다시 띄운다. 구 batch 스왑 방식
-(transport/updater.py)이 겪던 DLL 잠금·robocopy 실패·백신 차단이 구조적으로 없다.
+새 버전은 versions\\<ver> 에 직접 쓰되 `.installing`/`.ready` 작업 ID 가 일치하기
+전에는 실행 후보로 보지 않는다. 설치가 중단되면 기존 버전으로 실행하고 다음 시도에서
+같은 폴더를 복구한다. 실행 중인 Honey가 있으면 런처가 사용자 동의를 받아 먼저 종료한다.
 
 이 모듈은 updater.py(구 batch 스왑)를 대체한다. 어느 경로를 쓸지는 환경변수가 아니라
 **설치 구조**가 정한다 — install_root() 가 versioned 레이아웃을 인식하면 이쪽이다.
 (HONEY_UPDATE_TEST 게이트는 2026-08-12 제거됐다.)
 
-**기존 버전 폴더를 통째로 지우지 않는다** (2026-08-26). 완성돼 있으면 채택(adopt)하고,
-깨진 잔재면 옆으로 rename 해 치운다 — rmtree 는 잠긴 파일 하나에 WinError 5 로 실패하면서
-폴더를 반쯤 파괴하는데, 그게 현장에서 업데이트를 영구히 막았다. 위험한 로컬 조작은
-전부 prepare_target() 이 **다운로드 전에** 끝낸다.
+**기존 버전 폴더를 통째로 지우거나 rename 하지 않는다** (2026-08-26). 완성돼 있으면
+채택(adopt)하고, 깨진 잔재면 그 자리에서 누락·손상 파일을 다시 채운다. 구버전은 새 버전이
+검증되고 current.txt 가 전환될 때까지 전혀 건드리지 않는다.
 
 함수 대부분이 root 를 인자로 받는다 — 빌드본 없이도 가짜 트리로 검증할 수 있게 하기
 위해서다 (client/update_test/check_app_update.py).
@@ -51,6 +49,8 @@ VERSIONS_DIRNAME = "versions"
 UPDATES_DIRNAME = "updates"
 CURRENT_FILENAME = "current.txt"
 MANIFEST_FILENAME = ".files.json"     # 버전 폴더 안의 파일 목록 캐시 (델타 판정용)
+INSTALLING_FILENAME = ".installing"   # 직접 설치 작업 ID (ready 와 일치하기 전엔 실행 금지)
+READY_FILENAME = ".ready"             # 전체 검증이 끝난 직접 설치 작업 ID
 FAILCOUNT_FILENAME = ".update_fail"   # "<버전> <연속 실패 횟수> <런처 빌드>"
 ELEVATED_RESULT_FILENAME = ".elevated_result.json"   # 승격 프로세스 → 부모 진단 채널
 
@@ -71,7 +71,7 @@ class DownloadCancelled(Exception):
 
 
 class LocalWriteError(Exception):
-    """설치 폴더의 파일 조작(생성·rename·삭제)이 권한/잠금으로 실패했다.
+    """설치 폴더의 파일 조작(생성·쓰기·교체)이 권한/잠금으로 실패했다.
 
     **네트워크 실패와 반드시 구분해야 한다.** 이것이 나면 전체 zip 을 다시 받아도
     같은 자리에서 또 실패하므로(2026-08-26 현장: 델타 실패 → 331MB 재다운로드 →
@@ -187,7 +187,7 @@ def read_current(root):
     return cur, prev
 
 
-def write_current(root, current, previous=None):
+def write_current(root, current, previous=None, attempts=5, delay=0.5):
     """current.txt 를 원자적으로 교체 (임시 파일 + os.replace).
 
     중간에 프로세스가 죽어도 반쯤 쓰인 파일이 남지 않는다 — 런처가 이 파일 하나로
@@ -196,8 +196,20 @@ def write_current(root, current, previous=None):
     root = Path(root)
     body = current if not previous else f"{current}\n{previous}"
     tmp = root / f".{CURRENT_FILENAME}.tmp-{os.getpid()}"
-    tmp.write_text(body + "\n", encoding="utf-8")
-    os.replace(tmp, root / CURRENT_FILENAME)
+    target = root / CURRENT_FILENAME
+    try:
+        tmp.write_text(body + "\n", encoding="utf-8")
+    except OSError as exc:
+        raise _local_error("버전 전환 파일을 쓸 수 없습니다", tmp, exc) from exc
+    for attempt in range(attempts):
+        try:
+            os.replace(tmp, target)
+            return
+        except OSError as exc:
+            if attempt + 1 >= attempts:
+                raise _local_error("현재 버전을 전환할 수 없습니다", target, exc) from exc
+            ulog(f"CURRENT replace 재시도 {attempt + 1}/{attempts} ({exc})")
+            time.sleep(delay)
 
 
 # ── zip 해제 ────────────────────────────────────────────────────────────────
@@ -286,59 +298,120 @@ def _rmtree_robust(path, attempts=3, delay=0.5) -> bool:
     return not path.exists()
 
 
-def verify_version_dir(version_dir, remote_files=None) -> bool:
-    """그 버전 폴더가 **온전히 설치된 것**인가 (그렇다면 다시 만들 필요가 없다).
+def _read_install_state(path):
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
-    매니페스트 + 파일 존재·크기 대조까지만 한다. 전 파일 sha256 은 752MB 를 다시
-    읽는 일이라 기동을 수십 초 붙잡는다 — 앱 본체 하나만 실측 검증한다.
-    remote_files 가 있으면 "그 버전이 맞는지"까지 본다(없으면 로컬 캐시만 신뢰).
-    """
+
+def _release_key(version, release_id=None):
+    return str(release_id or f"version:{version}")
+
+
+def version_ready(version_dir, version=None, release_id=None) -> bool:
+    """직접 설치 폴더의 작업이 끝났는가. 마커가 없는 구 릴리스는 호환상 True."""
+    version_dir = Path(version_dir)
+    installing_path = version_dir / INSTALLING_FILENAME
+    if not installing_path.exists():
+        return True
+    installing = _read_install_state(installing_path)
+    ready = _read_install_state(version_dir / READY_FILENAME)
+    if not installing or not ready:
+        return False
+    expected_version = str(version or version_dir.name)
+    expected_release = str(release_id) if release_id else None
+    return (installing.get("install_id")
+            and installing.get("install_id") == ready.get("install_id")
+            and str(installing.get("version")) == expected_version
+            and str(ready.get("version")) == expected_version
+            and str(installing.get("release")) == str(ready.get("release"))
+            and (expected_release is None
+                 or str(installing.get("release")) == expected_release))
+
+
+def _write_install_state(path, payload, message):
+    path = Path(path)
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        raise _local_error(message, path, exc) from exc
+
+
+def _begin_direct_install(final, version, release_id=None):
+    final = Path(final)
+    try:
+        final.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _local_error("새 버전 폴더를 만들 수 없습니다", final, exc) from exc
+    state = {"schema": 1, "install_id": uuid.uuid4().hex,
+             "version": str(version), "release": _release_key(version, release_id)}
+    _write_install_state(final / INSTALLING_FILENAME, state,
+                         "설치 상태 파일을 쓸 수 없습니다")
+    return state
+
+
+def _manifest_key(files):
+    return sorted((f.get("p"), f.get("h")) for f in files)
+
+
+def _payload_valid(version_dir, remote_files=None, full_hashes=False) -> bool:
     version_dir = Path(version_dir)
     if not (version_dir / APP_EXE_NAME).is_file():
         return False
     local_files = read_file_manifest(version_dir)
     if not local_files:
         return False
-    if remote_files is not None:
-        def _key(files):
-            return sorted((f.get("p"), f.get("h")) for f in files)
-        if _key(local_files) != _key(remote_files):
-            return False
-    app_hash = None
+    if remote_files is not None and _manifest_key(local_files) != _manifest_key(remote_files):
+        return False
     for entry in local_files:
-        rel, size = entry.get("p"), entry.get("s")
+        rel, size, expected_hash = entry.get("p"), entry.get("s"), entry.get("h")
         if not rel:
             return False
-        target = version_dir / rel
         try:
+            target = _safe_target(version_dir, rel)
             if size is not None and target.stat().st_size != int(size):
                 return False
-        except OSError:
-            return False
-        if rel.lower() == APP_EXE_NAME.lower():
-            app_hash = entry.get("h")
-    if app_hash:
-        try:
-            if sha256_file(version_dir / APP_EXE_NAME) != app_hash:
-                return False
-        except OSError:
+            if expected_hash and (full_hashes or rel.lower() == APP_EXE_NAME.lower()):
+                if sha256_file(target) != expected_hash:
+                    return False
+        except (OSError, ValueError):
             return False
     return True
 
 
-def prepare_target(root, version, remote_files=None) -> str:
-    """설치 **전에** versions\\<version> 자리를 비운다. 반환 'adopted'|'cleared'|'absent'.
+def verify_version_dir(version_dir, remote_files=None, version=None,
+                       release_id=None, full_hashes=False) -> bool:
+    """실행 가능한 완료 폴더인가. 설치 완료 시에는 전 파일 해시까지 확인한다."""
+    version_dir = Path(version_dir)
+    return (version_ready(version_dir, version, release_id)
+            and _payload_valid(version_dir, remote_files, full_hashes))
 
-    이 함수가 이 모듈의 핵심 안전장치다. 예전에는 install 함수들이 마지막 순간에
-    `shutil.rmtree(final)` 을 했는데, 그 한 줄이 세 가지를 한꺼번에 망쳤다:
-      1) 잠긴 파일 하나에 WinError 5 → 331MB 를 다 받은 **뒤에** 실패
-      2) 부분 삭제로 폴더가 반쯤 파괴돼 다음 실행도 같은 자리에서 실패
-      3) 델타·전체 zip 이 같은 코드라 실패가 두 번 반복 (현장 증상 그대로)
-    이제 위험한 조작을 전부 여기로 앞당기고, 삭제 대신 **옆으로 rename** 한다.
 
-    - 이미 완성된 폴더면 'adopted' — 아무것도 받지 않고 그대로 쓴다.
-    - 깨진 잔재는 versions\\<ver>.old-<pid>-<uuid> 로 치우고 best-effort 삭제.
-    - 치우기 자체가 막히면 LocalWriteError (다운로드는 시작조차 하지 않는다).
+def _finish_direct_install(final, state, remote_files=None):
+    final = Path(final)
+    files = remote_files or read_file_manifest(final)
+    if not files:
+        files = build_file_manifest(final)
+    if not files:
+        raise RuntimeError(f"설치 결과 파일 매니페스트가 비었습니다: {final}")
+    write_file_manifest(final, files)
+    if not _payload_valid(final, files, full_hashes=True):
+        raise RuntimeError(f"새 버전 전체 파일 검증에 실패했습니다: {final}")
+    ready = dict(state)
+    ready["verified_at"] = datetime.now().isoformat(timespec="seconds")
+    _write_install_state(final / READY_FILENAME, ready,
+                         "설치 완료 상태를 기록할 수 없습니다")
+    if not version_ready(final, state["version"], state["release"]):
+        raise RuntimeError(f"새 버전 완료 상태를 확인할 수 없습니다: {final}")
+    return final
+
+
+def prepare_target(root, version, remote_files=None, release_id=None) -> str:
+    """설치 전 대상 확인. 반환 'adopted'|'repair'|'absent'.
+
+    완성된 폴더는 채택하고, 불완전한 폴더는 삭제/rename 없이 같은 자리에서 복구한다.
     """
     root = Path(root)
     versions = root / VERSIONS_DIRNAME
@@ -364,45 +437,11 @@ def prepare_target(root, version, remote_files=None) -> str:
     if not final.exists():
         return "absent"
 
-    if verify_version_dir(final, remote_files):
+    if verify_version_dir(final, remote_files, version, release_id):
         ulog(f"PREPARE adopt {final} (완성된 폴더 — 재설치하지 않는다)")
         return "adopted"
-
-    aside = versions / f"{version}.old-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-    try:
-        final.rename(aside)
-    except OSError as exc:
-        raise _local_error("기존 버전 폴더를 치울 수 없습니다", final, exc) from exc
-    ulog(f"PREPARE cleared {final} -> {aside.name}")
-    if not _rmtree_robust(aside):
-        ulog(f"PREPARE 잔재 삭제 보류 {aside.name} (다음 정리에서 수거)")
-    return "cleared"
-
-
-def _promote(tmp, final, remote_files=None):
-    """조립이 끝난 tmp 를 final 로 승격. 실패는 LocalWriteError 로 통일한다.
-
-    prepare_target 이 자리를 비워 뒀다는 전제지만, 그 사이에 다른 프로세스가 같은
-    버전을 설치했을 수 있다 — 그게 온전하면 우리 tmp 를 버리고 그 결과를 쓰고,
-    깨진 것이면 여기서 다시 치운다(마지막 순간의 rmtree 대신 rename-aside).
-    """
-    if final.exists():
-        if verify_version_dir(final, remote_files):
-            ulog(f"PROMOTE 이미 설치됨 — tmp 폐기 {tmp.name}")
-            _rmtree_robust(tmp)
-            return final
-        aside = final.with_name(f"{final.name}.old-{os.getpid()}-{uuid.uuid4().hex[:8]}")
-        try:
-            final.rename(aside)
-        except OSError as exc:
-            raise _local_error("기존 버전 폴더를 치울 수 없습니다", final, exc) from exc
-        ulog(f"PROMOTE cleared {final.name} -> {aside.name}")
-        _rmtree_robust(aside)
-    try:
-        tmp.rename(final)
-    except OSError as exc:
-        raise _local_error("새 버전 폴더로 이름을 바꿀 수 없습니다", final, exc) from exc
-    return final
+    ulog(f"PREPARE repair {final} (불완전 폴더 — 제자리 복구)")
+    return "repair"
 
 
 # ── 설치 ────────────────────────────────────────────────────────────────────
@@ -426,32 +465,29 @@ def _guard_running_version(final, version):
         raise RuntimeError(f"실행 중인 버전({version})은 다시 설치할 수 없습니다")
 
 
-def install_version(root, version, zip_path, progress_cb=None):
+def install_version(root, version, zip_path, progress_cb=None,
+                    remote_files=None, release_id=None):
     """새 버전을 versions\\<version> 에 설치하고 그 경로를 반환.
 
-    tmp 폴더에 다 푼 뒤 rename 이라, 실패·취소하면 tmp 만 지우면 되고 완성된
-    버전 폴더가 반쯤 만들어진 채로 남지 않는다. 대상 자리를 비우는 일은
-    prepare_target() 이 **다운로드 전에** 끝냈다는 전제다.
+    최종 폴더에 직접 풀고 완료 마커는 전체 해시 검증 뒤에만 기록한다. 중간 실패 폴더는
+    실행되지 않으며 다음 시도에서 같은 자리에 다시 풀어 복구한다.
     """
     root = Path(root)
     versions = root / VERSIONS_DIRNAME
     versions.mkdir(parents=True, exist_ok=True)
     final = versions / version
-    tmp = versions / f"{version}.tmp-{os.getpid()}"
-
     _guard_running_version(final, version)
-
-    if tmp.exists():
-        _rmtree_robust(tmp)
-    ulog(f"INSTALL extract -> {tmp}")
+    state = _begin_direct_install(final, version, release_id)
+    ulog(f"INSTALL direct extract -> {final} install_id={state['install_id'][:8]}")
     try:
-        extract_payload(zip_path, tmp, progress_cb)
-        if not (tmp / APP_EXE_NAME).exists():
+        extract_payload(zip_path, final, progress_cb)
+        if not (final / APP_EXE_NAME).exists():
             raise RuntimeError(f"압축 해제 결과에 {APP_EXE_NAME} 이 없습니다")
-        final = _promote(tmp, final)
-    except BaseException:
-        _rmtree_robust(tmp)
+        final = _finish_direct_install(final, state, remote_files)
+    except (InstallCancelled, DownloadCancelled, LocalWriteError):
         raise
+    except OSError as exc:
+        raise _local_error("새 버전 파일을 쓸 수 없습니다", final, exc) from exc
     ulog(f"INSTALL done {final}")
     return final
 
@@ -499,6 +535,11 @@ def startup_cleanup(root, keep_versions=()):
             continue
         if entry.name in keep:
             continue
+        # 직접 설치가 중단된 폴더는 다음 업데이트에서 제자리 복구한다. 완료 마커가
+        # 일치하지 않는 동안에는 실행 후보가 아니므로 남겨 둬도 현재 앱에는 영향이 없다.
+        if (entry / INSTALLING_FILENAME).exists() and not version_ready(entry):
+            ulog(f"CLEANUP preserve repairable={entry.name}")
+            continue
         if _rmtree_robust(entry):
             removed.append(entry.name)
         else:
@@ -522,7 +563,7 @@ def sorted_versions(root):
     except OSError:
         return out
     for entry in entries:
-        if not (entry / APP_EXE_NAME).exists():
+        if not (entry / APP_EXE_NAME).exists() or not version_ready(entry):
             continue
         if not re.fullmatch(r"\d+(\.\d+)*", entry.name):
             continue
@@ -713,7 +754,8 @@ def build_file_manifest(app_dir):
     app_dir = Path(app_dir)
     files = []
     for path in sorted(app_dir.rglob("*")):
-        if not path.is_file() or path.name == MANIFEST_FILENAME:
+        if (not path.is_file()
+                or path.name in {MANIFEST_FILENAME, INSTALLING_FILENAME, READY_FILENAME}):
             continue
         files.append({"p": path.relative_to(app_dir).as_posix(),
                       "s": path.stat().st_size,
@@ -772,56 +814,62 @@ def plan_delta(remote_files, source_dir, local_files):
     return reuse, fetch
 
 
-def link_or_copy(src, dst):
-    """하드링크 우선(복사 0바이트), 안 되면 복사. 반환 'link' | 'copy'.
+def copy_reusable(src, dst):
+    """구버전 파일을 새 버전에 독립 복사한다.
 
-    볼륨이 다르거나 파일시스템이 지원하지 않으면 링크가 실패한다 — 그때는 복사로
-    떨어질 뿐 업데이트가 깨지지 않아야 한다. PyInstaller 산출물은 실행 중 수정되지
-    않으므로 이전 버전과 실체를 공유해도 안전하다.
+    직접 설치 폴더는 실패 뒤 같은 파일을 덮어써 복구한다. 하드링크를 쓰면 그 덮어쓰기가
+    정상 구버전까지 바꿀 수 있으므로 롤백 버전과 파일 실체를 절대 공유하지 않는다.
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    return "copy"
+
+
+def _entry_valid(path, entry) -> bool:
     try:
-        os.link(src, dst)
-        return "link"
-    except OSError:
-        shutil.copy2(src, dst)
-        return "copy"
+        path = Path(path)
+        if not path.is_file() or path.stat().st_size != int(entry.get("s") or 0):
+            return False
+        expected = entry.get("h")
+        return not expected or sha256_file(path) == expected
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def install_delta(root, version, base_url, remote_files, source_dir,
-                  local_files=None, progress_cb=None):
+                  local_files=None, progress_cb=None, release_id=None):
     """변경분만 받아 versions\\<version> 을 조립한다. 반환 (설치 경로, 통계).
 
-    전체 zip 방식과 마찬가지로 tmp 에 다 만든 뒤 rename 하므로, 중간에 실패하면
-    tmp 만 지우면 되고 기존 버전은 그대로다.
+    최종 폴더에 직접 조립한다. 완료 전에는 상태 마커가 일치하지 않아 실행되지 않고,
+    다음 시도는 이미 정상인 파일을 건너뛰고 나머지만 복구한다.
     """
     root = Path(root)
     versions = root / VERSIONS_DIRNAME
     versions.mkdir(parents=True, exist_ok=True)
     final = versions / version
-    tmp = versions / f"{version}.tmp-{os.getpid()}"
-
     _guard_running_version(final, version)   # 전체 zip 경로와 같은 가드 (2026-08-26 대칭화)
-
-    if tmp.exists():
-        _rmtree_robust(tmp)
-
     reuse, fetch = plan_delta(remote_files, source_dir, local_files)
     fetch_bytes = sum(int(e.get("s") or 0) for e in fetch)
     stats = {"reuse": len(reuse), "fetch": len(fetch), "bytes": fetch_bytes,
-             "linked": 0, "copied": 0}
+             "linked": 0, "copied": 0, "recovered": 0}
     ulog(f"DELTA plan reuse={len(reuse)} fetch={len(fetch)} "
          f"bytes={fetch_bytes / 1024 / 1024:.1f}MB")
+    state = _begin_direct_install(final, version, release_id)
     try:
-        try:
-            tmp.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise _local_error("조립용 임시 폴더를 만들 수 없습니다", tmp, exc) from exc
         for entry, src_rel in reuse:
-            how = link_or_copy(Path(source_dir) / src_rel, _safe_target(tmp, entry["p"]))
-            stats["linked" if how == "link" else "copied"] += 1
+            target = _safe_target(final, entry["p"])
+            if _entry_valid(target, entry):
+                stats["recovered"] += 1
+                continue
+            copy_reusable(Path(source_dir) / src_rel, target)
+            stats["copied"] += 1
         done = 0
         for entry in fetch:
+            target = _safe_target(final, entry["p"])
+            if _entry_valid(target, entry):
+                stats["recovered"] += 1
+                done += int(entry.get("s") or 0)
+                continue
             url = (f"{base_url.rstrip('/')}/honey/file/{urllib.parse.quote(str(version))}"
                    f"?path={urllib.parse.quote(entry['p'])}")
 
@@ -830,17 +878,18 @@ def install_delta(root, version, base_url, remote_files, source_dir,
                     return None
                 return progress_cb(_base + chunk_done, fetch_bytes)
 
-            download(url, _safe_target(tmp, entry["p"]), entry.get("h"), _cb)
+            download(url, target, entry.get("h"), _cb)
             done += int(entry.get("s") or 0)
-        if not (tmp / APP_EXE_NAME).exists():
+        if not (final / APP_EXE_NAME).exists():
             raise RuntimeError(f"조립 결과에 {APP_EXE_NAME} 이 없습니다")
-        write_file_manifest(tmp, remote_files)
-        final = _promote(tmp, final, remote_files)
-    except BaseException:
-        _rmtree_robust(tmp)
+        write_file_manifest(final, remote_files)
+        final = _finish_direct_install(final, state, remote_files)
+    except (DownloadCancelled, InstallCancelled, LocalWriteError):
         raise
+    except OSError as exc:
+        raise _local_error("새 버전 파일을 쓸 수 없습니다", final, exc) from exc
     ulog(f"DELTA done {final} linked={stats['linked']} copied={stats['copied']} "
-         f"fetched={stats['fetch']}")
+         f"fetched={stats['fetch']} recovered={stats['recovered']}")
     return final, stats
 
 
@@ -922,7 +971,7 @@ ERROR_ALREADY_EXISTS = 183
 def acquire_update_mutex(root):
     """설치 루트별 mutex. 이미 다른 프로세스가 쥐고 있으면 None.
 
-    같은 폴더를 두 프로세스가 동시에 업데이트하면 서로의 tmp/rename 을 밟는다.
+    같은 폴더를 두 프로세스가 동시에 업데이트하면 서로의 파일 쓰기와 상태 마커를 밟는다.
     반환된 핸들은 프로세스가 살아 있는 동안 들고 있어야 한다(GC 되면 풀린다).
     """
     try:
@@ -1038,10 +1087,11 @@ def normalize_acl(root) -> bool:
             stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         ok = completed.returncode == 0
-        ulog(f"ACL normalize rc={completed.returncode} {str(completed.stdout)[-200:]}")
+        output = f"{completed.stdout or ''} {completed.stderr or ''}".strip()
+        ulog(f"ACL normalize rc={completed.returncode} {output[-400:]}")
         return ok
-    except Exception as exc:   # noqa: BLE001 - ACL 실패가 업데이트를 막지는 않는다
-        ulog(f"ACL normalize 실패(무시): {type(exc).__name__}: {exc}")
+    except Exception as exc:   # noqa: BLE001 - 호출부가 실제 쓰기로 한 번 더 판정한다
+        ulog(f"ACL normalize 실패: {type(exc).__name__}: {exc}")
         return False
 
 

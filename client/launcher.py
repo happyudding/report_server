@@ -1,9 +1,9 @@
 """Honey 런처 — **업데이트를 먼저 끝내고** versions\\<ver>\\HoneyApp.exe 를 실행한다.
 
 설치 루트(런처가 있는 폴더) 구조는 transport/app_update.py 주석 참조.
-런처는 **자동 업데이트가 실행 중인 파일을 건드리지 않게** 하기 위한 고정점이다.
-업데이트는 versions\\ 아래 새 폴더를 만들고 current.txt 만 바꾸므로, 런처 자신은
-거의 바뀌지 않는다.
+런처는 버전 전환과 실패 롤백을 담당하는 고정점이다. 실행 중인 Honey가 업데이트를
+막으면 사용자 동의를 받아 종료한 뒤 새 버전을 설치한다. 업데이트는 versions\\ 아래
+새 폴더를 직접 채우고 검증된 뒤 current.txt 만 바꾼다.
 
 의존성은 표준 라이브러리 + transport.app_update 뿐이다 (PyQt6 등을 import 하면
 런처가 수백 MB 가 된다). 진행창은 tkinter 로 그린다.
@@ -25,11 +25,14 @@
 --skip-update / 루트의 noupdate.txt 는 현장 비상 탈출구다.
 """
 import ctypes
+import json
 import os
 import re
 import subprocess
 import sys
+import time
 import webbrowser
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
@@ -48,7 +51,7 @@ ELEVATED_TIMEOUT_SEC = 900   # 승격 업데이트가 이 시간 안에 안 끝�
 # 런처 빌드 식별자 — .update_fail 기록에 함께 남는다. **런처를 고쳐 배포하면 이 값을
 # 올려라**: 과거의 "3회 실패로 포기" 기록이 자동으로 풀려, 그 버그로 멈춰 있던 PC 가
 # 새 런처를 받는 즉시 다시 시도한다 (transport/app_update.read_fail_count).
-LAUNCHER_BUILD = "2026.08.26"
+LAUNCHER_BUILD = "2026.08.26-direct-install"
 
 # ── 브랜드 색 (꿀단지 = 노란 계열) ───────────────────────────────────────────
 # 런처는 리소스 파일을 들고 다니지 않는다(onefile 이라 풀어 쓰는 비용이 있고, 아이콘
@@ -91,13 +94,159 @@ def log(root: Path, message: str) -> None:
 def wait_for_pid(pid: int, timeout_sec: float) -> None:
     """해당 PID 가 끝날 때까지 대기. 이미 없으면 즉시 반환 (best-effort)."""
     SYNCHRONIZE = 0x00100000
-    handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
     if not handle:
         return
     try:
-        ctypes.windll.kernel32.WaitForSingleObject(handle, int(timeout_sec * 1000))
+        kernel32.WaitForSingleObject(handle, int(timeout_sec * 1000))
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(handle)
+
+
+class _ProcessEntry32W(ctypes.Structure):
+    _fields_ = [("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260)]
+
+
+def _process_image_path(pid):
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(32768)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return buf.value
+        return ""
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def running_honey_processes(root):
+    """이 설치 루트에서 실행 중인 Honey/Qt 보조 프로세스 목록."""
+    if os.name != "nt":
+        return []
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32W)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_ProcessEntry32W)]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)  # TH32CS_SNAPPROCESS
+    if snapshot == wintypes.HANDLE(-1).value:
+        return []
+    root_text = os.path.normcase(str(Path(root).resolve())).rstrip("\\") + "\\"
+    wanted = {"honey.exe", "honeyapp.exe", "qtwebengineprocess.exe"}
+    found = []
+    try:
+        entry = _ProcessEntry32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            pid = int(entry.th32ProcessID)
+            name = str(entry.szExeFile)
+            if pid != os.getpid() and name.lower() in wanted:
+                image_path = _process_image_path(pid)
+                normalized = os.path.normcase(image_path)
+                if normalized.startswith(root_text):
+                    found.append({"pid": pid, "name": name, "path": image_path})
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return found
+
+
+def _post_close_to_processes(pids):
+    if not pids:
+        return
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    @callback_type
+    def callback(hwnd, _lparam):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if int(pid.value) in pids:
+            user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+        return True
+
+    user32.EnumWindows(callback, 0)
+
+
+def _terminate_process(pid):
+    PROCESS_TERMINATE = 0x0001
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, int(pid))
+    if not handle:
+        return False
+    try:
+        return bool(kernel32.TerminateProcess(handle, 1))
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def ask_and_close_running_honey(root, processes, logf, show_ui=True):
+    """업데이트 전 실행 중 Honey를 사용자 동의 후 종료. 거부/실패면 False."""
+    if not processes:
+        return True
+    names = ", ".join(f"{p['name']}({p['pid']})" for p in processes[:8])
+    if not show_ui:
+        logf(f"update 보류: 실행 중 Honey {names}")
+        return False
+    text = ("업데이트를 위해 실행 중인 Honey를 종료해야 합니다.\n\n"
+            f"{names}\n\n"
+            "저장하지 않은 작업은 사라질 수 있습니다.\n"
+            "종료하고 업데이트하시겠습니까?")
+    answer = ctypes.windll.user32.MessageBoxW(None, text, "Honey 업데이트", 0x34)
+    if answer != 6:  # IDYES
+        logf("사용자가 실행 중 Honey 종료를 선택하지 않았다")
+        return False
+
+    pids = {p["pid"] for p in processes}
+    _post_close_to_processes(pids)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        remaining = {p["pid"] for p in running_honey_processes(root)} & pids
+        if not remaining:
+            logf("실행 중 Honey 정상 종료 완료")
+            return True
+        time.sleep(0.25)
+
+    remaining = {p["pid"] for p in running_honey_processes(root)} & pids
+    for pid in remaining:
+        if _terminate_process(pid):
+            logf(f"실행 중 Honey 강제 종료 pid={pid}")
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        remaining = {p["pid"] for p in running_honey_processes(root)} & pids
+        if not remaining:
+            return True
+        time.sleep(0.25)
+    logf(f"실행 중 Honey 종료 실패 pids={sorted(remaining)}")
+    message_box("실행 중인 Honey를 종료하지 못했습니다.\n\n"
+                "작업 관리자에서 HoneyApp.exe와 QtWebEngineProcess.exe를 종료한 뒤\n"
+                "다시 실행해 주세요.", show_ui)
+    return False
 
 
 def read_current(root: Path):
@@ -117,7 +266,17 @@ def write_current(root: Path, current: str, previous=None) -> None:
     body = current if not previous else f"{current}\n{previous}"
     tmp = root / f".{CURRENT_FILENAME}.tmp-{os.getpid()}"
     tmp.write_text(body + "\n", encoding="utf-8")
-    os.replace(tmp, root / CURRENT_FILENAME)
+    target = root / CURRENT_FILENAME
+    last = None
+    for attempt in range(5):
+        try:
+            os.replace(tmp, target)
+            return
+        except OSError as exc:
+            last = exc
+            if attempt < 4:
+                time.sleep(0.5)
+    raise last
 
 
 def runnable(version_dir: Path) -> bool:
@@ -128,7 +287,21 @@ def runnable(version_dir: Path) -> bool:
     기동을 지연시키지 않는다. 정밀 검증은 하지 않는다: 최종 방어선은 기존의 15초
     crash 감시 + 자동 롤백이다.
     """
-    return (version_dir / APP_EXE_NAME).exists() and (version_dir / "_internal").is_dir()
+    installing_path = version_dir / ".installing"
+    ready = True
+    if installing_path.exists():
+        try:
+            installing = json.loads(installing_path.read_text(encoding="utf-8-sig"))
+            completed = json.loads((version_dir / ".ready").read_text(encoding="utf-8-sig"))
+            ready = (installing.get("install_id")
+                     and installing.get("install_id") == completed.get("install_id")
+                     and str(installing.get("version")) == version_dir.name
+                     and str(completed.get("version")) == version_dir.name
+                     and str(installing.get("release")) == str(completed.get("release")))
+        except (OSError, ValueError, AttributeError):
+            ready = False
+    return (ready and (version_dir / APP_EXE_NAME).exists()
+            and (version_dir / "_internal").is_dir())
 
 
 def installed_versions(root: Path):
@@ -533,8 +706,8 @@ def _apply_update(root, base_url, remote, manifest, current, progress, logf):
         except Exception as exc:   # noqa: BLE001 - 델타는 최적화일 뿐, 없으면 전체 zip
             logf(f"file manifest unavailable ({type(exc).__name__}: {exc})")
 
-    # 여기서 나는 LocalWriteError 는 그대로 밖으로 나간다 (아무것도 받지 않은 상태).
-    state = app_update.prepare_target(root, remote, remote_files)
+    release_id = str(manifest.get("sha256") or remote)
+    state = app_update.prepare_target(root, remote, remote_files, release_id)
     logf(f"prepare target {remote}: {state}")
     if state == "adopted":
         return "adopt"
@@ -543,7 +716,8 @@ def _apply_update(root, base_url, remote, manifest, current, progress, logf):
         try:
             app_update.install_delta(
                 root, remote, base_url, remote_files, source_dir, local_files,
-                progress_cb=lambda d, t: progress(f"새 버전 {remote} 내려받는 중...", d, t))
+                progress_cb=lambda d, t: progress(f"새 버전 {remote} 내려받는 중...", d, t),
+                release_id=release_id)
             return "delta"
         except (app_update.DownloadCancelled, app_update.LocalWriteError):
             raise            # 취소는 사용자 의사, 권한 실패는 전체 zip 도 실패한다
@@ -564,7 +738,8 @@ def _apply_update(root, base_url, remote, manifest, current, progress, logf):
                             lambda d, t: progress(f"새 버전 {remote} 내려받는 중...", d, t))
         app_update.install_version(
             root, remote, dest,
-            lambda d, t: progress(f"새 버전 {remote} 설치 중...", d, t))
+            lambda d, t: progress(f"새 버전 {remote} 설치 중...", d, t),
+            remote_files=remote_files, release_id=release_id)
     finally:
         dest.unlink(missing_ok=True)   # 성공이든 실패든 받은 zip 은 남기지 않는다
     return "full"
@@ -718,7 +893,9 @@ def _elevated_update(root, target, logf, show_ui=True) -> int:
     # ACL 정상화를 **설치보다 먼저** 한다. 나중에 하면 이 프로세스가 만든 새 폴더가
     # 관리자 소유로 남아 다음 업데이트가 또 막힌다. 이 한 번으로 이후에는 UAC 없이
     # 업데이트된다 — 그게 이 경로의 존재 이유다.
-    app_update.normalize_acl(root)
+    acl_ok = app_update.normalize_acl(root)
+    if not acl_ok:
+        logf("elevated: ACL 정상화가 완전히 끝나지 않음 — 실제 파일 쓰기로 재확인")
 
     try:
         manifest = app_update.fetch_manifest(base_url)
@@ -733,7 +910,9 @@ def _elevated_update(root, target, logf, show_ui=True) -> int:
     outcome = _update_with_ui(root, base_url, remote, manifest, current, logf)
     if not outcome["ok"]:
         app_update.write_elevated_result(
-            root, {"ok": False, "error": outcome["error"] or "cancelled",
+            root, {"ok": False,
+                   "error": (("ACL 정상화 실패; " if not acl_ok else "")
+                             + (outcome["error"] or "cancelled")),
                    "target": remote})
         return 1
 
@@ -762,12 +941,13 @@ def try_update(root, argv, show_ui=True):
     try:
         if app_update is None:
             return
+        running = running_honey_processes(root)
         if not show_ui or "--skip-update" in argv:
             logf("update skipped (--skip-update / --no-ui)")
-            return
+            return False if running else None
         if (root / NOUPDATE_FILENAME).exists():
             logf(f"update skipped ({NOUPDATE_FILENAME})")
-            return
+            return False if running else None
 
         current, _prev = read_current(root)
         base_url = app_update.read_server_url(root, current)
@@ -776,24 +956,29 @@ def try_update(root, argv, show_ui=True):
             manifest = app_update.fetch_manifest(base_url)
         except Exception as exc:   # noqa: BLE001 - 오프라인은 흔한 정상 상황이다
             logf(f"version check skipped ({type(exc).__name__}: {exc})")
-            return
+            return False if running else None
 
         remote = str(manifest.get("version") or "")
         if not app_update.is_newer(remote, current):
             app_update.clear_fail_count(root)
-            return
+            return False if running else None
 
         fails = app_update.read_fail_count(root, remote, LAUNCHER_BUILD)
         if fails >= MAX_UPDATE_FAILS:
             logf(f"update skipped: {remote} 연속 {fails}회 실패 — 더 시도하지 않는다")
-            return
+            return False if running else None
+
+        if running and not ask_and_close_running_honey(root, running, logf, show_ui):
+            # 이미 떠 있는 Honey를 그대로 유지한다. 아래 앱 기동 단계로 내려가면 중복
+            # 실행이 되므로 main 에 "이번 런처는 여기서 끝내라"고 알린다.
+            return False
 
         # 같은 설치 폴더를 두 프로세스가 동시에 만지지 않게 한다 (사용자가 런처를
         # 두 번 눌렀거나, 승격 프로세스가 아직 돌고 있는 경우).
         mutex = app_update.acquire_update_mutex(root)
         if mutex is None:
             logf("update skipped: 다른 프로세스가 이미 업데이트 중이다")
-            return
+            return False
         try:
             logf(f"update {current} -> {remote} 시작")
             outcome = _update_with_ui(root, base_url, remote, manifest, current, logf)
@@ -816,11 +1001,12 @@ def try_update(root, argv, show_ui=True):
             context = {"target": remote, "attempt": count}
             if local_exc is not None:
                 context.update(local_exc.details())
-                # 관리자 권한으로도 못 푸는 것이 있다(실행 중인 파일 잠금, 백신 정책).
-                # 강제 종료하지 않고 **정확히 어디가 막혔는지** 알려 준다.
+                detail = str(local_exc)
+                if local_exc.winerror is not None:
+                    detail += f"\nWinError: {local_exc.winerror}"
                 message_box(
-                    f"업데이트에 실패했습니다.\n\n{local_exc.path}\n\n"
-                    "이 폴더를 쓰는 프로그램(Honey 중복 실행, 탐색기, 백신)을 닫은 뒤\n"
+                    f"업데이트에 실패했습니다.\n\n{detail}\n\n"
+                    "파일 쓰기 권한, 백신 차단 또는 실행 중인 프로세스를 확인한 뒤\n"
                     "Honey 를 다시 실행해 주세요.\n\n기존 버전으로 실행합니다.",
                     show_ui)
             app_update.report_failure(
@@ -832,6 +1018,7 @@ def try_update(root, argv, show_ui=True):
             logf(f"update aborted ({type(exc).__name__}: {exc})")
         except Exception:
             pass
+    return True
 
 
 def _try_elevated_update(root, base_url, remote, current, local_exc, logf, show_ui):
@@ -903,7 +1090,8 @@ def main(argv) -> int:
             wait_for_pid(pid, WAIT_PARENT_SEC)
     else:
         # --wait-pid 로 온 것은 방금 업데이트를 마치고 재실행된 경우다 (다시 확인할 필요 없다).
-        try_update(root, argv, show_ui)
+        if try_update(root, argv, show_ui) is False:
+            return 0
 
     order = candidates(root)
     if not order:
