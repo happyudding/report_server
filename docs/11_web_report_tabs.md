@@ -580,11 +580,20 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     **표시 규약** (2026-08-26 개정): 서버 반올림 자리수는 컬럼마다 다르다(min~max 6자리·
     average 4자리·cpk/cp 3자리·limit 6자리, stdev 만 **무반올림**). 그래서 `String(v)` 로
     그냥 찍으면 `2347582934789.234783` 같은 값 하나가 컬럼 폭을 통째로 밀어냈다 —
-    **통계 5컬럼(min/median/max/average/stdev)은 표시 길이를 8자(부호 제외)로 줄인다**
-    (core.js `fmtLen8`, CPK 탭·Compare `_cmpStdev`·Item_detail·Composite 공용).
-    규칙: 원문이 8자 이하면 손대지 않음 · **버림**(반올림 아님 — `9.9999999`→`9.999999`,
-    자리올림 금지) · 끝자리 0 제거 · 유효숫자 4자리 미만으로 뭉개지면 지수표기(`3.3423e-6`).
-    축약된 셀만 원값을 `title` 툴팁 + `.cpk-abbr` 점선 밑줄로 보여준다.
+    **통계값은 소수 최대 4자리 반올림 + 전체 8자(부호 제외) 이내로 줄인다**
+    (core.js `fmtLen8`). 적용 대상은 **CPK 탭 5컬럼**(min/median/max/average/stdev) ·
+    Compare `_cmpStdev` · Item_detail(σ·통계표) · Composite 통계표 ·
+    **Issue Table Compare 의 `before_*`/`after_*` 통계 컬럼**(sheets.js `CMP_STAT_COL_RE` —
+    그 표는 전용 렌더러 없이 `renderSheetTable(kind:"issue")` 를 일반 Issue Table 과
+    공유하므로 **컬럼명으로만** 대상을 가른다. 경계가 무너지면 일반 표까지 축약된다).
+    규칙: 원문이 8자 이하면 손대지 않음 · 소수 4자리 **반올림** · 정수부가 길면 소수를 더
+    줄임(`234626.2346234`→`234626.2`) · 끝자리 0 제거 · **자리올림이 나면 그 자리에서 버림**
+    (`999999.99`→`999999.9` — `1000000` 이 되면 앞자리가 통째로 바뀌어 다른 값처럼 보인다) ·
+    유효숫자 2자리 미만으로 뭉개지면 지수표기(`0.00034345`→`3.4345e-4`, 단 원래 짧은
+    `0.0003` 은 그대로).
+    축약된 셀만 원값을 `title` 툴팁으로 보여준다 — **점선 밑줄은 넣지 않는다**(통계 컬럼
+    대부분이 축약 대상이라 표 전체에 밑줄이 깔려 산만했다. `.cpk-abbr` 클래스는 축약 표식
+    으로 계속 붙되 스타일은 없다).
     `cpl`/`cpu`/`cp`/`cpk`·limit 은 서버가 이미 짧게 주므로 **원문 그대로**(`_cmpServer`).
     ⚠️ **표시 전용이다 — payload 값은 불변**이므로 CPK Limit 역산(`cpkComputeTargets`)·
     Item_detail 가우시안 곡선·Excel Download 는 계속 원값을 쓴다.
@@ -599,7 +608,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   **출처가 둘로 갈린다**:
   | 카테고리 | 출처 | 코멘트 채널 |
   |---|---|---|
-  | Distribution | 시트 `sheets["Issue Table Compare"]` — `dist_shift` 의 **focus 행 전부** + `new_items`(구분="신규") | `issue_comment` (`CMPDIST\|<item>`) |
+  | Distribution | 시트 `sheets["Issue Table Compare"]` — `dist_shift` 의 **focus 행 전부** + `new_items`(payload 의 `구분`="신규", 화면에는 2026-08-26 부터 미표시) | `issue_comment` (`CMPDIST\|<item>`) |
   | ETC | 같은 시트 — ENGR 수동 추가(`edits.KIND_CMP_ETC_ITEM`) | `issue_comment` (`CMPETC\|<item>`) |
   | Bin Transition | `compare.bin_matrix` 를 프런트가 **별도 표**로 | `compare_note` (`bm:<x>,<y>`) |
   | Log | `compare.goodlog` 중 **추가/삭제/Limit 변경 행만** | `compare_note` (`gl:…`) |
@@ -625,6 +634,21 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - **패널 일반화 재사용**: `core.js` 의 `ISSUE_PANEL_SEL` 에 `#panel-issue-cmp` 를 넣는
     것만으로 편집·검색·Status 필터·미니셀·삭제 모드가 전부 함께 돈다(Temperature 개편이
     터놓은 길). 새 Issue 계열 표를 또 만들 일이 있으면 이 상수부터 보라.
+  - **화면 정리 4종 (2026-08-26 사용자 요청 — 전부 프런트 전용, payload·스키마 무변경)**:
+    | 무엇 | 어디 |
+    |---|---|
+    | 통계 9컬럼(before/after avg·stdev·cpk + 비교지표 3) 접기 | 툴바 버튼 `data-issue-act="cmp-stats"`(`yield_issue.issueToolbarHtml`) → `applyCmpStatsFold` → 패널 클래스 `.cmp-stats-folded` + 셀 클래스 `.cmp-stat-col`(`sheets.js CMP_FOLD_COL_RE` 가 col/th/td 에 부여). 상태는 `issueUi(panel).statsFold` — **휘발**(새로고침하면 펼침) |
+    | 헤더 표기 축약 | `sheets.js COLUMN_DISPLAY_ALIAS` — `meanshift_sigma→meanshift_σ` / `stdev_delta_pct→△σ%` / `cpk_ratio_pct→cpk%`. **표시 전용**(저장 키·payload 키는 원문 그대로) |
+    | `구분`(산포/신규) 컬럼 숨김 | `sheets.js orderColumns` 가 Category 와 같은 방식으로 화면 컬럼에서 제외. 서버는 계속 값을 싣는다(`compare_issue._base_row`) — **payload 무변경이라 캐시 세대를 올리지 않는다** |
+    | 산포 미니셀 | `sheets.js` Distribution 셀 화이트리스트에 `CMPDIST`/`CMPETC` 추가 → 일반 Issue Table 과 **같은** 지연 렌더 경로(`renderIssueMiniDist` → `distribution_batch`). variant 를 안 붙여 전체 범위 ECDF 라 Before/After 곡선이 한 셀에 겹쳐 그려진다 |
+  - ⚠ **하단 2표가 "잘려서 안 보이던" 이유** (2026-08-26 수정): `.sheet-wrap.kind-issue` 는
+    `position:sticky` + 뷰포트 `max-height` 라 표가 화면에 눌러앉는다. 뒤 형제가 없는
+    메인/Temp 패널은 문제가 없지만 이 패널만 `.cmpiss-extra` 가 그 뒤라 영영 가려졌다.
+    → `#panel-issue-cmp .sheet-wrap.kind-issue { position: static }` 한 줄로 푼다(래퍼 추가
+    금지 규칙을 지키면서). 내부 스크롤·섹션 헤더 sticky 는 그대로다(헤더 고정 기준은
+    position 이 아니라 overflow 컨테이너). 같은 스코프로 공용 규칙의 5·6번째 컬럼
+    좌측고정·`min-width:144px`(원래 Map/Distribution 용)도 무효화한다 — 이 표엔 Map 이 없어
+    그 자리가 통계 컬럼이다.
   - **ETC scope 분리**: ETC 항목 목록은 `etc_item`(메인) ↔ `cmp_etc_item`(Compare) 으로
     kind 자체가 갈린다. 라우트는 하나이고 body 의 `scope`("main"|"compare")로 고른다
     (`POST .../web_report/issue_table/etc`). 프런트는 모달 dataset 에 scope 를 실어
@@ -716,15 +740,25 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       무의미해진다. `dcOrderedPick(order, sel)` 이 표시 순서만 목록을 따르고 목록 밖은 뒤에
       붙여 보존한다(모달의 `dcRenderPicked` 가 이미 쓰던 규칙과 통일).
   - **Gap Chart (사용자 수식 파생 분포 — 2026-08-24)**: 같은 "분석하기 ▾" 메뉴의 두 번째
-    항목. 모달(좌우 2단 — 왼쪽 항목 목록 / 오른쪽 source 선택·수식)에서 `( ) + - * /` 로 식을
-    조립하면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면 **기존 Item_detail
-    화면이 그대로** 열린다. 프런트 [gap_chart.js](../server/report/static/webreport/gap_chart.js),
+    항목. 모달(좌우 2단 — 왼쪽 항목 목록 / 오른쪽 source 선택·수식, 차트 이름 **아래 줄**에
+    Limit)에서 식을 만들면 그 결과 분포가 갤러리 맨 앞 카드로 추가되고, 카드를 누르면
+    **기존 Item_detail 화면이 그대로** 열린다. 프런트
+    [gap_chart.js](../server/report/static/webreport/gap_chart.js),
     계산 [web_report/gap_chart.py](../web_report/gap_chart.py).
+    - **수식 입력은 평문 타이핑이다 (2026-08-26 개편 — Honey `honey_ui/formula_editor.py`
+      와 같은 방식)**: 숫자·`+ - * / ( )` 는 그대로 치고, 항목은 `@` 자동완성이 넣는
+      `@"항목명"` 인용 표기(이름 안 `"` 는 `""`), source 명시는 `@"source"!"항목명"`.
+      렉서는 `gcLex`(gap 문법 부분집합 — 함수·비교 없음) 이고 위쪽 해석 창(#gcExpr)은
+      읽기 전용 칩이다. **목록에 없는 이름은 경고만 하고 막지 않는다** — 전처리 제외로
+      목록에서 빠진 항목을 참조하는 기존 차트의 이름·Limit 수정을 막으면 안 된다(§5-12).
+      구 방식(빈 입력창에서 연산자 키 커밋 + 버튼)은 폐기됐다.
     - **수식은 평문이 아니라 토큰 배열이 정본**이다(`kind=gap_chart`, item_key=UUID 불변,
       value=`{name, sources, tokens, limit}`). item 이름에 공백·`( )`·`+ - * /` 가 전부
-      합법이라(honeyform 은 중복·메타충돌만 검사) 평문을 토큰으로 되돌리는 렉서가 원리적으로
-      존재할 수 없고, source 명·item 명 둘 다 `_` 를 포함할 수 있어 `source_item` 분해도
-      불가능하다. 토큰 배열은 `source` 가 별도 필드라 구분자 자체가 필요 없다.
+      합법이라(honeyform 은 중복·메타충돌만 검사) **인용 없는** 평문을 토큰으로 되돌리는
+      렉서는 원리적으로 존재할 수 없고, source 명·item 명 둘 다 `_` 를 포함할 수 있어
+      `source_item` 분해도 불가능하다 — `@"..."` 인용이 그 모호성을 없애는 장치다.
+      수정 모달은 tokens → `gcTokensToText` 로 원문을 복원한다(라운드트립 — 음수 num
+      토큰만 op(-)+num 으로 갈라지는데 서버 단항 문법상 등가).
       표시 문자열(`render_formula`/`gcFormulaText`)은 **절대 재파싱하지 않는다**.
     - 수식 모드는 **저장하지 않고 매번 유도**한다(규칙 13) — 항목만 참조면 `per_source`
       (선택한 각 source 안에서 계산, 시리즈 N개), 전부 source 명시면 `explicit`
@@ -740,7 +774,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       바로 아래에는 **어떤 수식이었는지**를 만들 때와 같은 서식(item 파란 기울임 / source
       빨간 기울임)으로 보여준다 — 그래서 응답에 `tokens` 를 함께 싣는다(평문 `formula` 는
       되돌려 읽을 수 없어 서식을 복원할 수 없다. 구 캐시 응답은 평문으로 폴백).
-      모달 폭은 Distribution composite 와 같은 `min(1600px, 96vw)` 이고, 셀렉터는
+      모달 폭은 `min(1240px, 94vw)`(2026-08-26 사용자 요청으로 1600px 에서 축소 —
+      해석 창 글씨 13px 축소와 세트)이고, 셀렉터는
       **`.modal-box.gc-modal-box`** 로 특이도를 올려야 한다 — 한 클래스로 쓰면 뒤쪽
       `.modal-box{width:360px}` 가 이겨 창이 좁아진다(dc 와 같은 함정을 실제로 밟았다).
       차트 주석 키는

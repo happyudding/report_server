@@ -700,7 +700,12 @@ function issueToolbarHtml(panelId) {
         `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-bin">Bin Transition</button>` +
         `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-log">Log</button>` +
         `<button type="button" class="btn-sm" data-issue-jump="CMPETC">ETC</button>` +
-      `</span>`
+      `</span>` +
+      // Before/After 통계 9컬럼(before_avg ~ cpk_ratio_pct)을 한꺼번에 접는다
+      // (2026-08-26 사용자 요청 — 가로폭이 너무 크다). 상태는 패널별 휘발(issueUi.statsFold).
+      `<button type="button" class="btn-sm" data-issue-act="cmp-stats" ` +
+      `title="Before/After 통계 컬럼(avg·stdev·cpk·비교지표) 접기/펼치기">` +
+      `${ui.statsFold ? "통계 펼치기" : "통계 접기"}</button>`
     : `<span class="issue-jump-group" title="섹션으로 이동">` +
         `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
         `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
@@ -818,6 +823,22 @@ function applyIssueDelMode(panel) {
   if (btn) btn.classList.toggle("active", on);
   syncIssueDelCount(panel);
   syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
+}
+// Compare 표의 Before/After 통계 9컬럼 접기 (2026-08-26 사용자 요청 — 가로폭 축소).
+// 실제 숨김은 CSS(#panel-issue-cmp.cmp-stats-folded .cmp-stat-col{display:none}) 가 하고
+// 여기선 패널 클래스와 버튼 라벨만 맞춘다. 컬럼이 사라지면 좌측 고정열 오프셋과 가로
+// 스크롤 폭이 달라지므로 행 토글과 같은 재실측(afterIssueRowsToggled)을 태운다.
+function applyCmpStatsFold(panel) {
+  panel = panel || activeIssuePanel();
+  if (!panel || panel.id !== ISSUE_PANEL_CMP) return;
+  const on = issueUi(panel).statsFold;
+  panel.classList.toggle("cmp-stats-folded", on);
+  const btn = panel.querySelector('[data-issue-act="cmp-stats"]');
+  if (btn) {
+    btn.textContent = on ? "통계 펼치기" : "통계 접기";
+    btn.classList.toggle("active", on);
+  }
+  afterIssueRowsToggled(panel);
 }
 // 체크 상태를 행 강조(tr.issue-row-sel)에 반영 — 체크박스가 작아 행 전체로 선택을 보인다.
 function markIssueRowSelected(chk) {
@@ -1073,6 +1094,7 @@ function renderIssueTableInto(panel, rows, opts) {
     renderIssueMiniMap(panel);
     bindIssueColResize(panel);
     applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
+    applyCmpStatsFold(panel);   // Compare 통계 접기 상태 유지 (Compare 패널만 동작)
     const ui = issueUi(panel);
     if (ui.search.trim()) applyIssueSearch(ui.search, panel);   // 검색어 유지
     if (ui.hideClose || ui.hideOpen) applyIssueStatusFilter(panel);   // Status 필터 유지

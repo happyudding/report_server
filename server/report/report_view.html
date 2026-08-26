@@ -502,21 +502,31 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
 .sheet-table.kind-issue td[data-col="tno" i],
-.sheet-table.kind-issue td[data-col="item" i] { font-size: 17px; }
+.sheet-table.kind-issue td[data-col="item" i],
+.sheet-table.kind-issue td[data-fcol="step" i],
+.sheet-table.kind-issue td[data-fcol="bin" i],
+.sheet-table.kind-issue td[data-fcol="tno" i],
+.sheet-table.kind-issue td[data-fcol="item" i] { font-size: 17px; }
 /* Yield/CPK 값 셀(avg · {src}_yield): 종전 16px 이 작다는 사용자 요청으로 +5px(21px)
    — 2026-08-14. 식별 셀(17px)은 그대로라 값이 식별 셀보다 커진다(값 가독성 우선). */
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 21px; }
+.sheet-table.kind-issue td[data-col$="_yield" i],
+.sheet-table.kind-issue td[data-fcol="avg" i],
+.sheet-table.kind-issue td[data-fcol$="_yield" i] { font-size: 21px; }
 /* CPK 값은 자리수가 들쭉날쭉해서(부호·정수부·소수부) 21px 그대로면 긴 값 하나가 그 source
    컬럼 전체 폭을 밀어낸다(사용자 요청 2026-08-14). 기준 5자 폭(≈5×21px)을 유지하도록
    글자 수가 늘수록 폰트를 단계적으로 줄인다(21×5/N, 12px 하한). 클래스는 sheets.js 가
    CPK 섹션 값 셀에만 붙인다 — Yield 섹션 값(≤6자)은 종전 21px 그대로다.
    [data-col] 을 함께 붙이는 이유: 위 21px 규칙과 특이도가 같아지면(0,3,1) 순서에만
    의존하게 되므로 한 단계 올려(0,4,1) 확실히 이기게 한다. */
-.sheet-table.kind-issue td[data-col].cpk-fit-6 { font-size: 17.5px; }
-.sheet-table.kind-issue td[data-col].cpk-fit-7 { font-size: 15px; }
-.sheet-table.kind-issue td[data-col].cpk-fit-8 { font-size: 13px; }
-.sheet-table.kind-issue td[data-col].cpk-fit-9 { font-size: 12px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-6,
+.sheet-table.kind-issue td[data-fcol].cpk-fit-6 { font-size: 17.5px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-7,
+.sheet-table.kind-issue td[data-fcol].cpk-fit-7 { font-size: 15px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-8,
+.sheet-table.kind-issue td[data-fcol].cpk-fit-8 { font-size: 13px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-9,
+.sheet-table.kind-issue td[data-fcol].cpk-fit-9 { font-size: 12px; }
 /* 지수 표기로 축약된 CPK 값(폰트 하한으로도 폭을 못 맞추는 극단값) — 원래 값 전체는 title
    툴팁에 있다. hover 로 확인 가능함을 점선 밑줄로 힌트(source 헤더와 같은 관례). */
 .sheet-table.kind-issue td.cpk-abbr {
@@ -528,7 +538,13 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue td[data-col="tno" i],
 .sheet-table.kind-issue td[data-col="item" i],
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { text-align: center; }
+.sheet-table.kind-issue td[data-col$="_yield" i],
+.sheet-table.kind-issue td[data-fcol="step" i],
+.sheet-table.kind-issue td[data-fcol="bin" i],
+.sheet-table.kind-issue td[data-fcol="tno" i],
+.sheet-table.kind-issue td[data-fcol="item" i],
+.sheet-table.kind-issue td[data-fcol="avg" i],
+.sheet-table.kind-issue td[data-fcol$="_yield" i] { text-align: center; }
 
 /* ── CPK 표: Excel 식 freeze panes(헤더 상단 고정 + subject 좌측 / cpk 우측 고정) + 페이저 ── */
 .sheet-wrap.cpk-sheet {
@@ -553,12 +569,10 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.cpk-sheet.has-select thead th:nth-child(2) { z-index: 4; background: #e8eef4; }
 .sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #f7f9fb; }
 .sheet-table.cpk-sheet td.cpk-target { background: #e7f0ff; }
-/* 표시 길이 8자로 축약된 통계 값(min~stdev) — 원값은 title 툴팁에 있다(cpk.js fmtLen8).
-   hover 로 확인 가능함을 점선 밑줄로 힌트(Issue Table .cpk-abbr 과 같은 관례).
-   zebra/hover 는 background 만 지정하므로 여기엔 !important 가 필요 없다. */
-.sheet-table.cpk-sheet td.cpk-abbr {
-  cursor: help; text-decoration: underline dotted; text-underline-offset: 2px;
-}
+/* 축약된 통계 값(min~stdev)은 원값을 title 툴팁으로 보여준다(core.js fmtLen8).
+   ⚠ 점선 밑줄·cursor:help 힌트는 넣지 않는다 — 통계 컬럼 대부분이 축약 대상이라
+   표 전체에 밑줄이 깔려 오히려 산만했다(사용자 요청 2026-08-26). 툴팁만 남긴다.
+   `cpk-abbr` 클래스는 축약 여부 표식으로 계속 붙는다(테스트가 이 클래스를 본다). */
 .cpk-pager {
   display: flex; align-items: center; gap: 12px; margin: 4px 0 18px;
   font-size: 12px; color: #555;
@@ -669,12 +683,36 @@ tbody tr:hover { background: #f9fbff; }
 html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 /* Item 헤더 밑 Merge 안내 — Item 열은 .st-comment 처럼 폭이 고정돼 있지 않아서, 안내문이
    nowrap 이면 그 한 줄이 Item 열을 통째로 늘려 좌측 고정열 오프셋까지 밀어낸다.
-   폭을 못박고 줄바꿈시켜 열 폭을 종전(colWidth "item" 힌트) 그대로 둔다. */
-.sheet-table.kind-issue th .th-note-merge { max-width: 124px; }
+   상한을 124px 고정이 아니라 열 폭(100%)에 걸어 둔다 — 열이 좁으면 종전처럼 그 안에서
+   줄바꿈하고, 사용자가 컬럼을 넓히면 줄바꿈 없이 한 줄로 늘어난다(사용자 요청 2026-08-26).
+   %/auto 상한은 min-content 폭 계산에 기여하지 않으므로 안내문이 열을 넓히지는 않는다. */
+.sheet-table.kind-issue th .th-note-merge { max-width: 100%; }
 /* 다중 source Issue Table: 문제 있는 소스 셀(cpk<1.33 / Yield≠0) 연빨강 강조. */
 .sheet-table.kind-issue td.issue-cell-warn { background: #fde2e2 !important; }
 /* Yield/ETC fail yield 셀: 값이 클수록(--yw 1 에 가까움) 진한 빨강 그라데이션(표 내 최대 fail yield 기준). */
 .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 78%, calc(94% - var(--yw, 0) * 36%)) !important; }
+
+/* ── Issue Table Compare 전용 보정 (2026-08-26 사용자 요청) ────────────────────
+   이 패널만 이슈 표 **뒤에 형제 표 2개**(Bin Transition / Log)가 붙는다. 위의
+   .sheet-wrap.kind-issue 는 sticky + 뷰포트 max-height 라 표가 화면에 눌러앉아 그 뒤
+   형제가 영영 안 보인다("밑에 다 짤려서 나온다") → 이 패널만 sticky 를 푼다.
+   내부 스크롤(max-height)과 섹션 헤더 sticky 는 그대로 유지된다 — 헤더 고정 기준은
+   position 이 아니라 overflow(스크롤 컨테이너)라 영향받지 않는다. */
+#panel-issue-cmp .sheet-wrap.kind-issue { position: static; }
+/* 헤더 글씨 축소 — 통계 9컬럼의 헤더 라벨이 컬럼 폭을 결정하고 있었다(auto table-layout). */
+#panel-issue-cmp .sheet-table.kind-issue tr.issue-shead-top > th { font-size: 10px; padding: 4px 5px; }
+/* Before/After 통계 9컬럼 접기 (툴바 '통계 접기' → yield_issue.applyCmpStatsFold) */
+#panel-issue-cmp.cmp-stats-folded .sheet-table.kind-issue .cmp-stat-col { display: none; }
+#panel-issue-cmp.cmp-stats-folded .sheet-table.kind-issue col.cmp-stat-col { width: 0 !important; }
+/* Compare 표에는 Map 컬럼이 없어 5·6번째가 Map/Distribution 이 아니라 통계 컬럼이다 —
+   위쪽 공용 규칙의 좌측 고정(sticky)·최소폭 144px 를 이 패널에서만 무효화한다.
+   (안 풀면 통계 컬럼이 왼쪽에 고정된 채 144px 로 벌어져 가로폭이 더 커진다.) */
+#panel-issue-cmp .sheet-table.kind-issue tbody td:nth-child(5),
+#panel-issue-cmp .sheet-table.kind-issue tbody td:nth-child(6),
+#panel-issue-cmp .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5),
+#panel-issue-cmp .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) {
+  min-width: 0; position: static; left: auto;
+}
 
 /* ── Yield 시트: Bin 접기/펼치기 ── */
 .yield-toggle, .issue-toggle {
@@ -1083,13 +1121,15 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 /* ⚠ 셀렉터를 `.modal-box.dc-modal-box`(특이도 0,2,0)로 쓴다 — 이 블록이 스타일시트에서
    `.modal-box`(width:360px / overflow-y:auto) **앞에** 있어 같은 특이도면 그쪽이 이긴다.
    한 클래스로 쓰면 폭이 360px 로 되돌아간다(실측으로 확인). */
-.modal-box.dc-modal-box { width: min(1600px, 96vw); max-width: 96vw;
+/* 폭 1240px — 오른쪽 칼럼을 세로 1열 고정폭(360px)으로 좁히면서 전체 폭도 그만큼
+   줄였다(2026-08-26 요청, 종전 1600px). 왼쪽 검색 목록이 남는 폭을 전부 가진다. */
+.modal-box.dc-modal-box { width: min(1240px, 96vw); max-width: 96vw;
   height: min(880px, calc(var(--vph) * 0.9)); max-height: calc(var(--vph) * 0.9);
   display: flex; flex-direction: column; overflow: hidden; padding: 20px 24px; }
 .dc-modal-head { flex: 0 0 auto; }
 .dc-modal-head .modal-desc { margin-bottom: 8px; }
 .dc-modal-body { flex: 1 1 auto; min-height: 0; display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
+  grid-template-columns: minmax(0, 1fr) 360px; gap: 20px; }
 .dc-col { display: flex; flex-direction: column; min-height: 0; }
 .dc-modal-actions { flex: 0 0 auto; }
 .dc-field { display: block; font-size: 13px; color: #344054; }
@@ -1100,18 +1140,18 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .dc-col > .dc-sec-head:first-child { margin-top: 0; }
 .dc-sec-acts { display: inline-flex; gap: 6px; }
 .dc-sec-acts .btn-sm { margin-top: 0; padding: 2px 8px; }
-/* source 목록 — **12개까지는 스크롤 없이 한 번에** 보여야 한다(사용자 요청).
-   그러려면 행 높이가 결정론적이어야 하므로 한 줄 고정(ellipsis, 전체 이름은 title 툴팁)이다.
-   이름을 여러 줄로 접으면 source 수가 같아도 높이가 들쭉날쭉해 12개 보장이 깨진다.
-   max-height 는 **1열로 늘어선 최악**(12행)을 기준으로 잡은 상한이라, 폭이 넓어 2~3열이
-   되면 박스는 내용만큼만 차지한다. 12행 = 20px×12 + 행간 4px×11 + padding 16 + border 2. */
+/* source 목록 — **14개까지는 스크롤 없이 한 번에** 보여야 한다(2026-08-26 세로 확대,
+   종전 12개). 그러려면 행 높이가 결정론적이어야 하므로 한 줄 고정(ellipsis, 전체 이름은
+   title 툴팁)이다. 이름을 여러 줄로 접으면 source 수가 같아도 높이가 들쭉날쭉해진다.
+   max-height 는 **1열로 늘어선 최악**(14행)을 기준으로 잡은 상한이라, 폭이 넓어 2~3열이
+   되면 박스는 내용만큼만 차지한다. 14행 = 20px×14 + 행간 4px×13 + padding 16 + border 2. */
 /* min(220px, 100%) — 컨테이너가 220px 보다 좁으면 트랙이 컨테이너를 넘어 가로 스크롤바가
-   생기고, 그 두께(≈15px)만큼 세로가 줄어 12행 상한이 깨진다. */
+   생기고, 그 두께(≈15px)만큼 세로가 줄어 행 상한이 깨진다. */
 /* flex: 0 1 auto — 화면이 낮아 오른쪽 칼럼이 모자라면 **이 목록이 먼저 줄어든다**(자체
    스크롤이 있으므로). 그래야 아래의 선택목록·Limit 이 잘리지 않는다. */
-.dc-src-list { flex: 0 1 auto; min-height: 68px; display: grid;
+.dc-src-list { flex: 0 1 auto; min-height: 92px; display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 4px 12px;
-  max-height: 302px; overflow-y: auto; border: 1px solid #e5e7eb;
+  max-height: 350px; overflow-y: auto; border: 1px solid #e5e7eb;
   border-radius: 6px; padding: 8px 10px; align-content: start; }
 .dc-src-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #222;
   cursor: pointer; height: 20px; min-width: 0; }
@@ -1128,11 +1168,11 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .dc-item-list { flex: 1 1 auto; min-height: 120px; border: 1px solid #e5e7eb;
   border-radius: 0 0 6px 6px; overflow-y: auto; overflow-x: auto; }
 .dc-item-list .placeholder { padding: 12px; font-size: 12.5px; }
-/* 선택된 항목 — 칩을 가로로 흘리면 50개에서 세로로 폭발한다. 고정폭 그리드 + 자체
-   스크롤이라 몇 개를 고르든 높이가 그대로다. */
+/* 선택된 항목 — **세로 1열**로 쭉 내려간다(2026-08-26 요청, 종전 고정폭 다열 그리드).
+   자체 스크롤이라 몇 개를 고르든 모달 높이는 그대로다. */
 .dc-picked-list { flex: 1 1 auto; min-height: 120px; overflow-y: auto;
   border: 1px solid #e5e7eb; border-radius: 6px; padding: 6px 8px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  display: grid; grid-template-columns: 1fr;
   gap: 2px 8px; align-content: start; }
 .dc-picked-item { display: flex; align-items: center; gap: 4px; font-size: 12px;
   color: #222; min-width: 0; }
@@ -1141,22 +1181,25 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .dc-picked-list .placeholder { padding: 10px; font-size: 12.5px; grid-column: 1 / -1; }
 /* ── Gap Chart (수식 기반 파생 분포) ─────────────────────────────────────────
    모달은 좌우 2단이다 — 왼쪽에서 항목을 보면서 오른쪽에서 수식을 조립한다.
-   수식 렌더 영역(.gc-expr)은 **읽기 전용**이고 입력은 아래 <input> 하나다
-   (contenteditable 을 피한 이유는 gap_chart.js 머리 주석 참조). */
+   수식은 아래 <input> 에 **평문으로 타이핑**한다(항목은 @"항목명" 인용 — 입력 방식은
+   Honey 의 formula_editor 와 동일, gap_chart.js 머리 주석 참조). 위쪽 해석 창(.gc-expr)은
+   렉싱 결과를 보여 주는 읽기 전용이다. */
 .distg-gap { border-color: #6ee7b7; }
 .distg-gap-badge { flex: 0 0 auto; font-size: 12px; line-height: 1.2; }
 .gc-cell-empty { padding: 10px; font-size: 11.5px; text-align: center; }
 /* ⚠ 셀렉터를 `.modal-box.gc-modal-box`(특이도 0,2,0)로 쓴다 — 이 블록이 스타일시트에서
    `.modal-box`(width:360px / overflow-y:auto) **앞에** 있어 한 클래스로 쓰면 그쪽이 이겨
    폭이 360px 로 되돌아간다(dc-modal-box 와 같은 함정, 2026-08-24 실제로 밟았다).
-   규격은 Distribution composite 모달과 동일하게 맞춘다(사용자 요청). */
-.modal-box.gc-modal-box { width: min(1600px, 96vw); max-width: 96vw;
+   폭 1240px — composite 와 같이 좁혔다(2026-08-26 사용자 요청, 종전 1600px. 수식이
+   평문 타이핑으로 바뀌고 해석 창 글씨도 줄어 넓은 폭이 더는 필요 없다). */
+.modal-box.gc-modal-box { width: min(1240px, 94vw); max-width: 94vw;
   height: min(880px, calc(var(--vph) * 0.9)); max-height: calc(var(--vph) * 0.9);
   display: flex; flex-direction: column; overflow: hidden; padding: 20px 24px; }
-.gc-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+/* 이름 줄 아래에 Limit 줄 — 가로 병치가 아니라 세로 2줄 (2026-08-26 사용자 요청). */
+.gc-top { display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   margin: 4px 0 8px; }
 .gc-field { display: flex; align-items: center; gap: 6px; font-size: 12.5px;
-  color: #444; flex: 1 1 260px; }
+  color: #444; width: min(480px, 100%); }
 .gc-field .field-input { flex: 1; min-width: 0; }
 .gc-limit { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #444; }
 .gc-limit-num { width: 84px; }
@@ -1186,14 +1229,15 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
   background: transparent; cursor: pointer; }
 .gc-list-item:hover { background: #eef4fd; }
 .gc-list-more { padding: 4px 8px; font-size: 11px; color: #888; }
-/* 수식 칩 스트립 — 항목은 파란 기울임, source 는 빨간 기울임(사용자 요청 서식). */
-.gc-expr { min-height: 84px; border: 1px solid #cbd5e1; border-radius: 6px;
-  padding: 10px 12px; background: #f9fafb; font-size: 15px; line-height: 2;
-  overflow: auto; max-height: 180px; }
-.gc-expr-hint { color: #9aa1ab; font-size: 12.5px; font-style: italic; }
-.gc-tok { display: inline-block; padding: 1px 3px; border-radius: 4px; cursor: pointer;
+/* 수식 해석 창(읽기 전용) — 항목은 파란 기울임, source 는 빨간 기울임(사용자 요청 서식).
+   글씨는 13px 로 줄였다(2026-08-26 — 전체 가로폭 축소와 세트). */
+.gc-expr { min-height: 60px; border: 1px solid #cbd5e1; border-radius: 6px;
+  padding: 8px 10px; background: #f9fafb; font-size: 13px; line-height: 1.9;
+  overflow: auto; max-height: 160px; }
+.gc-expr-hint { color: #9aa1ab; font-size: 12px; font-style: italic; }
+.gc-expr-bad { color: #b42318; font-weight: 700; padding: 0 4px; }
+.gc-tok { display: inline-block; padding: 1px 3px; border-radius: 4px; cursor: default;
   white-space: nowrap; }
-.gc-tok:hover { background: #fee2e2; outline: 1px solid #fca5a5; }
 .gc-tok-item { color: #1D4ED8; font-style: italic; font-weight: 600; }
 .gc-tok-src { color: #DC2626; font-style: italic; font-weight: 600; }
 .gc-tok-us { color: #9aa1ab; font-style: normal; }
@@ -1201,10 +1245,10 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 .gc-tok-op { color: #6B7280; font-weight: 700; padding: 0 5px; }
 .gc-tok-paren { color: #374151; font-weight: 700; }
 .gc-input-row { display: flex; gap: 6px; margin-top: 6px; }
-.gc-token-input { flex: 1 1 auto; min-width: 0; }
+/* 인용(@"...") 표기가 눈에 잘 들어오게 수식 입력창만 고정폭 글꼴. */
+.gc-formula-input { flex: 1 1 auto; min-width: 0;
+  font: 13px Consolas, "Courier New", monospace; }
 .gc-src-qual { flex: 0 0 auto; max-width: 190px; }
-.gc-ops { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
-.gc-ops .btn-sm { min-width: 34px; font-weight: 700; }
 .gc-suggest { margin-top: 6px; flex: 1 1 auto; min-height: 0; max-height: 260px;
   overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
 .gc-suggest:empty { display: none; }
@@ -1218,11 +1262,13 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
   align-items: baseline; flex-wrap: wrap; }
 .gc-status-bad { color: #b42318; font-weight: 600; }
 .gc-status-ok { color: #15803d; font-weight: 600; }
+.gc-status-warn { color: #b45309; font-size: 11.5px; }
 .gc-status-formula { color: #666; font-size: 11.5px; }
 .gc-help { flex: 0 0 auto; font-size: 11.5px; color: #888; margin-top: 4px; line-height: 1.5; }
 /* Item_detail 상단의 수식 표시 — 만들 때와 **같은 서식**(item 파란 기울임 / source 빨간
    기울임)으로 보여 "이 차트가 무슨 식이었는지" 를 헤더에서 바로 읽게 한다.
-   여기의 칩은 클릭 삭제 대상이 아니므로 모달의 hover(빨강)를 끈다. */
+   (hover 무효화는 구 클릭-삭제 칩 시절의 방어 — 지금 칩은 어디서나 읽기 전용이라
+   중복이지만 해가 없어 남겨 둔다.) */
 .idet-formula { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   margin: 2px 0 6px; padding: 6px 10px; background: #f6f8fb;
   border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; }
@@ -2831,7 +2877,8 @@ html[data-theme="dark"] .gc-tok-item { color: #7fb3ef; }
 html[data-theme="dark"] .gc-tok-src { color: #f88b83; }
 html[data-theme="dark"] .gc-tok-num { color: #e6e9ee; }
 html[data-theme="dark"] .gc-tok-paren { color: #c6ccd6; }
-html[data-theme="dark"] .gc-tok:hover { background: #46232a; outline-color: #7f3a3a; }
+html[data-theme="dark"] .gc-expr-bad { color: #f88b83; }
+html[data-theme="dark"] .gc-status-warn { color: #e8b166; }
 html[data-theme="dark"] .gc-status-formula,
 html[data-theme="dark"] .gc-help,
 html[data-theme="dark"] .gc-list-more,
@@ -3268,7 +3315,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
       <div class="dc-col dc-col-cfg">
         <label class="dc-field">차트 이름
           <input type="text" id="dcName" class="field-input" maxlength="120" autocomplete="off"
-                 placeholder="예: P1 vs P2 VDD 비교">
+                 placeholder="첫 항목을 고르면 자동 생성됩니다">
         </label>
 
         <!-- Source 선택은 오른쪽 칼럼 — 왼쪽은 항목 검색 목록이 세로 공간을 전부 쓴다
@@ -3321,8 +3368,9 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   <div class="modal-box gc-modal-box">
     <p class="modal-title" id="gcModalTitle">Gap Chart 만들기</p>
     <p class="modal-desc">항목끼리 사칙연산한 결과의 분포를 새 차트로 만듭니다.
-      괄호 안이 먼저 계산됩니다.</p>
+      수식은 아래 입력창에 그대로 적고, 항목은 <b>@</b> 로 넣습니다.</p>
 
+    <!-- Limit 은 차트 이름 **아래** 줄 (2026-08-26 사용자 요청). -->
     <div class="gc-top">
       <label class="gc-field">차트 이름
         <input type="text" id="gcName" class="field-input" maxlength="120" autocomplete="off"
@@ -3354,31 +3402,23 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
           </span>
         </div>
         <div id="gcSourceList" class="gc-src-list"></div>
-        <div class="gc-sec-head"><span>수식</span></div>
+        <div class="gc-sec-head"><span>수식 (읽은 결과)</span></div>
         <div id="gcExpr" class="gc-expr"></div>
         <div class="gc-input-row">
-          <input type="text" id="gcTokenInput" class="field-input gc-token-input"
-                 autocomplete="off" placeholder="항목명 일부 또는 숫자를 입력 (Enter 로 확정)">
+          <input type="text" id="gcFormulaInput" class="field-input gc-formula-input"
+                 autocomplete="off" spellcheck="false"
+                 placeholder='수식을 그대로 적으세요 — 항목은 @ 로 넣습니다. 예: (@"VDD_A" - 2) / @"VDD_B"'>
           <select id="gcSrcQual" class="field-input gc-src-qual"></select>
-        </div>
-        <div class="gc-ops">
-          <button type="button" class="btn-sm" data-gc-op="+">+</button>
-          <button type="button" class="btn-sm" data-gc-op="-">−</button>
-          <button type="button" class="btn-sm" data-gc-op="*">×</button>
-          <button type="button" class="btn-sm" data-gc-op="/">÷</button>
-          <button type="button" class="btn-sm" data-gc-op="(">(</button>
-          <button type="button" class="btn-sm" data-gc-op=")">)</button>
-          <button type="button" class="btn-sm" data-gc-act="pop" title="마지막 토큰 지우기">⌫</button>
-          <button type="button" class="btn-sm" data-gc-act="clear" title="수식 비우기">전체 지우기</button>
         </div>
         <div id="gcSuggest" class="gc-suggest"></div>
         <div id="gcStatus" class="gc-status"></div>
         <div class="gc-help">
+          항목은 <b>@</b> 를 치면 뜨는 목록에서 고릅니다(<b>@"항목명"</b> 으로 들어갑니다).
+          숫자·연산자 <b>+ - * / ( )</b> 는 그대로 타이핑합니다. 괄호 안이 먼저 계산됩니다.<br>
           source 를 지정하지 않으면 고른 source <b>각각</b>에서 계산해 곡선이 여러 개 나옵니다.
-          오른쪽 드롭다운으로 source 를 지정하면 <b>좌표가 같은 die 끼리</b> 계산해 곡선 1개가
-          됩니다. 두 방식은 한 수식에 섞을 수 없습니다.<br>
-          입력창이 비어 있을 때 <b>+ − × ÷ ( )</b> 키를 누르면 연산자가 들어갑니다
-          (글자를 입력하는 중에는 항목명의 일부로 취급합니다). 칩을 클릭하면 그 토큰이 지워집니다.
+          오른쪽 드롭다운으로 source 를 고르고 항목을 넣으면 <b>@"source"!"항목명"</b>
+          (source 명시)이 되어 <b>좌표가 같은 die 끼리</b> 계산한 곡선 1개가 됩니다.
+          두 방식은 한 수식에 섞을 수 없습니다.
         </div>
       </div>
     </div>

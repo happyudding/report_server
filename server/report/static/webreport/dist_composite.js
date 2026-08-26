@@ -319,6 +319,23 @@ let _dcSelSources = new Set();
 let _dcSelItems = new Set();           // 갤러리 검색(distSelected)과 분리 — 오염 금지
 let _dcSearchTimer = null;
 let _dcListOpen = true;                // TestItem 목록 펼침 여부 (검색 입력 밖을 클릭하면 접힘)
+let _dcAutoName = null;                // 마지막으로 자동 생성한 이름 (사용자 직접 입력과 구분)
+
+// 차트 이름 자동 생성 — 첫 항목을 고르면 "<item>_composite" 를 채운다(2026-08-26 요청).
+// "첫 항목" 은 클릭(선택)한 순서의 첫 번째다(_dcSelItems 는 Set 이라 삽입 순서 보존).
+// 이름칸이 비어 있거나 값이 마지막 자동 생성값 그대로일 때만 갱신한다 — 사용자가 직접
+// 고친 이름은 절대 덮지 않고, 지워서 비우면 자동 생성이 다시 동작한다.
+function dcMaybeAutoName() {
+  const input = document.getElementById("dcName");
+  if (!input) return;
+  const cur = input.value.trim();
+  if (cur && cur !== _dcAutoName) return;
+  const first = _dcSelItems.size ? _dcSelItems.values().next().value : "";
+  const next = first ? (first + "_composite").slice(0, DC_NAME_MAX) : "";
+  if (cur === next) return;
+  input.value = next;
+  _dcAutoName = next || null;
+}
 
 function dcSourceNames() {
   return (((DATA && DATA.web_report && DATA.web_report.sources) || []).map(s => s.name || s))
@@ -340,6 +357,7 @@ function dcOpenModal(id) {
   }
   const title = document.getElementById("dcModalTitle");
   if (title) title.textContent = comp ? "Distribution composite 수정" : "Distribution composite 만들기";
+  _dcAutoName = null;                 // 기존 차트 수정 시 저장된 이름을 자동 생성이 덮지 않게
   const nameInput = document.getElementById("dcName");
   if (nameInput) nameInput.value = comp ? (comp.name || "") : "";
   const search = document.getElementById("dcItemSearch");
@@ -455,6 +473,7 @@ function dcRenderSummary() {
   const modal = document.getElementById("dcModal");
   const host = document.getElementById("dcSelSummary");
   const nSrc = _dcSelSources.size, nItem = _dcSelItems.size, n = nSrc * nItem;
+  dcMaybeAutoName();
   dcRenderPicked();
   dcRenderItemHead((document.getElementById("dcItemSearch") || {}).value || "");
   if (host) {
@@ -619,6 +638,8 @@ function dcOpenDetail(id) {
     if (cur) cur.classList.remove("active");
     dp.classList.add("active");
   }
+  if (_dcDetailId && _dcDetailId !== id) dcPurgeRaw();   // 다른 차트로 갈아탈 때 이전 원본 해제
+  _dcRawToasted = false;
   _dcDetailId = id;
   _dcLegendFocus = new Set();
   window.scrollTo(0, 0);
@@ -630,6 +651,7 @@ function dcCloseDetail() {
   const dp = document.getElementById("panel-dist-composite-detail");
   dcFlushNotes();
   dcPurgeDetailChart();
+  dcPurgeRaw();
   if (dp) { dp.classList.remove("active"); dp.innerHTML = ""; }
   const back = document.getElementById(_dcDetailReturnId || "panel-distribution");
   if (back) back.classList.add("active");
@@ -647,6 +669,7 @@ function hideDistCompositeDetail() {
     dcPurgeDetailChart();
     dp.innerHTML = "";
   }
+  dcPurgeRaw();
   _dcDetailId = null;
   _dcDetailReturnId = null;
 }
@@ -664,6 +687,49 @@ function dcFlushNotes() {
   if (typeof _cnDirty !== "undefined" && _cnDirty.size) {
     cnFlush().catch(e => showToast("차트 Comment 자동저장 실패: " + e.message));
   }
+}
+
+// ── 상세 원본(raw) 확보 — Item detail 과 같은 /scatter 응답(die 단위 전량) ────────
+// 압축 ECDF(distribution_batch — 고유 측정값 + 누적%)는 카드용이다. 상세를 그걸로 그리면
+// 중복 die 가 한 점으로 합쳐져 다운샘플된 것처럼 보인다(2026-08-26 신고). 상세 CDF 는
+// Item detail 과 동일하게 die 1개당 점 1개로 그린다(§5 — 상세는 원본 전량).
+// 원본 배열이 커서(die 수 × 항목 수) **상세가 열려 있는 동안만** 들고 있는다 —
+// 닫으면 dcPurgeRaw 로 해제하고, 재열람은 서버 ETag 재검증이라 부담이 작다.
+const _dcRaw = {};          // variantKey → { item: /scatter 응답 }
+const _dcRawInflight = {};  // variantKey → Set(item)
+const _dcRawFailed = {};    // dcFailKey(variant,item) → 사유 (재요청 루프 방지)
+let _dcRawToasted = false;  // 실패 토스트는 상세 열림당 1회(항목 수십 개 실패 시 스팸 방지)
+function dcRawStore(variant) {
+  const k = distVariantKey(variant);
+  return _dcRaw[k] || (_dcRaw[k] = {});
+}
+function dcEnsureRaw(items, variant) {
+  const key = distVariantKey(variant);
+  const store = dcRawStore(key);
+  const inflight = _dcRawInflight[key] || (_dcRawInflight[key] = new Set());
+  (items || []).forEach(it => {
+    if (store[it] || inflight.has(it) || _dcRawFailed[dcFailKey(key, it)] || !distHasData(it)) return;
+    inflight.add(it);
+    const url = `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(it)}`
+      + distVariantQuery(key).replace(/^&/, "?");
+    // 콜드 세션은 202 백오프 재시도(fetchJson202) — 상세를 닫으면 재시도를 멈춘다.
+    fetchJson202(url, { shouldStop: () => !_dcDetailId })
+      .then(data => { store[it] = data; dcRefresh(); })
+      .catch(e => {
+        _dcRawFailed[dcFailKey(key, it)] = e.message || "로드 실패";
+        // 상세를 닫아 중단된 요청("중단됨")은 실패가 아니다 — 토스트 없이 조용히 정리.
+        if (_dcDetailId && !_dcRawToasted) {
+          _dcRawToasted = true;
+          showToast("원본 데이터 로드 실패 — 압축 분포로 표시합니다");
+        }
+        dcRefresh();
+      })
+      .then(() => inflight.delete(it));
+  });
+}
+function dcPurgeRaw() {
+  Object.keys(_dcRaw).forEach(k => { delete _dcRaw[k]; });
+  Object.keys(_dcRawFailed).forEach(k => { delete _dcRawFailed[k]; });
 }
 
 function dcRenderDetail() {
@@ -689,7 +755,7 @@ function dcRenderDetail() {
     <div class="idet-body">
       <div class="idet-charts">
         <div class="idet-chart-block">
-          <div class="idet-chart-title">${esc(distSeqOnly ? "Serial 순 (측정 순서 · 합성)" : "누적분포 CDF (합성)")}</div>
+          <div class="idet-chart-title">${esc(distSeqOnly ? "Serial 순 (측정 순서 · 합성)" : "누적분포 CDF (합성)")}<span id="dcDetailLoadNote" class="dist-sug-more"></span></div>
           <div id="dcDetailChart" class="dist-chart"></div>
           <div class="idet-chart-comment" id="cdfCommentView"></div>
         </div>
@@ -764,6 +830,8 @@ function dcRenderDetailCharts() {
   // 같게 유지한다(한 차트에 SVG/WebGL 을 섞으면 SVG trace 가 gl 캔버스 아래로 가린다).
   // 선택 좌표 마커는 (값, 누적%) 좌표라 이 축에서는 제외한다.
   if (seqStore) {
+    const seqNote = document.getElementById("dcDetailLoadNote");
+    if (seqNote) seqNote.textContent = "";   // seq 는 원래 전량 렌더 — 원본 로드 문구 불필요
     const seqTraces = [];
     ordered.forEach(p => {
       const entry = (seqStore[p.item] || { bySource: {} }).bySource[p.source];
@@ -790,12 +858,37 @@ function dcRenderDetailCharts() {
     if (window.cnDetach) cnDetach(`cdf:${dcNoteSubject(_dcDetailId)}`);
     return;
   }
-  // ECDF **전량** (표시용 다운샘플 없음 — 상세는 원본 그대로, 규칙 §5).
+  // CDF **원본 전량** — Item detail 과 동일하게 /scatter 원본 값으로 die 1개당 점 1개를
+  // 그린다(§5, 다운샘플 없음). 압축 ECDF(고유값)는 원본이 아직 도착하지 않은 pair 의
+  // 임시 표시로만 쓰고, 도착하면 dcRefresh 가 다시 그린다.
+  const rawStore = dcRawStore(distGalleryVariant());
+  dcEnsureRaw(items, distGalleryVariant());
+  let rawWait = 0;
   const traces = [];
   ordered.forEach(p => {
+    const key = dcPairKey(p.source, p.item);
+    const raw = rawStore[p.item];
+    const rs = raw && (raw.sources || []).find(s => s.name === p.source);
+    if (rs && Array.isArray(rs.values) && rs.values.length) {
+      const c = distCdfFromValues(rs.values);
+      const hasId = Array.isArray(rs.serial) && rs.serial.length === rs.values.length;
+      const t = { type: useGl ? "scattergl" : "scatter", mode: "markers",
+        name: dcPairLabel(p.source, p.item), x: c.x, y: c.y,
+        marker: { color: dcActiveColor(comp, key), size: 5 } };
+      if (hasId) {
+        t.customdata = c.order.map(i => [rs.serial[i], rs.xpos[i], rs.ypos[i]]);
+        t.hovertemplate = "%{fullData.name}<br>측정값 %{x}<br>누적 %{y:.1f}%" +
+          "<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
+      } else {
+        t.hovertemplate = "%{fullData.name}<br>측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
+      }
+      if (!useGl) t.cliponaxis = false;
+      traces.push(t);
+      return;
+    }
+    if (!_dcRawFailed[dcFailKey(distGalleryVariant(), p.item)] && distHasData(p.item)) rawWait++;
     const entry = (store[p.item] || { bySource: {} }).bySource[p.source];
     if (!entry) return;
-    const key = dcPairKey(p.source, p.item);
     const t = { type: useGl ? "scattergl" : "scatter", mode: "markers",
       name: dcPairLabel(p.source, p.item), x: entry.xs, y: entry.ys,
       marker: { color: dcActiveColor(comp, key), size: 5 },
@@ -803,6 +896,8 @@ function dcRenderDetailCharts() {
     if (!useGl) t.cliponaxis = false;
     traces.push(t);
   });
+  const loadNote = document.getElementById("dcDetailLoadNote");
+  if (loadNote) loadNote.textContent = rawWait ? " (원본 데이터 로드 중…)" : "";
   // Map Analysis 선택 좌표 — 갤러리 카드와 같은 마커(상세는 canvas 가 없어 trace 만).
   // useGl 을 넘겨야 곡선과 같은 레이어에 올라간다(안 넘기면 gl 캔버스에 가려 안 보인다).
   const cm = chipMarkersForPairs(pairs, useGl);

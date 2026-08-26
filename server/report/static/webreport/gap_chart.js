@@ -8,15 +8,16 @@
 // (web_report/gap_chart.py). 정의는 세션 편집 DB kind=gap_chart 이고 payload 중립이라
 // 저장해도 report 캐시가 살아 있다.
 //
-// **수식 에디터는 contenteditable 이 아니다.** 위쪽 칩 렌더 영역은 읽기 전용이고 입력은
-// 평범한 <input> 하나다 → 한글 IME·캐럿 복원·붙여넣기 살균 문제가 구조적으로 없다.
-// input+오버레이 하이라이트 방식은 애초에 불가능하다: item 이름에 공백·괄호·연산자가
-// 전부 합법이라(honeyform 은 중복·메타충돌만 검사) 평문을 매 키입력마다 재렉싱할 수 없다.
-// 그래서 커밋 규칙을 모호성 0 으로 둔다 —
-//   · 입력창이 **비어 있을 때** `+ - * / ( )` 키  → 그 연산자 토큰
-//   · 입력창에 **글자가 있을 때** 같은 키        → 그냥 검색어 문자 (item 명의 `-` 보호)
-//   · 연산자·괄호는 버튼으로도 항상 커밋 가능(키 규칙을 몰라도 된다)
-// v1 은 끝에만 삽입한다(중간 편집은 칩을 지우고 다시 입력).
+// **수식은 평문으로 타이핑한다 (2026-08-26 개편 — Honey 클라의
+// honey_ui/formula_editor.py 와 같은 입력 방식).** 입력은 평범한 <input> 하나이고 그
+// 텍스트가 입력 정본이다. 위쪽 칩 영역은 렉싱 결과를 보여 주는 **읽기 전용 해석 창**이다.
+// item 이름에 공백·괄호·연산자가 전부 합법이라(honeyform 은 중복·메타충돌만 검사) 평문에서
+// 항목을 *찾아낼* 수는 없으므로, 항목은 오직 `@` 자동완성이 넣는 `@"항목명"` 인용 표기로만
+// 들어온다(이름 안의 `"` 는 `""` 로 escape, source 명시는 `@"source"!"항목명"` — Excel 의
+// Sheet!Cell 표기). 인용 밖은 숫자·`+ - * / ( )` 뿐이라 매 키입력 재렉싱이 모호성 0 으로
+// 가능하다 — client 렉서(web_report/formula.py lex)와 같은 원리를 gap 문법(함수·비교 없는
+// 부분집합)으로 옮긴 것이 gcLex 다. **저장 정본은 여전히 토큰 배열**이고, 수정 모달은
+// tokens → gcTokensToText 로 원문을 복원한다(라운드트립).
 
 const GC_MAX_TOKENS = 200;          // 서버 gap_chart.MAX_TOKENS 와 같은 값
 const GC_MAX_DEPTH = 16;            // 서버 gap_chart.MAX_DEPTH
@@ -24,8 +25,10 @@ const GC_MAX_REFS = 20;             // 서버 gap_chart.MAX_REFS
 const GC_NAME_MAX = 120;
 const GC_LIST_MAX = 200;            // 왼쪽 항목 목록 표시 상한
 const GC_SUGGEST_MAX = 30;          // 수식 입력 자동완성 표시 개수
+const GC_TEXT_MAX = 4000;           // 입력 원문 상한 — web_report.formula MAX_TEXT 와 동일
+const GC_MENTION_MAX = 60;          // `@` 뒤 검색어 최대 길이 — formula_editor._MENTION_MAX 와 동일
 const GC_OP_TEXT = { "+": "+", "-": "−", "*": "×", "/": "÷" };
-const GC_OP_KEYS = { "+": "+", "-": "-", "*": "*", "/": "/", "(": "lp", ")": "rp" };
+const GC_OP_ALIAS = { "−": "-", "×": "*", "÷": "/" };  // 칩 표시 문자를 붙여넣어도 받아 준다
 
 function gcAll() { return (DATA && DATA.gap_charts) || {}; }
 function gcGet(id) { return gcAll()[id] || null; }
@@ -344,9 +347,11 @@ function gcMenuItemHtml() {
 
 // ── 모달 ─────────────────────────────────────────────────────────────────────
 let _gcEditId = null;                  // null = 신규
-let _gcTokens = [];                    // 수식 토큰 (정본)
+let _gcTokens = [];                    // 수식 토큰 (입력창 텍스트를 gcLex 한 결과)
+let _gcLexError = null;                // null | {message, span} — 렉싱/인용 오류
+let _gcLexWarns = [];                  // 목록에 없는 항목·source 경고 (저장은 막지 않는다)
 let _gcSelSources = new Set();
-let _gcSuggest = [];                   // 현재 자동완성 후보
+let _gcSuggest = [];                   // 현재 `@` 자동완성 후보
 let _gcSuggestAt = -1;                 // 하이라이트 인덱스
 let _gcSearchTimer = null;
 let _gcListTimer = null;
@@ -381,14 +386,15 @@ function gcOpenModal(id) {
   if (del) del.style.display = chart ? "" : "none";
   const search = document.getElementById("gcItemSearch");
   if (search) search.value = "";
-  const tokenInput = document.getElementById("gcTokenInput");
-  if (tokenInput) tokenInput.value = "";
+  // 수정 모달은 토큰 → 평문을 복원해 입력창에 넣는다 (gcLex 라운드트립).
+  const finput = document.getElementById("gcFormulaInput");
+  if (finput) finput.value = chart ? gcTokensToText(chart.tokens || []) : "";
   _gcSuggest = []; _gcSuggestAt = -1;
 
   gcRenderSources();
   gcRenderSrcQual();
   gcRenderItemList("");
-  gcRenderExpr();
+  gcRelex();
   gcRenderSuggest();
   modal.classList.add("show");
   if (nameInput) nameInput.focus();
@@ -437,7 +443,7 @@ function gcRenderItemList(q) {
     || `<div class="placeholder">${term ? "일치하는 항목이 없습니다" : "항목 없음"}</div>`);
 }
 
-// 토큰 1개의 클래스+내용. 모달(클릭 삭제)과 Item_detail(읽기 전용)이 공유한다 —
+// 토큰 1개의 클래스+내용. 모달 해석 창과 Item_detail 수식 줄이 공유한다(둘 다 읽기 전용) —
 // 같은 서식으로 보여야 "만들 때 본 식"과 "상세에서 보는 식"이 같은 것으로 읽힌다.
 function gcTokenParts(tok) {
   if (tok.t === "item") {
@@ -451,13 +457,7 @@ function gcTokenParts(tok) {
   return { cls: "gc-tok gc-tok-paren", html: tok.t === "lp" ? "(" : ")" };
 }
 
-function gcTokenHtml(tok, i) {
-  const p = gcTokenParts(tok);
-  return `<span class="${p.cls}" data-gc-tok="${i}" title="클릭하면 이 토큰을 지웁니다">` +
-    `${p.html}</span>`;
-}
-
-// 읽기 전용 수식 렌더 — Item_detail 헤더가 쓴다(클릭 삭제 속성 없음).
+// 읽기 전용 수식 렌더 — 모달 해석 창과 Item_detail 헤더가 함께 쓴다.
 function gcExprHtml(tokens) {
   return (tokens || []).map(t => {
     const p = gcTokenParts(t);
@@ -490,84 +490,210 @@ function gcFormulaBarHtml(data) {
 function gcRenderExpr() {
   const host = document.getElementById("gcExpr");
   if (host) {
-    host.innerHTML = _gcTokens.length
-      ? _gcTokens.map(gcTokenHtml).join("")
-      : `<span class="gc-expr-hint">아래에서 항목·숫자·연산자를 넣어 수식을 만드세요</span>`;
+    let html = _gcTokens.length ? gcExprHtml(_gcTokens) : "";
+    if (_gcLexError) {
+      html += `<span class="gc-expr-bad" title="${esc(_gcLexError.message)}">⚠</span>`;
+    }
+    host.innerHTML = html
+      || `<span class="gc-expr-hint">읽은 결과가 여기 보입니다 — 아래 입력창에 수식을 그대로 적으세요 (항목은 @)</span>`;
   }
   gcRenderStatus();
 }
 
 function gcRenderStatus() {
   const host = document.getElementById("gcStatus");
-  const v = gcValidate(_gcTokens);
   const mode = gcModeOf(_gcTokens);
+  // 렉싱 오류가 문법 오류보다 먼저다 — 토큰이 반쪽이라 gcValidate 메시지는 헛짚는다.
+  let bad = _gcLexError ? _gcLexError.message : "";
+  if (!bad) {
+    const v = gcValidate(_gcTokens);
+    if (!v.ok) bad = v.msg;
+  }
   if (host) {
-    if (!v.ok) {
-      host.innerHTML = `<span class="gc-status-bad">⚠ ${esc(v.msg)}</span>`;
+    const warns = _gcLexWarns.map(w =>
+      `<span class="gc-status-warn">⚠ ${esc(w)}</span>`).join("");
+    if (bad) {
+      host.innerHTML = `<span class="gc-status-bad">⚠ ${esc(bad)}</span>` + warns;
     } else {
       const label = mode === "explicit"
         ? "source 명시 — 좌표가 같은 die 끼리 계산해 곡선 1개"
         : `항목만 참조 — 고른 source 각각에서 계산해 곡선 ${_gcSelSources.size}개`;
       host.innerHTML = `<span class="gc-status-ok">✓ ${esc(label)}</span>` +
-        `<span class="gc-status-formula">${esc(gcFormulaText(_gcTokens))}</span>`;
+        `<span class="gc-status-formula">${esc(gcFormulaText(_gcTokens))}</span>` + warns;
     }
   }
   const save = document.getElementById("gcSave");
   const name = String((document.getElementById("gcName") || {}).value || "").trim();
   const needSource = (mode !== "explicit") && !_gcSelSources.size;
-  if (save) save.disabled = !(v.ok && name && !needSource);
+  if (save) save.disabled = !!(bad || !name || needSource);
 }
 
-// ── 토큰 커밋 ────────────────────────────────────────────────────────────────
-function gcPush(tok) {
-  if (_gcTokens.length >= GC_MAX_TOKENS) { showToast("수식이 너무 깁니다"); return; }
-  _gcTokens.push(tok);
-  gcRenderExpr();
+// ── 평문 렉서 — client FormulaEditor(web_report/formula.py lex)와 같은 인용 규칙 ──
+// 입력 정본은 입력창의 **텍스트**다. 항목은 `@"이름"`(이름 안 `"` 는 `""`), source 명시는
+// `@"source"!"항목명"`. 인용 밖은 숫자·`+ - * / ( )` 뿐이라 재렉싱에 모호성이 없다
+// (gap 은 함수·비교가 없는 부분집합이라 서버 formula.py 를 그대로 포팅하지 않는다).
+
+function gcQuoteName(name) { return '"' + String(name).replace(/"/g, '""') + '"'; }
+
+// 토큰 → 입력 원문. gcLex(gcTokensToText(t)) 가 같은 토큰이 되는 라운드트립이 수정 모달의
+// 전제다. 예외는 음수 num 토큰 하나 — op(-)+num 으로 갈라지는데 서버 재귀하강 파서의
+// 단항 규칙(parse_unary)상 등가라 계산 결과가 같다.
+function gcTokensToText(tokens) {
+  const parts = (tokens || []).map(t => {
+    if (t.t === "num") return gcNumText(t.v);
+    if (t.t === "item") {
+      return "@" + (t.source ? gcQuoteName(t.source) + "!" : "") + gcQuoteName(t.item);
+    }
+    if (t.t === "op") return t.v;
+    return t.t === "lp" ? "(" : ")";
+  });
+  return parts.join(" ").replace(/\( /g, "(").replace(/ \)/g, ")");
 }
 
-function gcPopToken() {
-  if (!_gcTokens.length) return;
-  _gcTokens.pop();
-  gcRenderExpr();
+const GC_NUM_RE = /(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/y;
+
+// 인용 이름 → 목록의 정식 이름(대소문자는 조회에만 관대 — formula._resolve_item 규약).
+// **없어도 오류로 막지 않는다** — 전처리 제외 등으로 목록에서 빠진 항목을 참조하는 기존
+// 차트를 열어 이름·Limit 만 고치는 길이 막히면 안 된다(§5-12, dist_composite 의
+// "목록으로 filter 하지 말 것"과 같은 취지). 조회 시점 부재는 서버가 missing 으로 알린다.
+function gcResolveName(name, known, kind, warns) {
+  if (known.indexOf(name) >= 0) return name;
+  const low = name.toLowerCase();
+  const hits = known.filter(k => k.toLowerCase() === low);
+  if (hits.length === 1) return hits[0];
+  warns.push(`'${name}' — 목록에 없는 ${kind}`);
+  return name;
 }
 
-function gcRemoveToken(i) {
-  if (i < 0 || i >= _gcTokens.length) return;
-  _gcTokens.splice(i, 1);
-  gcRenderExpr();
+function gcLexQuoted(raw, quoteAt, fail, refStart) {
+  let i = quoteAt + 1, buf = "";
+  for (;;) {
+    if (i >= raw.length) fail('항목 이름의 닫는 " 가 없습니다', [refStart, raw.length]);
+    const ch = raw[i];
+    if (ch === '"') {
+      if (raw[i + 1] === '"') { buf += '"'; i += 2; continue; }
+      return { name: buf, end: i + 1 };
+    }
+    buf += ch;
+    i += 1;
+  }
 }
 
-function gcPushOp(ch) {
-  const kind = GC_OP_KEYS[ch];
-  if (!kind) return;
-  gcPush(kind === "lp" || kind === "rp" ? { t: kind } : { t: "op", v: kind });
+// 평문 → {tokens, warns}. 위반은 Error(.span, .tokens=거기까지 읽은 토큰, .warns) throw —
+// 오류가 나도 앞부분 칩 표시를 유지한다(formula_editor 의 부분 렉싱과 같은 동작).
+function gcLex(text) {
+  const raw = String(text || "");
+  const items = (typeof distIndex !== "undefined" ? distIndex : []).map(r => r.subject);
+  const sources = gcSourceNames();
+  const tokens = [], warns = [];
+  const fail = (msg, span) => {
+    const e = new Error(msg);
+    e.span = span; e.tokens = tokens; e.warns = warns;
+    throw e;
+  };
+  if (raw.length > GC_TEXT_MAX) fail(`수식이 너무 깁니다 (${GC_TEXT_MAX}자 이하)`, [0, raw.length]);
+  let i = 0;
+  const n = raw.length;
+  while (i < n) {
+    const ch = raw[i];
+    if (/\s/.test(ch)) { i += 1; continue; }
+    const start = i;
+    if (ch === "@") {
+      if (raw[i + 1] !== '"') {
+        fail('항목은 @ 를 치고 목록에서 고르세요 (@"항목명" 형태)', [start, Math.min(n, i + 2)]);
+      }
+      const first = gcLexQuoted(raw, i + 1, fail, start);
+      let source = "", item, end = first.end;
+      if (raw[end] === "!") {
+        if (raw[end + 1] !== '"') {
+          fail('source 명시는 @"source"!"항목명" 형태입니다', [start, Math.min(n, end + 2)]);
+        }
+        const second = gcLexQuoted(raw, end + 1, fail, start);
+        source = gcResolveName(first.name, sources, "source", warns);
+        item = gcResolveName(second.name, items, "항목", warns);
+        end = second.end;
+      } else {
+        item = gcResolveName(first.name, items, "항목", warns);
+      }
+      const tok = { t: "item", item: item };
+      if (source) tok.source = source;
+      tokens.push(tok);
+      i = end;
+      continue;
+    }
+    GC_NUM_RE.lastIndex = i;
+    const m = GC_NUM_RE.exec(raw);
+    if (m) {
+      i = GC_NUM_RE.lastIndex;
+      tokens.push({ t: "num", v: Number(m[0]) });
+      continue;
+    }
+    const op = GC_OP_ALIAS[ch] || ch;
+    if (op === "(") { tokens.push({ t: "lp" }); i += 1; continue; }
+    if (op === ")") { tokens.push({ t: "rp" }); i += 1; continue; }
+    if ("+-*/".indexOf(op) >= 0) { tokens.push({ t: "op", v: op }); i += 1; continue; }
+    fail(`'${ch}' 는 수식에 쓸 수 없는 문자입니다 — 항목이라면 @ 로 넣으세요`, [start, start + 1]);
+  }
+  return { tokens: tokens, warns: warns };
 }
 
-// 항목 토큰 — source 드롭다운이 비어 있지 않으면 source 명시 참조가 된다.
-function gcPushItem(subject, source) {
-  const src = source != null ? source
-                             : String((document.getElementById("gcSrcQual") || {}).value || "");
-  const tok = { t: "item", item: String(subject) };
-  if (src) tok.source = src;
-  gcPush(tok);
-  const input = document.getElementById("gcTokenInput");
-  if (input) { input.value = ""; input.focus(); }
-  _gcSuggest = []; _gcSuggestAt = -1;
-  gcRenderSuggest();
-}
-
-// ── 수식 입력창 자동완성 ─────────────────────────────────────────────────────
-// 입력어가 "<선택 source>_" 로 시작하면 그 source 로 한정해 나머지로 검색한다.
-// 이 접두 추정은 **제안 랭킹에만** 쓴다 — 저장 경로는 항상 드롭다운/토큰 필드를 쓰므로
-// source 명에 `_` 가 있어 잘못 갈려도 최악이 "제안이 안 뜬다" 뿐이다.
-function gcSplitQualified(term) {
-  for (const s of gcSourceNames()) {
-    const pre = s + "_";
-    if (term.length > pre.length && term.slice(0, pre.length) === pre) {
-      return { source: s, rest: term.slice(pre.length) };
+// 입력창 텍스트 → 토큰·오류·경고 갱신. 이 모달의 수식 상태는 전부 여기서 정해진다.
+function gcRelex() {
+  const input = document.getElementById("gcFormulaInput");
+  const text = input ? String(input.value || "") : "";
+  _gcLexError = null;
+  _gcLexWarns = [];
+  if (!text.trim()) {
+    _gcTokens = [];             // 아직 아무것도 안 쳤다 — 오류로 띄우지 않는다
+  } else {
+    try {
+      const out = gcLex(text);
+      _gcTokens = out.tokens;
+      _gcLexWarns = out.warns;
+    } catch (e) {
+      _gcTokens = e.tokens || [];
+      _gcLexWarns = e.warns || [];
+      _gcLexError = { message: e.message || "수식을 읽을 수 없습니다", span: e.span || null };
     }
   }
-  return { source: "", rest: term };
+  gcRenderExpr();
+}
+
+// ── `@` 자동완성 (formula_editor._mention_query 와 같은 판정) ────────────────
+// 커서 앞 마지막 `@` 뒤 조각이 검색어다. 완성된 `@"이름"` 은 조각에 `"` 가 들어 있으므로
+// 자연히 걸러지고, 너무 긴 조각은 `@` 를 치다 만 흔적으로 보고 닫는다.
+function gcMentionQuery() {
+  const input = document.getElementById("gcFormulaInput");
+  if (!input) return null;
+  const value = String(input.value || "");
+  const pos = input.selectionStart == null ? value.length : input.selectionStart;
+  const at = value.slice(0, pos).lastIndexOf("@");
+  if (at < 0) return null;
+  const frag = value.slice(at + 1, pos);
+  if (frag.indexOf('"') >= 0 || frag.length > GC_MENTION_MAX) return null;
+  return { frag: frag, at: at, pos: pos };
+}
+
+// 항목 삽입 — `@검색어` 조각이 있으면 그 자리를 `@"이름"` 으로 바꾸고, 없으면(왼쪽 목록
+// 클릭) 커서 위치에 넣는다. source 드롭다운이 비어 있지 않으면 source 명시 참조가 된다.
+function gcInsertItem(subject, source) {
+  const input = document.getElementById("gcFormulaInput");
+  if (!input) return;
+  const src = source != null ? source
+                             : String((document.getElementById("gcSrcQual") || {}).value || "");
+  const snippet = "@" + (src ? gcQuoteName(src) + "!" : "") + gcQuoteName(String(subject));
+  const value = String(input.value || "");
+  const q = gcMentionQuery();
+  let start, end;
+  if (q) { start = q.at; end = q.pos; }
+  else if (input.selectionStart != null) { start = input.selectionStart; end = input.selectionEnd; }
+  else { start = value.length; end = value.length; }
+  input.value = value.slice(0, start) + snippet + value.slice(end);
+  const caret = start + snippet.length;
+  input.focus();
+  try { input.setSelectionRange(caret, caret); } catch (e) { /* no-op */ }
+  gcRelex();
+  gcUpdateSuggest();   // 삽입으로 `@` 조각이 사라졌으니 팝업이 닫힌다
 }
 
 function gcRenderSuggest() {
@@ -584,35 +710,19 @@ function gcRenderSuggest() {
     `</button>`).join("");
 }
 
-function gcUpdateSuggest(raw) {
-  const term = String(raw || "").trim();
-  if (!term) { _gcSuggest = []; _gcSuggestAt = -1; gcRenderSuggest(); return; }
-  const { source, rest } = gcSplitQualified(term);
-  const rows = distSuggestions(rest || term, 0).slice(0, GC_SUGGEST_MAX);
-  _gcSuggest = rows.map(r => ({ ...r, _source: source }));
+// `@` 조각이 있을 때만 후보를 낸다. 빈 조각(막 `@` 만 친 상태)은 전체 목록 앞부분 —
+// formula_editor 의 force_all 과 같은 동작이다. 후보에는 드롭다운의 source 를 미리 태워
+// 어떤 참조로 들어갈지(_source 배지) 보여 준다.
+function gcUpdateSuggest() {
+  const q = gcMentionQuery();
+  if (!q) { _gcSuggest = []; _gcSuggestAt = -1; gcRenderSuggest(); return; }
+  const term = q.frag.trim();
+  const src = String((document.getElementById("gcSrcQual") || {}).value || "");
+  const all = typeof distIndex !== "undefined" ? distIndex : [];
+  const rows = (term ? distSuggestions(term, 0) : all).slice(0, GC_SUGGEST_MAX);
+  _gcSuggest = rows.map(r => ({ subject: r.subject, test_num: r.test_num, _source: src }));
   _gcSuggestAt = _gcSuggest.length ? 0 : -1;
   gcRenderSuggest();
-}
-
-function gcCommitInput() {
-  const input = document.getElementById("gcTokenInput");
-  if (!input) return;
-  if (_gcSuggestAt >= 0 && _gcSuggest[_gcSuggestAt]) {
-    const pick = _gcSuggest[_gcSuggestAt];
-    gcPushItem(pick.subject, pick._source || undefined);
-    return;
-  }
-  const text = String(input.value || "").trim();
-  if (!text) return;
-  const n = Number(text);
-  if (text !== "" && isFinite(n)) {
-    gcPush({ t: "num", v: n });
-    input.value = "";
-    _gcSuggest = []; _gcSuggestAt = -1;
-    gcRenderSuggest();
-    return;
-  }
-  showToast("항목은 자동완성 목록에서 골라야 합니다");
 }
 
 // ── 저장 / 삭제 ──────────────────────────────────────────────────────────────
@@ -620,6 +730,7 @@ function gcCollectSpec() {
   const name = String((document.getElementById("gcName") || {}).value || "").trim();
   if (!name) throw new Error("차트 이름을 입력하세요");
   if (name.length > GC_NAME_MAX) throw new Error(`차트 이름이 너무 깁니다 (${GC_NAME_MAX}자 이하)`);
+  if (_gcLexError) throw new Error(_gcLexError.message);
   const v = gcValidate(_gcTokens);
   if (!v.ok) throw new Error(v.msg);
   const sources = gcSourceNames().filter(s => _gcSelSources.has(s));
@@ -754,22 +865,16 @@ document.addEventListener("click", e => {
     gcRenderStatus();
     return;
   }
-  const op = e.target.closest("[data-gc-op]");
-  if (op) { gcPushOp(op.dataset.gcOp); return; }
-  const back = e.target.closest('[data-gc-act="pop"]');
-  if (back) { gcPopToken(); return; }
-  const clear = e.target.closest('[data-gc-act="clear"]');
-  if (clear) { _gcTokens = []; gcRenderExpr(); return; }
-  const tok = e.target.closest("[data-gc-tok]");
-  if (tok) { gcRemoveToken(parseInt(tok.dataset.gcTok, 10)); return; }
   const sug = e.target.closest("[data-gc-sug]");
   if (sug) {
     const pick = _gcSuggest[parseInt(sug.dataset.gcSug, 10)];
-    if (pick) gcPushItem(pick.subject, pick._source || undefined);
+    if (pick) gcInsertItem(pick.subject, pick._source || undefined);
     return;
   }
   const pickBtn = e.target.closest("[data-gc-pick]");
-  if (pickBtn) { gcPushItem(pickBtn.dataset.gcPick); return; }
+  if (pickBtn) { gcInsertItem(pickBtn.dataset.gcPick); return; }
+  // 입력창 클릭 = 커서 이동 — `@` 조각 판정이 바뀌므로 후보 팝업을 갱신한다.
+  if (e.target.id === "gcFormulaInput") { gcUpdateSuggest(); return; }
 });
 
 document.addEventListener("change", e => {
@@ -789,37 +894,43 @@ document.addEventListener("input", e => {
     _gcListTimer = setTimeout(() => gcRenderItemList(q), 200);
     return;
   }
-  if (e.target.id === "gcTokenInput") {
-    const q = e.target.value;
+  if (e.target.id === "gcFormulaInput") {
     clearTimeout(_gcSearchTimer);
-    _gcSearchTimer = setTimeout(() => gcUpdateSuggest(q), 200);
+    _gcSearchTimer = setTimeout(() => { gcRelex(); gcUpdateSuggest(); }, 120);
     return;
   }
   if (e.target.id === "gcName") gcRenderStatus();
 });
 
-// 수식 입력창 키 처리 — **입력창이 비어 있을 때만** 연산자 키가 토큰이 된다
-// (글자가 있을 때의 `-` 는 item 이름의 일부일 수 있다).
+// 수식 입력창 키 처리 — Enter=후보 확정(제출·커밋 없음), ↑↓=후보 이동, Esc=팝업만 닫기.
+// 한글 조합 중(isComposing)에는 가로채지 않는다 — formula_editor._ImeTextEdit 과 같은 가드
+// (조합 확정 Enter 가 후보 확정으로 오인되면 엉뚱한 항목이 들어간다).
 document.addEventListener("keydown", e => {
   const input = e.target;
-  if (!input || input.id !== "gcTokenInput") return;
-  const empty = String(input.value || "") === "";
-  if (empty && Object.prototype.hasOwnProperty.call(GC_OP_KEYS, e.key)) {
+  if (!input || input.id !== "gcFormulaInput") return;
+  if (e.isComposing) return;
+  if (e.key === "Enter") {
     e.preventDefault();
-    gcPushOp(e.key);
+    if (_gcSuggestAt >= 0 && _gcSuggest[_gcSuggestAt]) {
+      const pick = _gcSuggest[_gcSuggestAt];
+      gcInsertItem(pick.subject, pick._source || undefined);
+    }
     return;
   }
-  if (e.key === "Backspace" && empty) { e.preventDefault(); gcPopToken(); return; }
-  if (e.key === "Enter") { e.preventDefault(); gcCommitInput(); return; }
-  if (e.key === "ArrowDown" && _gcSuggest.length) {
+  if (e.key === "Escape" && _gcSuggest.length) {
+    // 팝업만 닫는다 — 아래 모달 Esc 핸들러(나중 등록이라 stopImmediatePropagation 이
+    // 막는다)까지 가면 조립하던 수식째로 모달이 닫혀 버린다.
     e.preventDefault();
-    _gcSuggestAt = Math.min(_gcSuggest.length - 1, _gcSuggestAt + 1);
+    e.stopImmediatePropagation();
+    _gcSuggest = []; _gcSuggestAt = -1;
     gcRenderSuggest();
     return;
   }
-  if (e.key === "ArrowUp" && _gcSuggest.length) {
+  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && _gcSuggest.length) {
     e.preventDefault();
-    _gcSuggestAt = Math.max(0, _gcSuggestAt - 1);
+    _gcSuggestAt = e.key === "ArrowDown"
+      ? Math.min(_gcSuggest.length - 1, _gcSuggestAt + 1)
+      : Math.max(0, _gcSuggestAt - 1);
     gcRenderSuggest();
   }
 });

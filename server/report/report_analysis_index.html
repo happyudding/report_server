@@ -44,7 +44,7 @@ body {
 }
 
 /* 상단바는 한 줄이다 — [제품군 버튼 5개] ······(빈 폭)······ [My Upload · 검색창 · 🔍 ·
-   ⚙ 검색옵션 · 👤 사용자 · 로그아웃]. 검색창이 남는 폭을 먹지 않고 300px 에서 멈추므로
+   ⚙ 검색옵션 · 👤 사용자(클릭 메뉴: 이름 변경·로그아웃) · 🔑]. 검색창이 남는 폭을 먹지 않고 300px 에서 멈추므로
    (.top-search 의 grow=0) 그 폭이 좌우 여백과 File name 열로 간다.
    좁은 폭에서는 flex-wrap 이 알아서 2줄로 접는다(컨트롤이 잘리는 것보다 낫다). */
 .top-bar {
@@ -115,6 +115,8 @@ body {
 .star-fav.on { color: #2563eb; }
 /* 별표+배지가 줄바꿈되어 행이 두 줄 높이가 되지 않게 한 줄 고정 */
 td.pt-cell { cursor: pointer; white-space: nowrap; }
+/* Owner 칸 '이름(ID)' 의 (ID) 부분 — 데이터 글자(18px)보다 작게 */
+td .uid-small { font-size: 14px; }
 .user-chip {
   flex: 0 0 auto; height: 30px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
@@ -127,6 +129,22 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   background: #f59e0b; border-color: #f59e0b; color: #fff;
 }
 .user-chip.needs-pin:hover { background: #d97706; border-color: #d97706; color: #fff; }
+/* 사용자 칩 — '홍길동(gildong.hong)' 전체가 보이게 말줄임 해제 (🔑 등 짧은 칩은 그대로) */
+#userChip { max-width: none; }
+/* 칩 클릭 시 열리는 사용자 메뉴 (이름 변경 · 로그아웃) */
+.user-wrap { position: relative; flex: 0 0 auto; }
+.user-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; min-width: 160px;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 30; overflow: hidden;
+}
+.user-menu-item {
+  display: block; width: 100%; border: 0; background: transparent;
+  padding: 8px 12px; text-align: left; font-size: 16px; font-weight: 600;
+  color: #475569; cursor: pointer; white-space: nowrap;
+}
+.user-menu-item:hover { background: #f1f5f9; }
+.user-menu-item:disabled { color: #b6bec9; cursor: default; background: transparent; }
 
 .honey-dl-btn {
   flex: 0 0 auto; height: 30px; padding: 0 14px;
@@ -332,6 +350,26 @@ td.fname-cell .fname-txt {
 /* 로그인 모달만 버튼이 4개(Honey 다운로드/회원가입/취소/로그인)라 기본 크기로는
    modal-box 안쪽 폭을 넘겨 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄이고(14px·
    padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다.
+/* ── 내 정보 모달 ─────────────────────────────────────────────────── */
+.prof-id { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.prof-name { font-size: 24px; font-weight: 700; color: #1e293b; }
+.prof-uid { font-size: 18px; color: #94a3b8; }
+.prof-src { font-size: 17px; color: #94a3b8; margin: 4px 0 14px; }
+.prof-rows { border-top: 1px solid #e5e8ec; }
+.prof-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 9px 2px; border-bottom: 1px solid #e5e8ec; gap: 12px;
+}
+.prof-row-label { font-size: 19px; color: #475569; }
+.prof-row-val { font-size: 21px; font-weight: 700; color: #1e293b; white-space: nowrap; }
+.prof-row-val.muted { font-weight: 600; color: #94a3b8; }
+.prof-foot { font-size: 15px; color: #94a3b8; margin: 10px 0 0; line-height: 1.5; }
+html[data-theme="dark"] .prof-name { color: #e2e6ec; }
+html[data-theme="dark"] .prof-row-label { color: #aab3c0; }
+html[data-theme="dark"] .prof-row-val { color: #e2e6ec; }
+html[data-theme="dark"] .prof-row-val.muted { color: #6b7482; }
+html[data-theme="dark"] .prof-rows,
+html[data-theme="dark"] .prof-row { border-color: #3a3f4b; }
 #idModal .modal-box { width: 420px; }
 #idModal .modal-actions { gap: 6px; }
 #idModal .modal-btn { font-size: 14px; padding: 8px 10px; white-space: nowrap; }
@@ -417,6 +455,10 @@ html[data-theme="dark"] .user-chip { background: #262a33; border-color: #3a3f4b;
 html[data-theme="dark"] .user-chip:hover { border-color: #4a90e2; color: #7fb3ef; }
 html[data-theme="dark"] .user-chip.needs-pin { background: #b45309; border-color: #b45309; color: #fff; }
 html[data-theme="dark"] .user-chip.needs-pin:hover { background: #92400e; border-color: #92400e; color: #fff; }
+html[data-theme="dark"] .user-menu { background: #1e2128; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.55); }
+html[data-theme="dark"] .user-menu-item { color: #aab3c0; }
+html[data-theme="dark"] .user-menu-item:hover { background: #262a33; }
+html[data-theme="dark"] .user-menu-item:disabled { color: #566070; background: transparent; }
 html[data-theme="dark"] .star-fav { color: #4a5462; }
 html[data-theme="dark"] .star-fav.on { color: #5b9cf5; }
 html[data-theme="dark"] .filter-label { color: #9aa3b0; }
@@ -512,10 +554,16 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   <button class="btn-action opt-btn" id="optToggle" aria-expanded="false"
           aria-controls="optPanel" title="자주 쓰지 않는 검색 조건을 펼칩니다">⚙ 검색옵션<span
           class="opt-badge" id="optBadge" hidden></span></button>
-  <button class="user-chip" id="userChip"
-          title="singleID + 비밀번호로 로그인">👤 로그인</button>
+  <span class="user-wrap">
+    <button class="user-chip" id="userChip"
+            title="singleID + 비밀번호로 로그인">👤 로그인</button>
+    <div class="user-menu" id="userMenu" hidden>
+      <button class="user-menu-item" id="umProfile" type="button">👤 내 정보</button>
+      <button class="user-menu-item" id="umRename" type="button">✏️ 이름 변경</button>
+      <button class="user-menu-item" id="umLogout" type="button">로그아웃</button>
+    </div>
+  </span>
   <button class="user-chip" id="pwKeyBtn" style="display:none;" title="웹 로그인 비밀번호 설정">🔑</button>
-  <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
 </div>
 
 <!-- 추가 검색옵션 (기본 접힘 — ⚙ 검색옵션 버튼이 토글) -->
@@ -711,6 +759,25 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   </div>
 </div>
 
+<!-- 사용자 정보 모달 (칩 메뉴 '내 정보') — 신원 + web_report 활동 요약 -->
+<div class="modal-overlay" id="profileModal">
+  <div class="modal-box" style="width:420px;">
+    <p class="modal-title">내 정보</p>
+    <div class="prof-id">
+      <span class="prof-name" id="profName"></span>
+      <span class="prof-uid" id="profUid"></span>
+    </div>
+    <p class="prof-src" id="profSrc"></p>
+    <div class="prof-rows" id="profRows"></div>
+    <p class="prof-foot" id="profFoot"></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="profRename" type="button">✏️ 이름 변경</button>
+      <button class="modal-btn" id="profPw" type="button">🔑 비밀번호</button>
+      <button class="modal-btn" id="profClose" type="button">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- 삭제(휴지통 이동) 확인 모달 -->
 <div class="modal-overlay" id="delModal">
   <div class="modal-box">
@@ -725,9 +792,9 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 </div>
 
 <script>
-// 한 페이지 max 17개 — 즐겨찾기 포함 한 화면에 들어오는 수(2026-08-25, 15→17 상향).
+// 한 페이지 max 20개 — 즐겨찾기 포함 한 화면에 들어오는 수(2026-08-26, 17→20 상향).
 // (즐겨찾기 상단 정렬은 서버 ORDER BY 가 담당)
-const PAGE_SIZE = 17;
+const PAGE_SIZE = 20;
 // 페이저에 한 번에 그리는 최대 버튼 수 — 창(현재±2)+처음/마지막+‹/›. 전체 페이지를
 // 다 그리면 세션이 늘수록 페이저가 여러 줄로 접혀 화면 밖으로 밀린다.
 const PAGER_WINDOW = 2;
@@ -840,7 +907,7 @@ function updateUserChip() {
     chip.textContent = `👤 ${who}`;
     chip.title = (_authSource === "honey"
       ? `PC 계정으로 자동 로그인됨 (${who})`
-      : `${who} 계정으로 로그인됨`) + " — 클릭하면 이름을 바꿀 수 있습니다";
+      : `${who} 계정으로 로그인됨`) + " — 클릭하면 이름 변경·로그아웃 메뉴가 열립니다";
   } else {
     chip.textContent = "👤 로그인";
     chip.title = "singleID + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
@@ -855,9 +922,12 @@ function updateUserChip() {
     ? "웹 로그인 비밀번호 변경 (일반 브라우저 접속용)"
     : "웹 로그인 비밀번호 설정 — 일반 브라우저에서 접속하려면 필요합니다";
 
-  // 로그아웃은 웹 로그인 세션일 때만 의미가 있다 (Honey UA 는 끌 수 없음).
-  document.getElementById("logoutBtn").style.display =
-    _authSource === "login" ? "" : "none";
+  // 로그아웃(칩 메뉴)은 웹 로그인 세션일 때만 실제로 가능하다 (Honey UA 는 끌 수 없음
+  // — 다음 요청에서 UA 로 다시 식별된다). 눌러도 소용없는 상황은 비활성으로 보여준다.
+  const lo = document.getElementById("umLogout");
+  lo.disabled = _authSource !== "login";
+  lo.title = _authSource === "login"
+    ? "" : "PC 계정 자동 로그인은 로그아웃할 수 없습니다";
 }
 
 // history 응답에 실려 온 신원(viewer) 반영 — 첫 화면의 /api/auth/me 선행 왕복을 대신한다.
@@ -1100,10 +1170,18 @@ async function doSetPin() {
   });
 });
 
-// 칩 클릭: 비로그인 브라우저 = 로그인 모달 / 그 외 = 이름 변경창
+// 칩 클릭: 비로그인 브라우저 = 로그인 모달 / 그 외 = 사용자 메뉴(이름 변경·로그아웃)
 // (비밀번호 설정/변경은 옆의 🔑 버튼이 전담 — 역할을 섞지 않는다)
+function toggleUserMenu(show) {
+  const menu = document.getElementById("userMenu");
+  menu.hidden = show === undefined ? !menu.hidden : !show;
+}
 document.getElementById("userChip").addEventListener("click", () => {
   if (!_userId) { openIdModal(); return; }
+  toggleUserMenu();
+});
+// 이름 변경 — 칩 메뉴와 '내 정보' 모달 두 곳에서 부른다.
+function openRenameModal() {
   UserName.promptIfMissing({user_id: _userId, display_name: _displayName}, {
     force: true,
     onSaved(name) {
@@ -1114,9 +1192,98 @@ document.getElementById("userChip").addEventListener("click", () => {
       showToast("이름이 저장되었습니다.");
     },
   });
+}
+document.getElementById("umRename").addEventListener("click", () => {
+  toggleUserMenu(false);
+  openRenameModal();
+});
+document.getElementById("umLogout").addEventListener("click", () => {
+  toggleUserMenu(false);
+  doLogout();
+});
+
+// ── 내 정보 모달 ──
+// 활동 수치는 열 때마다 서버에서 새로 받는다(캐시하지 않음) — 자주 여는 화면이 아니고,
+// 방금 단 코멘트가 반영 안 된 숫자를 보여주면 오히려 신뢰를 잃는다.
+const PROF_ROWS = [
+  {key: "uploads",         label: "📤 업로드한 Session",   unit: "건"},
+  {key: "comments",        label: "💬 Issue Table 코멘트", unit: "건"},
+  {key: "edited_sessions", label: "🗂 편집에 참여한 Session", unit: "개"},
+];
+function profFmtDate(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function profRenderRows(act) {
+  const rows = PROF_ROWS.map(r => {
+    const n = Number(act[r.key] || 0);
+    // 0 건은 흐리게 — 아직 안 한 활동과 한 활동이 한눈에 갈린다.
+    return `<div class="prof-row"><span class="prof-row-label">${r.label}</span>` +
+           `<span class="prof-row-val${n ? "" : " muted"}">${n.toLocaleString()} ${r.unit}</span></div>`;
+  });
+  const last = profFmtDate(act.last_active);
+  rows.push('<div class="prof-row"><span class="prof-row-label">🕘 마지막 활동</span>' +
+            `<span class="prof-row-val${last ? "" : " muted"}">${last || "기록 없음"}</span></div>`);
+  return rows.join("");
+}
+async function openProfileModal() {
+  const modal = document.getElementById("profileModal");
+  document.getElementById("profName").textContent = _displayName || "(이름 없음)";
+  document.getElementById("profUid").textContent = _userId ? `SECDS\\${_userId}` : "";
+  document.getElementById("profSrc").textContent =
+    _authSource === "honey" ? "Honey 앱 · PC 계정으로 자동 로그인"
+    : _authSource === "login" ? "웹 로그인" : "";
+  // 비밀번호 버튼은 칩 옆 🔑 과 같은 조건(Honey 접속)에서만 의미가 있다.
+  document.getElementById("profPw").style.display = _authSource === "honey" ? "" : "none";
+  document.getElementById("profRows").innerHTML =
+    '<div class="prof-row"><span class="prof-row-label">불러오는 중…</span></div>';
+  document.getElementById("profFoot").textContent = "";
+  modal.classList.add("show");
+  try {
+    const res = await fetch("/pe/report/api/auth/profile");
+    if (!res.ok) throw new Error("조회 실패");
+    const j = await res.json();
+    if (j.display_name) {          // 다른 기기에서 바꿨을 수 있다
+      _displayName = j.display_name;
+      document.getElementById("profName").textContent = _displayName;
+      updateUserChip();
+    }
+    document.getElementById("profRows").innerHTML = profRenderRows(j.activity || {});
+    document.getElementById("profFoot").textContent =
+      "※ 2026-07-11 이전 기록은 작성자 정보가 없어 집계에서 빠질 수 있습니다.";
+  } catch (e) {
+    document.getElementById("profRows").innerHTML =
+      '<div class="prof-row"><span class="prof-row-label">활동 정보를 불러오지 못했습니다.</span></div>';
+  }
+}
+document.getElementById("umProfile").addEventListener("click", () => {
+  toggleUserMenu(false);
+  openProfileModal();
+});
+document.getElementById("profClose").addEventListener("click", () => {
+  document.getElementById("profileModal").classList.remove("show");
+});
+document.getElementById("profRename").addEventListener("click", () => {
+  document.getElementById("profileModal").classList.remove("show");
+  openRenameModal();
+});
+document.getElementById("profPw").addEventListener("click", () => {
+  document.getElementById("profileModal").classList.remove("show");
+  openPwChangeModal();
+});
+document.getElementById("profileModal").addEventListener("click", e => {
+  if (e.target.id === "profileModal") e.target.classList.remove("show");
+});
+// 메뉴 밖 클릭·Esc 로 닫기 (칩 자신은 .user-wrap 안이라 토글이 그대로 동작한다)
+document.addEventListener("click", e => {
+  if (!e.target.closest(".user-wrap")) toggleUserMenu(false);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") toggleUserMenu(false);
 });
 document.getElementById("pwKeyBtn").addEventListener("click", openPwChangeModal);
-document.getElementById("logoutBtn").addEventListener("click", doLogout);
 document.getElementById("idModalCancel").addEventListener("click", () => {
   document.getElementById("idModal").classList.remove("show");
 });
@@ -1178,6 +1345,15 @@ async function toggleFavorite(sid) {
 // 업로더 표시용 — 사내 도메인 접두 'SECDS\' 는 화면에서 생략(전체 이름은 title 로 확인).
 function stripUploader(u) {
   return String(u || "").replace(/^SECDS\\/i, "");
+}
+
+// Owner 칸 표기 — '이름(ID)' 중 (ID) 부분만 작게 그린다. 값 자체는 종전
+// UserName.fromMap 표기와 동일하고(HTML 만 다름), title·검색·정렬에는 영향 없다.
+function ownerHtml(r) {
+  const tail = UserName.uid(r.uploaded_by);
+  const name = _uploaderNames[tail] || "";
+  if (name && tail) return `${esc(name)}<span class="uid-small">(${esc(tail)})</span>`;
+  return esc(tail || stripUploader(r.uploaded_by) || "-");
 }
 
 // 내 업로드 여부 — uploaded_by 는 'DOMAIN\user' 또는 'user' 형식이라 뒷부분만 비교.
@@ -1477,7 +1653,7 @@ function renderResults() {
         <td data-col="product" data-label="Product">${esc(r.product || '-')}</td>
         <td class="lot-col" data-col="lot" data-label="LOT">${esc(r.lot_id || '-')}</td>
         <td class="fname-cell" data-col="fname" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
-        <td class="sub-cell" data-col="uploader" data-label="업로더" title="${esc(UserName.fromMap(r.uploaded_by, _uploaderNames) || r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${esc(UserName.fromMap(r.uploaded_by, _uploaderNames) || stripUploader(r.uploaded_by) || '-')}</td>
+        <td class="sub-cell" data-col="uploader" data-label="업로더" title="${esc(UserName.fromMap(r.uploaded_by, _uploaderNames) || r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${ownerHtml(r)}</td>
         <td class="sub-cell" data-col="date" data-label="날짜">${fmtDate(r.created_at)}</td>
         <td class="act-cell">
           <div class="btn-row">

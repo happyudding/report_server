@@ -244,6 +244,42 @@ def set_display_name(user_id, display_name, updated_by="self"):
         )
 
 
+def user_activity(user_id):
+    """사용자 정보 창의 '활동 요약' — 업로드/코멘트/참여 세션/마지막 활동.
+
+    web_report 편집은 `report_webreport_edit.updated_by` 하나로 전부 집계된다(kind 별
+    GROUP BY). 새로 세지 않고 이미 저장된 것을 읽기만 하므로 다른 화면과 값이 갈릴 여지가
+    없다(CLAUDE.md 규칙 13).
+
+    ⚠️ 2026-07-11 세션 편집 DB 이관 **이전**에 manifest 로 저장됐던 편집은 원 작성자를
+    알 수 없어 `updated_by` 가 NULL 이다. 그 행은 누구의 활동으로도 세지 않으므로 코멘트
+    건수는 '최소값'이다 — 화면이 그 사실을 각주로 알린다."""
+    if not user_id:
+        return {"uploads": 0, "comments": 0, "edited_sessions": 0, "last_active": None}
+    with get_conn() as conn:
+        uploads = conn.execute(
+            "SELECT COUNT(*) AS n FROM report_session WHERE lower(uploaded_by)=?",
+            (user_id,),
+        ).fetchone()["n"]
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM report_webreport_edit "
+            "WHERE lower(updated_by)=? AND kind='issue_comment'",
+            (user_id,),
+        ).fetchone()
+        comments = row["n"]
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT session_id) AS n, MAX(updated_at) AS last "
+            "FROM report_webreport_edit WHERE lower(updated_by)=?",
+            (user_id,),
+        ).fetchone()
+    return {
+        "uploads": uploads,
+        "comments": comments,
+        "edited_sessions": row["n"],
+        "last_active": row["last"],
+    }
+
+
 def display_names(user_ids):
     """{user_id: 실명} 배치 조회 — 목록 화면이 행마다 조회(N+1)하지 않도록 하는 유일한 경로.
     미등록 사용자는 키 자체가 없다(프런트가 이름 없으면 ID 만 표시). 소문자 정규화된 키로

@@ -241,18 +241,23 @@ function fmtStdev(v) {
   return n.toFixed(digits);
 }
 
-// CPK/Compare/Item_detail 통계값(min·median·max·average·stdev) 표시 전용 —
-// 표시 길이를 8자(부호 제외) 이하로 줄여 컬럼이 옆으로 벌어지지 않게 한다.
+// CPK/Compare/Item_detail/Issue Table Compare 통계값(min·median·max·average·stdev)
+// 표시 전용 — 소수 최대 4자리 반올림 + 전체 8자(부호 제외) 이내로 줄여 컬럼 폭을 잡는다.
 // 서버가 컬럼마다 다른 자리수로 내려보내(min~max 6자리 / average 4자리 / stdev 무반올림)
 // 값 하나가 컬럼 전체를 밀어내던 문제를 표시 단에서 통일한다.
-//   원문이 8자 이하면 손대지 않는다        99999.5 → 99999.5 / 1234.567 → 1234.567
-//   **버림(절사)** — 반올림하지 않는다      9.9999999 → 9.999999 (10 으로 올리지 않음)
-//   유효숫자 4자리 미만으로 뭉개지면 지수표기  0.00000334234 → 3.3423e-6
+//   원문이 8자 이하면 손대지 않는다   99999.5 → 99999.5 / 1234.567 → 1234.567
+//   소수 최대 4자리 반올림           1.234565473457 → 1.2346 / 33.235235 → 33.2352
+//   정수부가 길면 소수를 더 줄인다    234626.2346234 → 234626.2 (전체 8자 상한)
+//   **자리올림이 나면 그 자리에서 버림** 999999.99 → 999999.9 (1000000 이 되면 앞자리가
+//     통째로 바뀌어 다른 값처럼 보인다 — 사용자 확정 2026-08-26)
+//   유효숫자 2자리 미만으로 뭉개지면 지수  0.00034345 → 3.4345e-4 (소수4 로는 0.0003)
+//     단 원래 짧은 값은 그대로 둔다      0.0003 → 0.0003 (자른 게 아니므로)
 //   지수표기는 e12 / e-6 형태 (e+12 의 + 제거)
 // **표시 전용**이다 — 원값은 절대 덮어쓰지 않는다. CPK Limit 역산(cpk.js cpkComputeTargets)과
 // Item_detail 가우시안 곡선이 원값을 그대로 쓴다.
-const LEN8_MAX = 8;       // 표시 최대 길이(부호 제외)
-const LEN8_MIN_SIG = 4;   // 일반표기가 이 미만으로 뭉개지면 지수표기
+const LEN8_MAX = 8;       // 전체 표시 최대 길이(부호 제외)
+const LEN8_MAX_DEC = 4;   // 소수 최대 자리수
+const LEN8_MIN_SIG = 2;   // 일반표기 유효숫자가 이 미만으로 뭉개지면 지수표기
 
 function _len8StripPlain(s) {            // 소수부 끝자리 0 제거 ("3.5000"→"3.5")
   return s.indexOf(".") < 0 ? s : s.replace(/\.?0+$/, "");
@@ -263,28 +268,22 @@ function _len8Sig(s) {                   // 유효숫자 개수(가수부 기준
 }
 function _len8Body(s) { return s.replace("-", "").length; }   // 부호 제외 길이
 
-// 소수 d자리 버림. ⚠ 곱셈(Math.floor(n*10**d)/10**d)으로 구현하면 부동소수점 오차로 틀린다
+// 지수표기 — 가수부만 끝자리 0 을 떼고 "e+12"→"e12".
+// ⚠ 끝자리 0 제거를 문자열 전체에 걸면 "1.0000e+1" 의 지수부까지 먹어 "1.00000e" 라는
+//   깨진 값이 되므로 가수부/지수부를 분리해 처리한다.
+function _len8Exp(n, d) {
+  const s = n.toExponential(d);
+  const i = s.indexOf("e");
+  return _len8StripPlain(s.slice(0, i)) + s.slice(i).replace("e+", "e");
+}
+// 소수 d자리 버림 — 반올림이 자리올림을 일으켰을 때만 쓴다.
+// ⚠ 곱셈(Math.floor(n*10**d)/10**d)으로 구현하면 부동소수점 오차로 틀린다
 //   (8.7*10 = 86.99999999999999 → floor → 8.6). toFixed 로 넉넉히 뽑아 문자열에서 자른다.
-function _len8TruncFixed(n, d) {
+function _len8Trunc(n, d) {
   const neg = n < 0;
   const parts = Math.abs(n).toFixed(Math.min(100, d + 5)).split(".");
-  const ip = parts[0];
   const fp = ((parts[1] || "") + "0".repeat(d)).slice(0, d);
-  return (neg ? "-" : "") + (d > 0 ? ip + "." + fp : ip);
-}
-// 지수표기도 버림 — 가수부만 문자열에서 자른다. ⚠ 끝자리 0 제거를 문자열 전체에 걸면
-//   "1.0000e+1" 의 지수부까지 먹어 "1.00000e" 라는 깨진 값이 되므로 가수부/지수부를 분리한다.
-function _len8TruncExp(n, d) {
-  const s = n.toExponential(Math.min(20, d + 5));
-  const i = s.indexOf("e");
-  const ex = s.slice(i).replace("e+", "e");
-  let m = s.slice(0, i);
-  const neg = m.startsWith("-");
-  if (neg) m = m.slice(1);
-  const parts = m.split(".");
-  const ip = parts[0];
-  const fp = ((parts[1] || "") + "0".repeat(d)).slice(0, d);
-  return (neg ? "-" : "") + _len8StripPlain(d > 0 ? ip + "." + fp : ip) + ex;
+  return (neg ? "-" : "") + (d > 0 ? parts[0] + "." + fp : parts[0]);
 }
 
 function fmtLen8(v) {
@@ -296,23 +295,27 @@ function fmtLen8(v) {
   if (_len8Body(raw) <= LEN8_MAX) return raw;                 // 짧으면 손대지 않는다
 
   const e = Math.floor(Math.log10(Math.abs(n)));
-  // 일반표기 후보 — 버림이라 자리올림이 없어 자리수가 늘지 않는다(후보 1개면 충분).
-  let plain = null;
-  const d = (e >= 0) ? (LEN8_MAX - e - 2) : (LEN8_MAX - 2);
-  if (d >= 0 && d <= 100) {                 // toFixed 상한 100 초과는 RangeError
-    const p = _len8StripPlain(_len8TruncFixed(n, d));
-    // 버림으로 값이 통째로 0 이 되면(아주 작은 값) 일반표기를 버리고 지수표기를 쓴다.
-    if (_len8Body(p) <= LEN8_MAX && Number(p) !== 0) plain = p;
-  }
+  // 소수 자리수: 최대 4자리, 단 정수부가 길면 전체 8자에 맞춰 줄인다.
+  const dec = Math.max(0, Math.min(LEN8_MAX_DEC, LEN8_MAX - Math.max(1, e + 1) - 1));
+  let plain = _len8StripPlain(n.toFixed(dec));
+  // 자리올림(정수부가 커짐)이면 그 자리에서 버림으로 대체 — 앞자리가 바뀌지 않게.
+  if (Math.floor(Math.abs(Number(plain))) > Math.floor(Math.abs(n)))
+    plain = _len8StripPlain(_len8Trunc(n, dec));
+  // 그래도 8자를 넘으면 한 자리 더 줄인다(방어 — 버림 대체 뒤엔 사실상 도달하지 않는다).
+  if (_len8Body(plain) > LEN8_MAX && dec > 0) plain = _len8StripPlain(n.toFixed(dec - 1));
+
   // 지수표기 후보 — 지수부(e-10·e308)가 길이를 먹으므로 전체 길이로 판정해야 한다.
   //   가수부만 세면 12345678901 이 "1.2346e1"(=12.346) 이 되어 값이 통째로 틀어진다.
   let exp = null;
-  for (let dd = 5; dd >= 0; dd--) {
-    const ex = _len8TruncExp(n, dd);
+  for (let d = 5; d >= 0; d--) {
+    const ex = _len8Exp(n, d);
     if (_len8Body(ex) <= LEN8_MAX) { exp = ex; break; }
   }
-  if (exp === null) exp = _len8TruncExp(n, 0);   // 지수부가 길면(e308) 8자 초과를 허용
-  if (plain === null) return exp;
+  if (exp === null) exp = _len8Exp(n, 0);       // 지수부가 길면(e308) 8자 초과를 허용
+
+  if (Number(plain) === 0) return exp;          // 소수 4자리로 값이 사라짐
+  if (_len8Body(plain) > LEN8_MAX) return exp;  // 정수부만으로 8자 초과
+  // 잘려서 유효숫자를 잃었을 때만 지수로 (원래 짧은 0.0003 은 exp 도 유효숫자 1 이라 유지된다).
   return (_len8Sig(plain) < LEN8_MIN_SIG && _len8Sig(exp) > _len8Sig(plain)) ? exp : plain;
 }
 
@@ -583,7 +586,10 @@ function issueUi(panel) {
   const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
   // hideClose/hideOpen: Status 별 행 숨김(액션 메뉴 — yield_issue.applyIssueStatusFilter).
   // 검색과 독립된 별도 클래스(.row-status-hide)라 둘을 동시에 걸 수 있다.
+  // statsFold: Compare 패널 전용 — Before/After 통계 9컬럼 접기(툴바 '통계 접기').
+  // 화면 표시 상태일 뿐이라 저장하지 않는다(새로고침하면 펼침으로 돌아간다).
   if (!issueUiState[id]) issueUiState[id] = { search: "", delMode: false,
-                                              hideClose: false, hideOpen: false };
+                                              hideClose: false, hideOpen: false,
+                                              statsFold: false };
   return issueUiState[id];
 }

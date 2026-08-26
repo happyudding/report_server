@@ -282,6 +282,12 @@ document.querySelector(".content").addEventListener("click", e => {
       else { ui.hideClose = false; ui.hideOpen = false; }
       applyIssueStatusFilter(actPanel);
     }
+    // Compare 표 Before/After 통계 9컬럼 접기 — 위 보기 필터와 같은 성격(화면 전용·저장 없음).
+    else if (kind === "cmp-stats") {
+      const ui = issueUi(actPanel);
+      ui.statsFold = !ui.statsFold;
+      applyCmpStatsFold(actPanel);
+    }
     return;
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");

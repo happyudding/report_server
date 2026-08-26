@@ -101,6 +101,7 @@ from .users import (  # noqa: F401
     set_user_favorite,
     set_user_important,
     update_user_password,
+    user_activity,
 )
 from .client_versions import (  # noqa: F401
     get_client_versions,

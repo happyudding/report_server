@@ -3115,6 +3115,10 @@ class HoneyMainWindow(QMainWindow):
         _lot_id = self._lot_id_from_sources(work_group)
         if _lot_id:
             defaults["lot_id"] = _lot_id
+        # 세션 이름 기본값 = 메인창 Save Name(비어 있으면 자동 제안값) — 다이얼로그
+        # 맨 위 Save Name 칸에 미리 채워 업로드 직전에 한 번 더 고칠 수 있다.
+        defaults["file_name"] = (self.le_outname.text().strip()
+                                 or _suggest_base_name(self.csv_paths, work_group))
         # Web Report 업로드는 PIN 입력을 요구하지 않는다 (비밀번호 행 숨김).
         dlg = UploadDialog(self, defaults=defaults, show_password=False)
         if not dlg.exec():
@@ -3123,8 +3127,6 @@ class HoneyMainWindow(QMainWindow):
             return
         meta = dlg.values()
         self._last_upload = meta
-        meta["file_name"] = self.le_outname.text().strip() or _suggest_base_name(
-            self.csv_paths, work_group)
 
         # 대기 순서도 제출 순서와 같게 둔다 — 워커가 FIFO 라, 뒤에 제출한 것을 먼저 기다리면
         # 진행바가 그 앞 단계의 소요를 엉뚱한 라벨로 표시하고 분포 단계 메시지(n/총 chunk)도
@@ -3646,6 +3648,8 @@ class HoneyMainWindow(QMainWindow):
         # ── 메타 입력 다이얼로그 (전처리가 뒤에서 도는 동안) ──────────────────
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
+        # 세션 이름 기본값 = 업로드한 xlsx 파일명 — 다이얼로그 맨 위 Save Name 칸에서 수정 가능.
+        defaults["file_name"] = Path(path).stem
         dlg = UploadDialog(self, defaults=defaults, show_password=False)   # web_report=PIN 없음
         if not dlg.exec():
             prep_ex.shutdown(wait=False, cancel_futures=True)   # 대기 중인 dist 만 취소됨
@@ -3654,7 +3658,6 @@ class HoneyMainWindow(QMainWindow):
             return
         meta = dlg.values()
         self._last_upload = meta
-        meta["file_name"] = Path(path).stem
 
         # ── 전처리 결과 대기(실제 진행률) ─────────────────────────────────────
         progress.set(f"xlsx 전처리 중... {name}", busy=False)

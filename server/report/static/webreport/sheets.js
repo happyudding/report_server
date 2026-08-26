@@ -14,6 +14,19 @@ function collectGrid(panelEl, baseGrid) {
 
 // ── sheet-table 렌더 (xlsx 텍스트 데이터 원형 재현) ──────────────────────────
 
+// Issue Table Compare(Compare 모드) 의 Before/After 통계 컬럼 — 값이 cpk_rows 에서 오고
+// stdev 는 서버가 반올림하지 않아 그대로 찍으면 컬럼 폭을 밀어낸다. CPK 탭과 같은 표시
+// 규칙(core.js fmtLen8: 소수 4자리 반올림 + 8자 상한)을 적용한다.
+// 이 컬럼명은 Compare 시트에만 있으므로(web_report/tabs/compare_issue.py `_stat_cells`)
+// **같은 렌더러를 쓰는 일반 Issue Table·Yield 에는 영향이 없다**.
+const CMP_STAT_COL_RE = /^(before|after)_(avg|stdev|cpk)$/i;
+
+// 위 6개 + 비교지표 3개 = 툴바 '통계 접기' 버튼이 한꺼번에 숨기는 컬럼 집합
+// (사용자 요청 2026-08-26 — 가로폭이 너무 넓다). 렌더 시 col/th/td 에 cmp-stat-col
+// 클래스를 붙여 두고 CSS(#panel-issue-cmp.cmp-stats-folded)가 통째로 감춘다.
+const CMP_FOLD_COL_RE = /^(before|after)_(avg|stdev|cpk)$|^(meanshift_sigma|stdev_delta_pct|cpk_ratio_pct)$/i;
+function isCmpFoldCol(c) { return CMP_FOLD_COL_RE.test(String(c || "").trim()); }
+
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
 // narrowSrc: source 컬럼이 SRC_NARROW_MIN 이상일 때 — {src}_yield/_count 폭 힌트를 숫자(xx.xx)
@@ -45,6 +58,10 @@ function colWidth(name, kind, narrowSrc) {
   // 150(=225px, 비활성 장문 라벨 기준) 에서 좁혔다. 버튼 3개(+ / ? / 확정)도 들어간다.
   if (n === "signature")                return px(76);
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
+  // Compare 시트 통계 9종: 값이 fmtLen8(8자 상한)로 잘려 있고 헤더도 축약(△σ% 등)이라
+  // 기본 80(=120px) 힌트는 과하다. auto table-layout 이므로 이 값은 최소 힌트일 뿐,
+  // 내용이 넓으면 그만큼만 늘어난다 (사용자 요청 2026-08-26 — 가로폭 축소).
+  if (kind === "issue" && isCmpFoldCol(name)) return px(40);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
   if (n === "result")                   return "80px";
@@ -406,8 +423,12 @@ function orderColumns(cols, kind) {
   const comments = cols.filter(isComment);
   // Issue Table 은 Category 컬럼을 화면에 표시하지 않는다(섹션 구분은 상단 고정 헤더 라벨이 담당).
   // 단 rows 의 Category 데이터 필드는 섹션 판정(rowSection)에 그대로 쓰이므로 여기서 컬럼만 뺀다.
+  // Compare 시트의 "구분"(산포/신규)도 화면 컬럼에서 뺀다 (2026-08-26 사용자 요청) —
+  // 섹션 헤더가 이미 Distribution/ETC 를 구분하고 신규 항목은 before_* 가 비어 알 수 있다.
+  // 서버 payload 는 그대로 두므로(행 dict 에 값은 남음) 스키마 bump·재빌드가 없다.
   let rest = cols.filter(c => !isComment(c)
     && !(kind === "issue" && String(c).trim().toLowerCase() === "category")
+    && !(kind === "issue" && String(c).trim() === "구분")
     // 토글 전용 내부 마킹 필드 + Signature 셀 렌더 보조 필드(_sig/_sigrev) 제외
     && !/^_(grp|detail|ndetail|sig|sigrev)$/.test(String(c)));
 
@@ -488,7 +509,14 @@ function sheetHeaderShortLabel(c) {
 // 화면 표시용 헤더 라벨 (avg → Avg 등).
 // COLUMN_DISPLAY_ALIAS: 저장 키(= 편집 DB·eval export·클라 Excel 이 쓰는 컬럼명)는 그대로 두고
 // 화면/Excel 내보내기 헤더 표기만 바꾼다 — 키를 바꾸면 기존 세션의 저장된 comment 가 유실된다.
-const COLUMN_DISPLAY_ALIAS = { "개발 comment": "개발팀 Comment" };
+// Compare 시트 비교지표 3종은 스네이크케이스 원문이 그대로 헤더에 나와 컬럼을 넓혔다 —
+// 기호 표기로 줄인다(2026-08-26 사용자 확정 문안). 저장 키는 서버 payload 그대로다.
+const COLUMN_DISPLAY_ALIAS = {
+  "개발 comment": "개발팀 Comment",
+  "meanshift_sigma": "meanshift_σ",
+  "stdev_delta_pct": "△σ%",
+  "cpk_ratio_pct": "cpk%",
+};
 function displayLabel(c) {
   const n = String(c).trim().toLowerCase();
   if (n === "avg") return "Avg";
@@ -796,7 +824,14 @@ function issueSectionHeadRowsHtml(cols, sec) {
     runs.push({ start: i, len: j - i, group: (g && (j - i) >= 2) ? g : null });
     i = j;
   }
-  const commentCls = c => isCommentCol(c) ? ` class="st-comment"` : "";
+  // th 클래스 = comment 폭 고정 + Compare 통계 접기 대상 표시(cmp-stat-col). 이 표의 th 에는
+  // 컬럼명 속성이 없어 접기 CSS 가 클래스로만 컬럼을 짚는다(td/col 과 같은 클래스).
+  const commentCls = c => {
+    const parts = [];
+    if (isCommentCol(c)) parts.push("st-comment");
+    if (isCmpFoldCol(c)) parts.push("cmp-stat-col");
+    return parts.length ? ` class="${parts.join(" ")}"` : "";
+  };
   // AI Comment 헤더 밑 참고 안내(2026-08-20 사용자 요청). 열 폭은 .st-comment(330px 고정)가
   // 잡고 있어 안내문은 그 안에서 줄바꿈만 한다 — 열이 넓어지지 않는다(.th-note CSS).
   const aiNote = c => isAiCommentCol(c)
@@ -958,8 +993,11 @@ function renderSheetTable(rows, opts) {
 
   // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.
   const narrowSrc = sourceColCount(cols) >= SRC_NARROW_MIN;
+  // cmp-stat-col = Compare 통계 9종(툴바 '통계 접기' 대상). col/th/td 세 곳에 같은 클래스를
+  // 달아 CSS 한 줄로 컬럼을 통째 감춘다 — colgroup 인덱스는 그대로라 컬럼 리사이즈에 무영향.
+  const foldCls = c => (opts.kind === "issue" && isCmpFoldCol(c)) ? " cmp-stat-col" : "";
   const colgroup = "<colgroup>" + cols.map(c =>
-    `<col style="width:${colWidth(c, opts.kind, narrowSrc)}">`
+    `<col${foldCls(c) ? ` class="cmp-stat-col"` : ""} style="width:${colWidth(c, opts.kind, narrowSrc)}">`
   ).join("") + "</colgroup>";
 
   // Issue 는 persistent thead 대신 섹션(Yield/CPK/ETC)별 2행 헤더 블록을 tbody 안에 sticky 로
@@ -1086,9 +1124,14 @@ function renderSheetTable(rows, opts) {
         // 안 만들어진다. Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
         // 집계 헤더행은 제외 — Item 이 라벨이라 distHasData 로도 걸러지지만, 판정을
         // 데이터 유무에 맡기지 않고 명시한다(행 높이도 이 셀이 빠져야 좁아진다).
+        // CMPDIST/CMPETC(Compare 시트)도 같은 미니셀을 쓴다 (2026-08-26 사용자 요청 —
+        // "일반 Issue Table 처럼 산포 썸네일을 달라"). variant 는 붙이지 않아 전체 범위
+        // ECDF 가 되고, Before/After 소스 곡선이 한 셀에 함께 그려져 비교 목적에 맞는다.
+        // ETC divider(Item="")·자유입력 항목은 위 item/distHasData 가드가 자동으로 거른다.
         if (opts.kind === "issue" && item && !subhead && !issuePassRow && !(r && r._agg)
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC"
-            || rowSection[ri] === "CPK" || rowSection[ri] === "TEMP")
+            || rowSection[ri] === "CPK" || rowSection[ri] === "TEMP"
+            || rowSection[ri] === "CMPDIST" || rowSection[ri] === "CMPETC")
           && distHasData(item)) {
           // CPK 섹션 미니셀은 Bin1(양품) ECDF 로 그린다(data-bin1) — 행의 cpk 값이 Bin1
           // 기준이라 그림과 숫자의 데이터 기준을 맞춘다. Yield/ETC 는 기존 전체 범위 유지.
@@ -1151,7 +1194,7 @@ function renderSheetTable(rows, opts) {
       if (opts.edit && (!opts.editableCols || opts.editableCols.has(c))) {
         if (opts.editableCols) {
           const cls = "editing-cell dblclick-edit" + (subhead ? " sheet-subhead" : "")
-            + (isCommentCol(c) ? " st-comment" : "");
+            + (isCommentCol(c) ? " st-comment" : "") + foldCls(c);
           // web_report comment 저장용 행 식별 키 — 없으면(서브헤더/placeholder 행) 저장 대상 아님.
           const rowKey = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
           const keyAttr = rowKey ? ` data-key="${esc(rowKey)}"` : "";
@@ -1161,11 +1204,12 @@ function renderSheetTable(rows, opts) {
           return `<td class="${cls}"${keyAttr}${rawAttr} data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${cInner}</td>`;
         }
         const cls = "editing-cell" + (isNum ? " st-num" : "") + (subhead ? " sheet-subhead" : "")
-          + (isCommentCol(c) ? " st-comment" : "");
+          + (isCommentCol(c) ? " st-comment" : "") + foldCls(c);
         return `<td class="${cls}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
       }
       const clsParts = [];
       if (isCommentCol(c)) clsParts.push("st-comment");   // 열너비 고정 (CSS .st-comment)
+      if (foldCls(c)) clsParts.push("cmp-stat-col");      // Compare 통계 접기 대상
       let cellStyle = "";
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
@@ -1206,6 +1250,17 @@ function renderSheetTable(rows, opts) {
         }
         const n = Math.min(9, txt.trim().length);
         if (n > 5) clsParts.push(`cpk-fit-${n}`);
+      }
+      // Issue Table Compare 의 Before/After 통계 셀 — CPK 탭과 같은 표시 규칙으로 줄이고
+      // 실제로 줄어든 경우에만 원값을 title 툴팁에 남긴다. 위 CPK 섹션 분기와는 조건이
+      // 배타적이라(저쪽은 issueRowSec === "CPK", 여기는 Compare 전용 컬럼명) 겹치지 않는다.
+      if (!cpkTitle && opts.kind === "issue" && !isEmpty && CMP_STAT_COL_RE.test(String(c))) {
+        const short = fmtLen8(v);
+        if (short && short !== txt) {
+          cpkTitle = ` title="${esc(txt)}"`;
+          txt = short;
+          clsParts.push("cpk-abbr");
+        }
       }
       // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).
       const isSelCell = opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem);
@@ -1260,8 +1315,16 @@ function renderSheetTable(rows, opts) {
       }
       // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
       // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
+      //
+      // ⚠️ data-col 은 **저장 셀렉터**(collectSheetTable 의 `td[data-r][data-col]`)를 겸하므로
+      // 폰트를 키우겠다고 편집 모드 값 셀에 되붙이면 안 된다 — 편집하지 않은 Step/TNO/Yield 값까지
+      // 화면 텍스트로 덮어써져 저장 데이터가 오염된다. 그래서 **CSS 전용** 사본 속성을 따로 둔다.
+      // data-fcol 은 어떤 JS 도 읽지 않는다(폰트 규칙 전용) — 편집 모드에서도 값 셀이 조회 모드와
+      // 같은 크기로 보이게 한다(사용자 신고 2026-08-26: "특정 세션만 Yield 숫자가 작다"
+      // = 편집 권한이 있어 편집 모드로 열린 세션. 실측 11px vs 조회 21px).
       const colAttr = (opts.kind === "issue" && !opts.edit) ? ` data-col="${esc(c)}"` : "";
-      return `<td${cls ? ` class="${cls}"` : ""}${cellStyle}${colAttr}${cpkTitle} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
+      const fcolAttr = (opts.kind === "issue" && opts.edit) ? ` data-fcol="${esc(c)}"` : "";
+      return `<td${cls ? ` class="${cls}"` : ""}${cellStyle}${colAttr}${fcolAttr}${cpkTitle} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
     const isPassRow = !subhead && (issuePassRow
       || (binCol && String((r ? r[binCol] : "") ?? "").trim() === "1"));

@@ -6,7 +6,8 @@
 왜 파이썬 테스트로 안 되나: 이 기능이 깨지는 방식은 화면에서만 드러난다.
   · `openItemDetail` 의 opts 가 조건부로 대입되면, gap 상세를 본 뒤 **일반 항목**을 열 때
     이전 gap URL 이 남아 엉뚱한 데이터가 뜬다(에러 없이 조용히 — 플랜 R-3).
-  · 입력창에 글자가 있는데 `-` 키가 연산자로 커밋되면 `A-B` 같은 항목명을 아예 못 친다.
+  · 평문 렉서(gcLex)가 인용 규칙을 어기면 이름에 공백·연산자가 든 항목이 못 들어가거나
+    수정 모달의 tokens → 원문 라운드트립이 깨져 저장된 수식이 변형된다.
   · 수식 토큰 서식(item=파란 기울임 / source=빨간 기울임)이 빠지면 사용자 요구가 무너진다.
   · 메뉴 항목 순서(composite → Gap Chart)는 사용자가 지정한 것이다.
 
@@ -18,9 +19,11 @@
   (e) 정적: CSS 라이트 + 다크
   (f) 토큰 → 표시 문자열 (이름에 괄호·연산자·공백이 든 경우 포함)
   (g) gcModeOf 3분기 / gcValidate 케이스
-  (h) gcTokenHtml 색 클래스 + HTML 이스케이프
+  (h) gcExprHtml 색 클래스 + HTML 이스케이프 (읽기 전용 — 클릭 삭제 속성 없음)
   (i) gcCardsHtml — data-gap-id / .distg-plot / 편집모드 게이트
-  (j) 입력창에 글자가 있을 때 `-` 키가 연산자를 커밋하지 않는다 + 빈 입력 Backspace pop
+  (j) 평문 렉서 — @"이름" 인용·@"source"!"항목" 명시·별칭 연산자·경고(목록 밖 이름)·
+      tokens → gcTokensToText → gcLex 라운드트립 (2026-08-26 입력 방식 개편)
+  (j2) `@` 자동완성 조각 판정 + 삽입(조각 치환·source 드롭다운 반영)
   (k) **fetch 스텁으로 gap → 일반 항목 연속 호출 시 마지막 URL 이 /scatter/** (R-3 실동작)
 
 Edge 가 없으면 정적 검사만 하고 나머지는 SKIP 한다(이 저장소에는 node 가 없다).
@@ -125,20 +128,25 @@ def test_registered():
         "gap_chart.js 는 edit_mode.js 앞에 로드돼야 합니다"
     assert 'id="gcModal"' in view, "생성/수정 모달이 없습니다"
     for el in ("gcModalTitle", "gcName", "gcLimitLo", "gcLimitHi", "gcSourceList",
-               "gcItemSearch", "gcItemList", "gcExpr", "gcTokenInput", "gcSrcQual",
+               "gcItemSearch", "gcItemList", "gcExpr", "gcFormulaInput", "gcSrcQual",
                "gcSuggest", "gcStatus", "gcSave", "gcCancel", "gcDelete"):
         assert f'id="{el}"' in view, f"모달에 #{el} 이 없습니다"
     # 좌우 2단 (사용자 확정 레이아웃) — 왼쪽 source·항목, 오른쪽 수식
     assert "gc-cols" in view and view.count("gc-col") >= 3, "2단 레이아웃 마크업이 없습니다"
     assert view.index('id="gcSourceList"') < view.index('id="gcExpr"'), \
         "왼쪽(source·항목)이 오른쪽(수식)보다 먼저 와야 합니다"
+    # Limit 은 차트 이름 **아래** 줄 — 세로 2줄 레이아웃 (2026-08-26 사용자 요청)
+    assert view.index('id="gcName"') < view.index('id="gcLimitLo"'), \
+        "Limit 이 차트 이름보다 앞에 있습니다"
+    top = re.search(r"\.gc-top \{([^}]*)\}", view)
+    assert top and "flex-direction: column" in top.group(1), \
+        ".gc-top 이 세로 배치가 아닙니다 (Limit 이 이름 밑으로 안 내려갑니다)"
     # 모달 타이핑이 세션을 dirty 로 만들면 이탈 경고가 오작동한다
     assert re.search(r'id="gcModal"[^>]*data-no-dirty', view), "모달에 data-no-dirty 가 없습니다"
-    # 연산자 버튼 6종 + 지우기
-    for op in ("+", "-", "*", "/", "(", ")"):
-        assert f'data-gc-op="{op}"' in view, f"연산자 버튼 {op} 가 없습니다"
-    assert 'data-gc-act="pop"' in view and 'data-gc-act="clear"' in view
-    print("[정적] 로드 순서 + 2단 모달/입력요소/연산자 버튼 + data-no-dirty OK")
+    # 구 토큰 커밋 UI(연산자 버튼·⌫)는 제거됐다 — 되살아나면 입력 방식이 갈라진 것
+    assert "data-gc-op=" not in view and 'data-gc-act="pop"' not in view, \
+        "구 연산자 버튼 UI 가 남아 있습니다 (2026-08-26 평문 입력 개편)"
+    print("[정적] 로드 순서 + 2단 모달/입력요소 + 이름 밑 Limit + data-no-dirty OK")
 
 
 def test_hooks():
@@ -217,10 +225,11 @@ def test_modal_width():
     box = re.search(r"\.modal-box\.gc-modal-box \{([^}]*)\}", view)
     assert box, ".modal-box.gc-modal-box 규칙이 없습니다"
     css = box.group(1)
-    assert "1600px" in css, "Distribution composite 와 같은 가로 폭(1600px)이 아닙니다"
+    # 2026-08-26 사용자 요청으로 1600px → 1240px 축소 (수식 평문 입력 개편과 세트)
+    assert "1240px" in css, "가로 폭이 1240px 가 아닙니다 (2026-08-26 축소)"
     assert "overflow: hidden" in css, "모달이 자체 스크롤을 내면 안쪽 목록 스크롤이 안 생깁니다"
     assert "flex-direction: column" in css, "세로 flex 가 아니면 목록이 남는 공간을 못 받습니다"
-    print("[정적] 모달 폭 1600px + 특이도 + 내부 스크롤 OK")
+    print("[정적] 모달 폭 1240px + 특이도 + 내부 스크롤 OK")
 
 
 def test_formula_bar():
@@ -307,13 +316,13 @@ def test_mode_and_validate():
 
 
 def test_token_html():
-    """(h) 토큰 서식 클래스 + HTML 이스케이프."""
+    """(h) 토큰 서식 클래스 + HTML 이스케이프 — 칩은 어디서나 읽기 전용(클릭 삭제 없음)."""
     js = f"""<script>
       {SETUP}
-      var plain = gcTokenHtml({{t:'item',item:'IT00'}}, 0);
-      var qual  = gcTokenHtml({{t:'item',source:'WF1',item:'IT00'}}, 1);
-      var evil  = gcTokenHtml({{t:'item',item:'<script>x</scr'+'ipt>'}}, 2);
-      var op    = gcTokenHtml({{t:'op',v:'*'}}, 3);
+      var plain = gcExprHtml([{{t:'item',item:'IT00'}}]);
+      var qual  = gcExprHtml([{{t:'item',source:'WF1',item:'IT00'}}]);
+      var evil  = gcExprHtml([{{t:'item',item:'<script>x</scr'+'ipt>'}}]);
+      var op    = gcExprHtml([{{t:'op',v:'*'}}]);
       _emit({{plain: plain, qual: qual, evil: evil, op: op}});
     </script>"""
     got = json.loads(run_probe(DEPS, "", js, "tokhtml"))
@@ -321,7 +330,7 @@ def test_token_html():
     assert "gc-tok-src" in got["qual"] and "gc-tok-item" in got["qual"], got["qual"]
     assert "<script>" not in got["evil"] and "&lt;script&gt;" in got["evil"], got["evil"]
     assert "×" in got["op"], got["op"]
-    assert 'data-gc-tok="1"' in got["qual"], got["qual"]
+    assert "data-gc-tok" not in got["qual"], "칩에 구 클릭-삭제 속성이 남아 있습니다"
     print("  [browser] 토큰 서식 클래스 + 이스케이프 OK")
 
 
@@ -375,39 +384,123 @@ def test_formula_bar_render():
     print("  [browser] Item_detail 수식 줄 렌더 + 평문 폴백 OK")
 
 
-def test_input_keys():
-    """(j) 입력창에 글자가 있으면 `-` 키가 연산자를 커밋하지 않는다 + 빈 입력 Backspace pop."""
-    body = ('<div id="gcModal"><input id="gcTokenInput"><div id="gcExpr"></div>'
-            '<div id="gcStatus"></div><div id="gcSuggest"></div>'
+def test_lexer():
+    """(j) 평문 렉서 — 인용·source 명시·별칭·경고·라운드트립 (2026-08-26 개편의 핵심)."""
+    js = f"""<script>
+      {SETUP}
+      function T(s) {{
+        try {{ var o = gcLex(s); return {{ok:true, toks:o.tokens, warns:o.warns}}; }}
+        catch (e) {{ return {{ok:false, msg:e.message, part:(e.tokens||[]).length}}; }}
+      }}
+      var basic = T('(@"A-B (max)" - 2) / @"WF1"!"IT00"');
+      var alias = T('@"IT00" × 2');            // 칩 표시 문자 붙여넣기 허용
+      var caseIns = T('@"it00"');              // 대소문자는 조회에만 관대 → 정식 이름
+      var unknown = T('@"NOPE"');              // 목록 밖 이름 = 경고, 오류 아님 (§5-12)
+      var badAt = T('@abc');
+      var unclosed = T('@"abc');
+      var badChar = T('@"IT00" & 2');
+      var toks = [{{t:'lp'}}, {{t:'item',item:'A-B (max)'}}, {{t:'op',v:'-'}}, {{t:'num',v:2}},
+                  {{t:'rp'}}, {{t:'op',v:'/'}}, {{t:'item',source:'WF1',item:'IT00'}}];
+      var text = gcTokensToText(toks);
+      // 키 순서 무시 구조 비교 — 렉서는 t,item,source 순으로 만들지만 의미는 같다.
+      function sortTok(t) {{ var o = {{}}; Object.keys(t).sort().forEach(function(k) {{ o[k] = t[k]; }}); return o; }}
+      var round = JSON.stringify(gcLex(text).tokens.map(sortTok))
+        === JSON.stringify(toks.map(sortTok));
+      _emit({{basic:basic, alias:alias, caseIns:caseIns, unknown:unknown,
+             badAt:badAt, unclosed:unclosed, badChar:badChar, text:text, round:round}});
+    </script>"""
+    got = json.loads(run_probe(DEPS, "", js, "lexer"))
+    b = got["basic"]
+    assert b["ok"] and len(b["toks"]) == 7 and not b["warns"], b
+    assert b["toks"][1] == {"t": "item", "item": "A-B (max)"}, b["toks"]
+    assert b["toks"][6] == {"t": "item", "source": "WF1", "item": "IT00"}, b["toks"]
+    a = got["alias"]
+    assert a["ok"] and a["toks"][1] == {"t": "op", "v": "*"}, a
+    c = got["caseIns"]
+    assert c["ok"] and c["toks"][0]["item"] == "IT00" and not c["warns"], c
+    u = got["unknown"]
+    assert u["ok"] and u["toks"][0]["item"] == "NOPE" and len(u["warns"]) == 1, \
+        f"목록 밖 이름이 경고+보존으로 처리되지 않았다: {u}"
+    for k in ("badAt", "unclosed", "badChar"):
+        assert got[k]["ok"] is False, f"{k} 가 통과했다: {got[k]}"
+    assert '@"A-B (max)"' in got["text"] and '@"WF1"!"IT00"' in got["text"], got["text"]
+    assert got["round"] is True, f"tokens → 원문 → tokens 라운드트립이 깨졌다: {got['text']}"
+    print("  [browser] 평문 렉서 + 라운드트립 OK")
+
+
+def test_mention_insert():
+    """(j2) `@` 자동완성 — 조각 판정·후보·삽입(조각 치환 + source 드롭다운 반영)."""
+    body = ('<div id="gcModal"><input id="gcFormulaInput"><select id="gcSrcQual"></select>'
+            '<div id="gcExpr"></div><div id="gcStatus"></div><div id="gcSuggest"></div>'
             '<input id="gcName" value="n"><button id="gcSave"></button></div>')
     js = f"""<script>
       {SETUP}
-      var input = document.getElementById('gcTokenInput');
-      function key(k) {{
-        var e = new KeyboardEvent('keydown', {{key:k, bubbles:true, cancelable:true}});
-        input.dispatchEvent(e);
-        return e.defaultPrevented;
-      }}
-      // 1) 입력창이 비었을 때 '-' → 연산자 토큰
+      var input = document.getElementById('gcFormulaInput');
+      gcRenderSrcQual();
+      // 1) `@IT` 조각 → 후보 → 삽입하면 조각이 @"IT00" 으로 치환된다
+      input.value = '@IT';
+      input.focus(); input.setSelectionRange(3, 3);
+      gcUpdateSuggest();
+      var nSug = _gcSuggest.length;
+      gcInsertItem(_gcSuggest.length ? _gcSuggest[0].subject : 'IT00');
+      var v1 = input.value;
+      // 2) source 드롭다운을 고르면 삽입이 @"source"!"항목" 명시 참조가 된다
       input.value = '';
-      var p1 = key('-');
-      var afterEmpty = _gcTokens.length;
-      // 2) 글자가 있을 때 '-' → 토큰 커밋 안 함 (item 이름의 일부)
-      input.value = 'VOL_A';
-      var p2 = key('-');
-      var afterTyping = _gcTokens.length;
-      // 3) 빈 입력 Backspace → 마지막 토큰 pop
-      input.value = '';
-      key('Backspace');
-      var afterPop = _gcTokens.length;
-      _emit({{p1:p1, p2:p2, afterEmpty:afterEmpty, afterTyping:afterTyping, afterPop:afterPop}});
+      input.setSelectionRange(0, 0);
+      document.getElementById('gcSrcQual').value = 'WF1';
+      gcInsertItem('IT00');
+      var v2 = input.value;
+      gcRelex();
+      _emit({{nSug:nSug, v1:v1, v2:v2, nTok:_gcTokens.length,
+             err:_gcLexError ? _gcLexError.message : "", mode: gcModeOf(_gcTokens)}});
     </script>"""
-    got = json.loads(run_probe(DEPS, body, js, "keys"))
-    assert got["afterEmpty"] == 1 and got["p1"] is True, got
-    assert got["afterTyping"] == 1 and got["p2"] is False, \
-        f"글자 입력 중 '-' 가 연산자로 커밋됐다: {got}"
-    assert got["afterPop"] == 0, got
-    print("  [browser] 연산자 키 커밋 규칙 + Backspace pop OK")
+    got = json.loads(run_probe(DEPS, body, js, "mention"))
+    assert got["nSug"] >= 1, f"`@IT` 조각에 후보가 없다: {got}"
+    assert got["v1"] == '@"IT00"', f"조각 치환이 틀렸다: {got['v1']!r}"
+    assert got["v2"] == '@"WF1"!"IT00"', f"source 명시 삽입이 틀렸다: {got['v2']!r}"
+    assert got["nTok"] == 1 and not got["err"], got
+    assert got["mode"] == "explicit", got
+    print("  [browser] `@` 자동완성 + 삽입 OK")
+
+
+def test_gap_detail_full_points():
+    """(l) Gap 상세 CDF 는 **die 1개당 점 1개** — 중복값 접힘·다운샘플 금지 (§5 불변).
+
+    composite 상세가 압축 ECDF(고유값 접힘)로 그려져 다운샘플처럼 보인 회귀(2026-08-26
+    신고)의 gap 판 방지선. gap 상세는 /gap_chart 응답의 원본 values 전량을
+    distRenderCdf 가 그대로 그려야 한다 — 100 die 가 고유값 3개뿐이어도 점 100개."""
+    body = '<div id="distCdf"></div>'
+    js = f"""<script>
+      {SETUP}
+      // 다른 파일(맵/비교/주석) 전역 스텁 — distRenderCdf 가 무조건 부르는 것만 최소로.
+      var mapSelChips = [];
+      function mapSelMarkerTraces() {{ return null; }}
+      function beforeLimitShapes() {{ return []; }}
+      function beforeLimitAnnos() {{ return []; }}
+      var captured = null;
+      window.Plotly = {{
+        newPlot: function(div, traces) {{ captured = traces; div.data = traces; div.on = function() {{}}; }},
+        purge: function() {{}}
+      }};
+      var N = 100, vals = [], ser = [], xs = [], ys = [];
+      for (var i = 0; i < N; i++) {{
+        vals.push([1, 2, 3][i % 3]);         // 고유값 3개뿐인 100 die
+        ser.push('S' + i); xs.push(String(i % 10)); ys.push(String((i / 10) | 0));
+      }}
+      var data = {{ subject: 'G1', is_gap: true, gap_id: 'u1', gap_mode: 'per_source',
+        tokens: [{{t:'item',item:'IT00'}}], formula: 'IT00', status: 'ok', units: '',
+        lower_limit: null, upper_limit: null,
+        sources: [{{ name: 'WF1', values: vals, serial: ser, xpos: xs, ypos: ys }}] }};
+      var err = "";
+      try {{ distRenderCdf(data); }} catch (e) {{ err = String(e && e.message || e); }}
+      var curve = (captured || []).filter(function(t) {{ return t.mode === 'markers'; }})[0];
+      _emit({{ err: err, nPts: curve ? curve.x.length : -1 }});
+    </script>"""
+    got = json.loads(run_probe(DEPS_DETAIL, body, js, "fullpts"))
+    assert not got["err"], f"하네스 오류: {got['err']}"
+    assert got["nPts"] == 100, \
+        f"gap 상세 CDF 점 수가 die 수와 다르다 (다운샘플/고유값 접힘 의심): {got['nPts']}"
+    print("  [browser] gap 상세 die 전량 렌더 (100 die → 100점) OK (§5)")
 
 
 def test_detail_url_no_leak():
@@ -457,7 +550,9 @@ def main():
     test_token_html()
     test_cards_html()
     test_formula_bar_render()
-    test_input_keys()
+    test_lexer()
+    test_mention_insert()
+    test_gap_detail_full_points()
     test_detail_url_no_leak()
     print("[통과] Gap Chart JS 정상")
 

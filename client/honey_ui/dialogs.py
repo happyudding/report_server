@@ -93,6 +93,15 @@ class UploadDialog(QDialog):
         if _default_family in _families:
             self.cbo_family.setCurrentText(_default_family)
         self.formLayout.insertRow(0, "Family*:", self.cbo_family)
+        # Save Name(세션 이름) 칸 — 서버 report_session.file_name 이 되는 값. 호출부가
+        # defaults["file_name"] 으로 메인창 Save Name(또는 자동 제안값)을 넣어 주면 업로드
+        # 직전에 한 번 더 고칠 수 있다. SessionMetaDialog 의 Session Name 과 같은 필드를
+        # 공유한다(라벨만 다름).
+        self._name_label = "Save Name"
+        self.le_session_name = QLineEdit(str(defaults.get("file_name") or ""))
+        self.le_session_name.setToolTip(
+            "검색결과 목록과 세션 상단바(Session_name)에 표시되는 이름")
+        self.formLayout.insertRow(0, f"{self._name_label}*:", self.le_session_name)
         self.le_product.setText(defaults.get("product", ""))
         self.le_lot_id.setText(defaults.get("lot_id", ""))
         self.le_process.setText(defaults.get("process", ""))
@@ -139,6 +148,9 @@ class UploadDialog(QDialog):
         return self._product_type
 
     def _on_ok(self):
+        if not self.le_session_name.text().strip():
+            QMessageBox.warning(self, "입력 오류", f"{self._name_label} 을 입력하세요.")
+            return
         product = self.le_product.text().strip()
         err = _validate_meta(product,
                              self.le_lot_id.text().strip(),
@@ -173,6 +185,7 @@ class UploadDialog(QDialog):
 
     def values(self):
         return {
+            "file_name": self.le_session_name.text().strip(),
             "product_type": self.product_type(),
             "family_product": self.cbo_family.currentText(),
             "product": self.le_product.text().strip(),
@@ -189,9 +202,11 @@ class UploadDialog(QDialog):
 class SessionMetaDialog(UploadDialog):
     """업로드한 세션의 메타를 나중에 고치는 창 — 업로드 다이얼로그를 그대로 재사용한다.
 
-    Part ID 백그라운드 조회·자동완성·미등록 Part ID 확인 경고·Family 콤보가 전부 부모 것이다.
-    다른 점은 셋뿐: (1) 맨 위 Session Name 칸, (2) 비밀번호 행 숨김, (3) Product Type 은
-    세션 값 고정(편집 대상 아님 — 부모가 defaults 에서 받은 값을 그대로 쓴다).
+    Part ID 백그라운드 조회·자동완성·미등록 Part ID 확인 경고·Family 콤보·맨 위 이름 칸이
+    전부 부모 것이다. 다른 점은 셋뿐: (1) 이름 칸 라벨이 Session Name(값 = 서버
+    report_session.file_name — 세션 안 Filename(원본 소스 파일명)과는 별개), (2) 비밀번호 행
+    숨김, (3) Product Type 은 세션 값 고정(편집 대상 아님 — 부모가 defaults 에서 받은 값을
+    그대로 쓴다).
     """
 
     def __init__(self, parent, session):
@@ -202,24 +217,12 @@ class SessionMetaDialog(UploadDialog):
             "lot_id": session.get("lot_id") or "",
             "process": session.get("process") or "",
             "step": session.get("webreport_step") or "",
+            "file_name": session.get("file_name") or "",
         }, show_password=False)
         self.setWindowTitle("세션 정보 수정")
-        # 세션 이름 = 서버 report_session.file_name (검색결과 목록의 파일명 칸 = 상단바
-        # Session_name). 세션 안 Filename(원본 소스 파일명)과는 별개 값이다.
-        self.le_session_name = QLineEdit(str(session.get("file_name") or ""))
-        self.le_session_name.setToolTip("검색결과 목록과 세션 상단바(Session_name)에 표시되는 이름")
-        self.formLayout.insertRow(0, "Session Name*:", self.le_session_name)
-
-    def _on_ok(self):
-        if not self.le_session_name.text().strip():
-            QMessageBox.warning(self, "입력 오류", "Session Name 을 입력하세요.")
-            return
-        super()._on_ok()
-
-    def values(self):
-        v = super().values()
-        v["file_name"] = self.le_session_name.text().strip()
-        return v
+        self._name_label = "Session Name"
+        self.formLayout.labelForField(self.le_session_name).setText(
+            f"{self._name_label}*:")
 
 
 def _is_light(hex_color):

@@ -586,6 +586,25 @@ def auth_me():
     return jsonify(resp)
 
 
+@report_bp.get("/api/auth/profile")
+def auth_profile():
+    """사용자 정보 창 — 신원 + 활동 요약. 본인 것만 준다(다른 사람 활동 조회 불가).
+
+    auth_me 와 나눈 이유는 호출 시점이 다르기 때문이다. auth_me/history 는 첫 화면의
+    필수 왕복이고, 이쪽은 사용자가 메뉴를 열 때만 부르는 집계 쿼리다 — 합치면 모든
+    접속이 쓰지도 않을 COUNT 를 물게 된다."""
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "로그인이 필요합니다."}), 403
+    src = _identity_source()
+    resp = {"user_id": uid, "source": src,
+            "display_name": report_db.get_display_name(uid) or "",
+            "activity": report_db.user_activity(uid)}
+    if src == "honey":
+        resp["has_pin"] = bool(report_db.get_user(uid))
+    return jsonify(resp)
+
+
 @report_bp.post("/api/auth/display_name")
 def auth_display_name():
     """사용자 실명 등록/변경 — 신원이 확인된 본인만(Honey UA · 웹 로그인 · SSO 모두 허용).
