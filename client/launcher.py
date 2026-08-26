@@ -51,7 +51,7 @@ ELEVATED_TIMEOUT_SEC = 900   # 승격 업데이트가 이 시간 안에 안 끝�
 # 런처 빌드 식별자 — .update_fail 기록에 함께 남는다. **런처를 고쳐 배포하면 이 값을
 # 올려라**: 과거의 "3회 실패로 포기" 기록이 자동으로 풀려, 그 버그로 멈춰 있던 PC 가
 # 새 런처를 받는 즉시 다시 시도한다 (transport/app_update.read_fail_count).
-LAUNCHER_BUILD = "2026.08.26-direct-install"
+LAUNCHER_BUILD = "2026.08.26-process-role-fix"
 
 # ── 브랜드 색 (꿀단지 = 노란 계열) ───────────────────────────────────────────
 # 런처는 리소스 파일을 들고 다니지 않는다(onefile 이라 풀어 쓰는 비용이 있고, 아이콘
@@ -140,7 +140,7 @@ def _process_image_path(pid):
 
 
 def running_honey_processes(root):
-    """이 설치 루트에서 실행 중인 Honey/Qt 보조 프로세스 목록."""
+    """이 설치 루트에서 실행 중인 Honey/Qt 프로세스를 역할과 함께 돌려준다."""
     if os.name != "nt":
         return []
     kernel32 = ctypes.windll.kernel32
@@ -153,7 +153,8 @@ def running_honey_processes(root):
     if snapshot == wintypes.HANDLE(-1).value:
         return []
     root_text = os.path.normcase(str(Path(root).resolve())).rstrip("\\") + "\\"
-    wanted = {"honey.exe", "honeyapp.exe", "qtwebengineprocess.exe"}
+    roles = {"honey.exe": "launcher", "honeyapp.exe": "app",
+             "qtwebengineprocess.exe": "helper"}
     found = []
     try:
         entry = _ProcessEntry32W()
@@ -162,15 +163,29 @@ def running_honey_processes(root):
         while ok:
             pid = int(entry.th32ProcessID)
             name = str(entry.szExeFile)
-            if pid != os.getpid() and name.lower() in wanted:
+            name_lower = name.lower()
+            if pid != os.getpid() and name_lower in roles:
                 image_path = _process_image_path(pid)
                 normalized = os.path.normcase(image_path)
                 if normalized.startswith(root_text):
-                    found.append({"pid": pid, "name": name, "path": image_path})
+                    found.append({"pid": pid, "name": name, "path": image_path,
+                                  "role": roles[name_lower]})
             ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
     finally:
         kernel32.CloseHandle(snapshot)
     return found
+
+
+def process_roles(processes):
+    """프로세스 목록을 실제 앱/다른 런처/Qt 보조 프로세스로 나눈다."""
+    apps = [p for p in processes if p.get("role") == "app"]
+    launchers = [p for p in processes if p.get("role") == "launcher"]
+    helpers = [p for p in processes if p.get("role") == "helper"]
+    return apps, launchers, helpers
+
+
+def _process_names(processes):
+    return ", ".join(f"{p['name']}({p['pid']})" for p in processes[:8])
 
 
 def _post_close_to_processes(pids):
@@ -178,6 +193,12 @@ def _post_close_to_processes(pids):
         return
     user32 = ctypes.windll.user32
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [callback_type, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
+                                               ctypes.POINTER(wintypes.DWORD)]
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT,
+                                    wintypes.WPARAM, wintypes.LPARAM]
 
     @callback_type
     def callback(hwnd, _lparam):
@@ -188,6 +209,42 @@ def _post_close_to_processes(pids):
         return True
 
     user32.EnumWindows(callback, 0)
+
+
+def activate_existing_honey(processes):
+    """이미 실행 중인 HoneyApp 창을 복원하고 앞으로 가져온다."""
+    pids = {p["pid"] for p in processes if p.get("role") == "app"}
+    if not pids or os.name != "nt":
+        return False
+    user32 = ctypes.windll.user32
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    user32.EnumWindows.argtypes = [callback_type, ctypes.c_void_p]
+    user32.EnumWindows.restype = ctypes.c_bool
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p,
+                                               ctypes.POINTER(ctypes.c_ulong)]
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    user32.ShowWindow.argtypes = [ctypes.c_void_p, ctypes.c_int]
+    user32.SetForegroundWindow.argtypes = [ctypes.c_void_p]
+    found = []
+
+    @callback_type
+    def callback(hwnd, _lparam):
+        pid = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if (pid.value in pids and user32.IsWindowVisible(hwnd)
+                and user32.GetWindowTextLengthW(hwnd) > 0):
+            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+            found.append(hwnd)
+            return False
+        return True
+
+    try:
+        user32.EnumWindows(callback, None)
+    except Exception:   # noqa: BLE001 - 창 활성화 실패가 실행 판정을 깨면 안 된다
+        return False
+    return bool(found)
 
 
 def _terminate_process(pid):
@@ -205,11 +262,103 @@ def _terminate_process(pid):
         kernel32.CloseHandle(handle)
 
 
+def cleanup_orphan_helpers(root, helpers, logf):
+    """본체 없이 남은 같은 설치 루트의 Qt 보조 프로세스를 정리한다."""
+    pids = {p["pid"] for p in helpers}
+    if not pids:
+        return True
+    logf(f"고아 Qt 보조 프로세스 정리 시작: {_process_names(helpers)}")
+    _post_close_to_processes(pids)
+    deadline = time.monotonic() + 0.5
+    remaining = set(pids)
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.1)
+        current = running_honey_processes(root)
+        apps, launchers, current_helpers = process_roles(current)
+        if apps or launchers:
+            logf("고아 Qt 정리 중 새 Honey 프로세스를 발견해 종료를 중단한다")
+            return False
+        remaining = {p["pid"] for p in current_helpers} & pids
+
+    for pid in remaining:
+        if _terminate_process(pid):
+            logf(f"고아 Qt 보조 프로세스 강제 종료 pid={pid}")
+
+    deadline = time.monotonic() + 2
+    while remaining and time.monotonic() < deadline:
+        time.sleep(0.1)
+        current = running_honey_processes(root)
+        apps, launchers, current_helpers = process_roles(current)
+        if apps or launchers:
+            logf("고아 Qt 정리 확인 중 새 Honey 프로세스를 발견했다")
+            return False
+        remaining = {p["pid"] for p in current_helpers} & pids
+    if remaining:
+        logf(f"고아 Qt 보조 프로세스 종료 실패 pids={sorted(remaining)} — 실행은 계속한다")
+        return False
+    logf("고아 Qt 보조 프로세스 정리 완료")
+    return True
+
+
+def wait_for_other_launcher(root, logf, show_ui=True, timeout_sec=3.0):
+    """다른 런처가 인계할 시간을 주고, 계속 살아 있으면 중복 실행을 막는다."""
+    processes = running_honey_processes(root)
+    _apps, launchers, _helpers = process_roles(processes)
+    if not launchers:
+        return processes, False
+
+    logf(f"다른 Honey 런처 대기: {_process_names(launchers)}")
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        time.sleep(0.25)
+        processes = running_honey_processes(root)
+        _apps, launchers, _helpers = process_roles(processes)
+        if not launchers:
+            return processes, False
+
+    logf(f"다른 Honey 런처가 계속 실행 중: {_process_names(launchers)}")
+    information_box(
+        "다른 Honey 실행 또는 업데이트가 진행 중입니다.\n\n"
+        "잠시 기다린 뒤 다시 실행해 주세요.", show_ui)
+    return processes, True
+
+
+def handle_running_without_update(root, logf, show_ui=True, launcher_wait_sec=3.0):
+    """업데이트하지 않는 경로에서 중복 실행만 막고 고아 Qt는 통과시킨다."""
+    processes, blocked = wait_for_other_launcher(
+        root, logf, show_ui, timeout_sec=launcher_wait_sec)
+    if blocked:
+        return False
+
+    apps, _launchers, helpers = process_roles(processes)
+    if apps:
+        names = _process_names(apps)
+        if activate_existing_honey(apps):
+            logf(f"이미 실행 중인 Honey 창 활성화: {names}")
+        else:
+            logf(f"Honey가 이미 실행 중이며 표시할 창을 찾지 못했다: {names}")
+            information_box(
+                "Honey가 이미 실행 중입니다.\n\n"
+                "작업 표시줄이나 시스템 트레이를 확인해 주세요.", show_ui)
+        return False
+
+    if helpers:
+        cleanup_orphan_helpers(root, helpers, logf)
+    return None
+
+
+def _confirm_close_running_honey(text):
+    return ctypes.windll.user32.MessageBoxW(None, text, "Honey 업데이트", 0x34) == 6
+
+
 def ask_and_close_running_honey(root, processes, logf, show_ui=True):
     """업데이트 전 실행 중 Honey를 사용자 동의 후 종료. 거부/실패면 False."""
-    if not processes:
+    apps, _launchers, helpers = process_roles(processes)
+    if not apps:
+        if helpers:
+            cleanup_orphan_helpers(root, helpers, logf)
         return True
-    names = ", ".join(f"{p['name']}({p['pid']})" for p in processes[:8])
+    names = _process_names(apps)
     if not show_ui:
         logf(f"update 보류: 실행 중 Honey {names}")
         return False
@@ -217,34 +366,40 @@ def ask_and_close_running_honey(root, processes, logf, show_ui=True):
             f"{names}\n\n"
             "저장하지 않은 작업은 사라질 수 있습니다.\n"
             "종료하고 업데이트하시겠습니까?")
-    answer = ctypes.windll.user32.MessageBoxW(None, text, "Honey 업데이트", 0x34)
-    if answer != 6:  # IDYES
+    if not _confirm_close_running_honey(text):
         logf("사용자가 실행 중 Honey 종료를 선택하지 않았다")
         return False
 
-    pids = {p["pid"] for p in processes}
-    _post_close_to_processes(pids)
+    app_pids = {p["pid"] for p in apps}
+    _post_close_to_processes(app_pids)
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        remaining = {p["pid"] for p in running_honey_processes(root)} & pids
-        if not remaining:
+        current = running_honey_processes(root)
+        current_apps, _launchers, current_helpers = process_roles(current)
+        if not current_apps:
+            cleanup_orphan_helpers(root, current_helpers, logf)
             logf("실행 중 Honey 정상 종료 완료")
             return True
         time.sleep(0.25)
 
-    remaining = {p["pid"] for p in running_honey_processes(root)} & pids
+    current = running_honey_processes(root)
+    current_apps, _launchers, current_helpers = process_roles(current)
+    remaining = {p["pid"] for p in current_apps + current_helpers}
     for pid in remaining:
         if _terminate_process(pid):
             logf(f"실행 중 Honey 강제 종료 pid={pid}")
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-        remaining = {p["pid"] for p in running_honey_processes(root)} & pids
-        if not remaining:
+        current = running_honey_processes(root)
+        current_apps, _launchers, current_helpers = process_roles(current)
+        if not current_apps:
+            cleanup_orphan_helpers(root, current_helpers, logf)
             return True
         time.sleep(0.25)
+    remaining = {p["pid"] for p in current_apps}
     logf(f"실행 중 Honey 종료 실패 pids={sorted(remaining)}")
     message_box("실행 중인 Honey를 종료하지 못했습니다.\n\n"
-                "작업 관리자에서 HoneyApp.exe와 QtWebEngineProcess.exe를 종료한 뒤\n"
+                "작업 관리자에서 HoneyApp.exe를 종료한 뒤\n"
                 "다시 실행해 주세요.", show_ui)
     return False
 
@@ -337,6 +492,16 @@ def message_box(text: str, enabled: bool = True) -> None:
         return
     try:
         ctypes.windll.user32.MessageBoxW(None, text, "Honey", 0x10)
+    except Exception:
+        pass
+
+
+def information_box(text: str, enabled: bool = True) -> None:
+    """이미 실행 중인 Honey 등 오류가 아닌 상태 안내창."""
+    if not enabled:
+        return
+    try:
+        ctypes.windll.user32.MessageBoxW(None, text, "Honey", 0x40)
     except Exception:
         pass
 
@@ -940,14 +1105,13 @@ def try_update(root, argv, show_ui=True):
 
     try:
         if app_update is None:
-            return
-        running = running_honey_processes(root)
+            return handle_running_without_update(root, logf, show_ui)
         if not show_ui or "--skip-update" in argv:
             logf("update skipped (--skip-update / --no-ui)")
-            return False if running else None
+            return handle_running_without_update(root, logf, show_ui)
         if (root / NOUPDATE_FILENAME).exists():
             logf(f"update skipped ({NOUPDATE_FILENAME})")
-            return False if running else None
+            return handle_running_without_update(root, logf, show_ui)
 
         current, _prev = read_current(root)
         base_url = app_update.read_server_url(root, current)
@@ -956,22 +1120,30 @@ def try_update(root, argv, show_ui=True):
             manifest = app_update.fetch_manifest(base_url)
         except Exception as exc:   # noqa: BLE001 - 오프라인은 흔한 정상 상황이다
             logf(f"version check skipped ({type(exc).__name__}: {exc})")
-            return False if running else None
+            return handle_running_without_update(root, logf, show_ui)
 
         remote = str(manifest.get("version") or "")
         if not app_update.is_newer(remote, current):
             app_update.clear_fail_count(root)
-            return False if running else None
+            return handle_running_without_update(root, logf, show_ui)
 
         fails = app_update.read_fail_count(root, remote, LAUNCHER_BUILD)
         if fails >= MAX_UPDATE_FAILS:
             logf(f"update skipped: {remote} 연속 {fails}회 실패 — 더 시도하지 않는다")
-            return False if running else None
+            return handle_running_without_update(root, logf, show_ui)
 
-        if running and not ask_and_close_running_honey(root, running, logf, show_ui):
+        running, blocked = wait_for_other_launcher(root, logf, show_ui)
+        if blocked:
+            return False
+        apps, _launchers, helpers = process_roles(running)
+        logf("업데이트 전 프로세스: "
+             f"app=[{_process_names(apps)}] helper=[{_process_names(helpers)}]")
+        if apps and not ask_and_close_running_honey(root, running, logf, show_ui):
             # 이미 떠 있는 Honey를 그대로 유지한다. 아래 앱 기동 단계로 내려가면 중복
             # 실행이 되므로 main 에 "이번 런처는 여기서 끝내라"고 알린다.
             return False
+        if not apps and helpers:
+            cleanup_orphan_helpers(root, helpers, logf)
 
         # 같은 설치 폴더를 두 프로세스가 동시에 만지지 않게 한다 (사용자가 런처를
         # 두 번 눌렀거나, 승격 프로세스가 아직 돌고 있는 경우).

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 CLIENT_DIR = Path(__file__).resolve().parent.parent
@@ -172,7 +173,7 @@ def main():
 
 
 def check_running_process_detection(work):
-    """같은 설치 루트의 실행 프로세스만 찾고, 무UI에서는 종료하지 않는다."""
+    """본체/런처/Qt 역할을 구분하고 고아 Qt만 자동 정리한다."""
     sys.path.insert(0, str(CLIENT_DIR))
     import importlib
 
@@ -188,11 +189,16 @@ def check_running_process_detection(work):
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         creationflags=0x08000000)
     try:
-        import time
         time.sleep(0.5)
         found = launcher.running_honey_processes(root)
         check("같은 루트 HoneyApp.exe 탐지", any(p["pid"] == proc.pid for p in found))
+        check("HoneyApp.exe를 실제 앱으로 분류",
+              any(p["pid"] == proc.pid and p["role"] == "app" for p in found))
         logs = []
+        check("업데이트가 없으면 실행 중 앱의 중복 실행을 막음",
+              launcher.handle_running_without_update(
+                  root, logs.append, False, launcher_wait_sec=0) is False
+              and proc.poll() is None)
         check("무UI에서는 실행 프로세스를 종료하지 않고 업데이트 보류",
               launcher.ask_and_close_running_honey(root, found, logs.append, False) is False
               and proc.poll() is None)
@@ -204,6 +210,128 @@ def check_running_process_detection(work):
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=10)
+
+    print("[5-1a] 종료 동의 후 본체와 Qt 보조 프로세스를 함께 정리한다")
+    root = work / "running-accepted"
+    app_dir = root / "versions" / "9.0.0"
+    app_dir.mkdir(parents=True)
+    app_exe = app_dir / "HoneyApp.exe"
+    helper_exe = app_dir / "QtWebEngineProcess.exe"
+    shutil.copy2(STUB_WAIT, app_exe)
+    shutil.copy2(STUB_WAIT, helper_exe)
+    app_proc = subprocess.Popen(
+        [str(app_exe), "127.0.0.1", "-n", "20"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+    helper_proc = subprocess.Popen(
+        [str(helper_exe), "127.0.0.1", "-n", "20"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+    real_confirm = launcher._confirm_close_running_honey
+    real_post_close = launcher._post_close_to_processes
+    try:
+        time.sleep(0.5)
+        found = launcher.running_honey_processes(root)
+        launcher._confirm_close_running_honey = lambda _text: True
+        launcher._post_close_to_processes = lambda pids: [
+            launcher._terminate_process(pid) for pid in pids]
+        logs = []
+        check("종료 동의 시 업데이트 계속",
+              launcher.ask_and_close_running_honey(
+                  root, found, logs.append, True) is True)
+        app_proc.wait(timeout=10)
+        helper_proc.wait(timeout=10)
+        check("동의 후 HoneyApp.exe 종료", app_proc.poll() is not None)
+        check("동의 후 Qt 보조 프로세스 종료", helper_proc.poll() is not None)
+    finally:
+        launcher._confirm_close_running_honey = real_confirm
+        launcher._post_close_to_processes = real_post_close
+        for running_proc in (app_proc, helper_proc):
+            if running_proc.poll() is None:
+                running_proc.terminate()
+                running_proc.wait(timeout=10)
+
+    print("[5-2] 고아 Qt 보조 프로세스는 최신 버전 실행을 막지 않는다")
+    root = work / "orphan-helper"
+    app_dir = make_version(root, "9.0.0", STUB_OK)
+    write_current(root, "9.0.0\n")
+    helper_exe = app_dir / "QtWebEngineProcess.exe"
+    shutil.copy2(STUB_WAIT, helper_exe)
+    helper = subprocess.Popen(
+        [str(helper_exe), "127.0.0.1", "-n", "20"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+    try:
+        time.sleep(0.5)
+        found = launcher.running_honey_processes(root)
+        check("QtWebEngineProcess.exe를 helper로 분류",
+              any(p["pid"] == helper.pid and p["role"] == "helper" for p in found))
+        logs = []
+        result = launcher.handle_running_without_update(
+            root, logs.append, False, launcher_wait_sec=0)
+        helper.wait(timeout=10)
+        check("고아 Qt가 있어도 런처 실행 계속", result is None)
+        check("고아 Qt 자동 종료", helper.poll() is not None)
+        check("최신 실행 후보 유지", launcher.candidates(root)[0] == "9.0.0")
+        check("고아 Qt 정리 로그", any("고아 Qt" in line for line in logs))
+    finally:
+        if helper.poll() is None:
+            helper.terminate()
+            helper.wait(timeout=10)
+
+    print("[5-3] 다른 Honey.exe가 작업 중이면 안내 후 중복 실행을 막는다")
+    root = work / "other-launcher"
+    root.mkdir()
+    other_exe = root / "Honey.exe"
+    shutil.copy2(STUB_WAIT, other_exe)
+    other = subprocess.Popen(
+        [str(other_exe), "127.0.0.1", "-n", "20"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+    try:
+        time.sleep(0.5)
+        logs = []
+        _processes, blocked = launcher.wait_for_other_launcher(
+            root, logs.append, False, timeout_sec=0)
+        check("다른 런처 중복 실행 차단", blocked and other.poll() is None)
+        check("무반응 대신 사유 로그", any("계속 실행 중" in line for line in logs))
+    finally:
+        other.terminate()
+        other.wait(timeout=10)
+
+    print("[5-4] 업데이트 생략 경로에서도 고아 Qt를 통과시킨다")
+    for label, argv, noupdate, offline in (
+            ("skip-update", ["--skip-update"], False, False),
+            ("no-ui", [], False, False),
+            ("noupdate.txt", [], True, False),
+            ("offline", [], False, True)):
+        root = work / f"orphan-{label}"
+        app_dir = make_version(root, "9.0.0", STUB_OK)
+        write_current(root, "9.0.0\n")
+        if noupdate:
+            (root / "noupdate.txt").write_text("1\n", encoding="utf-8")
+        helper_exe = app_dir / "QtWebEngineProcess.exe"
+        shutil.copy2(STUB_WAIT, helper_exe)
+        helper = subprocess.Popen(
+            [str(helper_exe), "127.0.0.1", "-n", "20"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000)
+        real_fetch = launcher.app_update.fetch_manifest
+        if offline:
+            launcher.app_update.fetch_manifest = lambda _url: (_ for _ in ()).throw(
+                OSError("offline-test"))
+        try:
+            time.sleep(0.5)
+            show_ui = label != "no-ui"
+            result = launcher.try_update(root, argv, show_ui=show_ui)
+            helper.wait(timeout=10)
+            check(f"{label}: 실행 계속", result is None)
+            check(f"{label}: 고아 Qt 종료", helper.poll() is not None)
+        finally:
+            launcher.app_update.fetch_manifest = real_fetch
+            if helper.poll() is None:
+                helper.terminate()
+                helper.wait(timeout=10)
 
 
 def check_apply_update(work):
