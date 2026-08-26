@@ -5,7 +5,7 @@
 
 시나리오:
   (a) get_history + count_history 와 결과 완전 동일 — 필터(product_type/q/mine/
-      visibility/mode/source/date/lot_id) × 정렬 4종 × viewer(None/""/uid) ×
+      visibility/mode/source/date/lot_id) × 정렬 화이트리스트 전수 × viewer(None/""/uid) ×
       페이지네이션 조합 전수 비교
   (b) total_file_size — csv 2건 합산 / 0건 / dedup(동일 analysis_key) 형제 동일값
   (c) 즐겨찾기 최상단 고정 + 페이지 분할 안정성 (5건씩 이어 붙이면 전체와 동일)
@@ -36,6 +36,7 @@ from flask import Flask  # noqa: E402
 
 from report.report_extension import report_bp  # noqa: E402  (전체 라우트 등록 트리거)
 from database import report_db  # noqa: E402
+from database import sessions  # noqa: E402  (_HISTORY_SORTS 전수 정렬 케이스)
 from database.core import get_conn  # noqa: E402
 
 app = Flask(__name__)
@@ -101,9 +102,10 @@ seed()
 
 # ── (a) 동등성 전수 비교 ──────────────────────────────────────────────────────
 
+# 정렬 키는 화이트리스트 전수 — 열 머리글 클릭 정렬이 이 키들을 그대로 쓴다.
 BASE_CASES = []
 for viewer in (None, "", "alice", "bob"):
-    for sort in ("new", "old", "product", "lot"):
+    for sort in sorted(sessions._HISTORY_SORTS):
         BASE_CASES.append({"viewer": viewer, "sort": sort})
 BASE_CASES += [
     {"product_type": "MDDI", "viewer": "alice"},

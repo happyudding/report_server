@@ -231,6 +231,7 @@ function esc(v) {
 // toPrecision 은 1e-7 미만에서 지수표기(2.34e-7)로 새기 때문에 자리수를 직접 계산해 toFixed 를 쓴다.
 // **표시 전용**이다 — 원값(row.stdev)은 CPK Limit 역산(cpk.js cpkComputeTargets)과
 // Item_detail 가우시안 곡선이 그대로 쓰므로 데이터를 반올림해서는 안 된다.
+// ⚠ 2026-08-26 부터 호출자가 없다 — 통계값 표시는 전부 아래 fmtLen8 로 옮겼다(자리수 통일).
 function fmtStdev(v) {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return String(v ?? "");
@@ -238,6 +239,81 @@ function fmtStdev(v) {
   // 2 - floor(log10|v|) = 유효숫자 3자리에 필요한 소수 자리수. toFixed 상한(100)으로 캡.
   const digits = (a > 0 && a < 1) ? Math.min(100, 2 - Math.floor(Math.log10(a))) : 3;
   return n.toFixed(digits);
+}
+
+// CPK/Compare/Item_detail 통계값(min·median·max·average·stdev) 표시 전용 —
+// 표시 길이를 8자(부호 제외) 이하로 줄여 컬럼이 옆으로 벌어지지 않게 한다.
+// 서버가 컬럼마다 다른 자리수로 내려보내(min~max 6자리 / average 4자리 / stdev 무반올림)
+// 값 하나가 컬럼 전체를 밀어내던 문제를 표시 단에서 통일한다.
+//   원문이 8자 이하면 손대지 않는다        99999.5 → 99999.5 / 1234.567 → 1234.567
+//   **버림(절사)** — 반올림하지 않는다      9.9999999 → 9.999999 (10 으로 올리지 않음)
+//   유효숫자 4자리 미만으로 뭉개지면 지수표기  0.00000334234 → 3.3423e-6
+//   지수표기는 e12 / e-6 형태 (e+12 의 + 제거)
+// **표시 전용**이다 — 원값은 절대 덮어쓰지 않는다. CPK Limit 역산(cpk.js cpkComputeTargets)과
+// Item_detail 가우시안 곡선이 원값을 그대로 쓴다.
+const LEN8_MAX = 8;       // 표시 최대 길이(부호 제외)
+const LEN8_MIN_SIG = 4;   // 일반표기가 이 미만으로 뭉개지면 지수표기
+
+function _len8StripPlain(s) {            // 소수부 끝자리 0 제거 ("3.5000"→"3.5")
+  return s.indexOf(".") < 0 ? s : s.replace(/\.?0+$/, "");
+}
+function _len8Sig(s) {                   // 유효숫자 개수(가수부 기준)
+  const b = s.split("e")[0].replace("-", "").replace(".", "").replace(/^0+/, "");
+  return b.replace(/0+$/, "").length;
+}
+function _len8Body(s) { return s.replace("-", "").length; }   // 부호 제외 길이
+
+// 소수 d자리 버림. ⚠ 곱셈(Math.floor(n*10**d)/10**d)으로 구현하면 부동소수점 오차로 틀린다
+//   (8.7*10 = 86.99999999999999 → floor → 8.6). toFixed 로 넉넉히 뽑아 문자열에서 자른다.
+function _len8TruncFixed(n, d) {
+  const neg = n < 0;
+  const parts = Math.abs(n).toFixed(Math.min(100, d + 5)).split(".");
+  const ip = parts[0];
+  const fp = ((parts[1] || "") + "0".repeat(d)).slice(0, d);
+  return (neg ? "-" : "") + (d > 0 ? ip + "." + fp : ip);
+}
+// 지수표기도 버림 — 가수부만 문자열에서 자른다. ⚠ 끝자리 0 제거를 문자열 전체에 걸면
+//   "1.0000e+1" 의 지수부까지 먹어 "1.00000e" 라는 깨진 값이 되므로 가수부/지수부를 분리한다.
+function _len8TruncExp(n, d) {
+  const s = n.toExponential(Math.min(20, d + 5));
+  const i = s.indexOf("e");
+  const ex = s.slice(i).replace("e+", "e");
+  let m = s.slice(0, i);
+  const neg = m.startsWith("-");
+  if (neg) m = m.slice(1);
+  const parts = m.split(".");
+  const ip = parts[0];
+  const fp = ((parts[1] || "") + "0".repeat(d)).slice(0, d);
+  return (neg ? "-" : "") + _len8StripPlain(d > 0 ? ip + "." + fp : ip) + ex;
+}
+
+function fmtLen8(v) {
+  if (v === null || v === undefined || v === "") return "";   // Number(null)=0 오인 방지
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  if (n === 0) return "0";                                    // log10(0) = -Infinity
+  const raw = String(v);
+  if (_len8Body(raw) <= LEN8_MAX) return raw;                 // 짧으면 손대지 않는다
+
+  const e = Math.floor(Math.log10(Math.abs(n)));
+  // 일반표기 후보 — 버림이라 자리올림이 없어 자리수가 늘지 않는다(후보 1개면 충분).
+  let plain = null;
+  const d = (e >= 0) ? (LEN8_MAX - e - 2) : (LEN8_MAX - 2);
+  if (d >= 0 && d <= 100) {                 // toFixed 상한 100 초과는 RangeError
+    const p = _len8StripPlain(_len8TruncFixed(n, d));
+    // 버림으로 값이 통째로 0 이 되면(아주 작은 값) 일반표기를 버리고 지수표기를 쓴다.
+    if (_len8Body(p) <= LEN8_MAX && Number(p) !== 0) plain = p;
+  }
+  // 지수표기 후보 — 지수부(e-10·e308)가 길이를 먹으므로 전체 길이로 판정해야 한다.
+  //   가수부만 세면 12345678901 이 "1.2346e1"(=12.346) 이 되어 값이 통째로 틀어진다.
+  let exp = null;
+  for (let dd = 5; dd >= 0; dd--) {
+    const ex = _len8TruncExp(n, dd);
+    if (_len8Body(ex) <= LEN8_MAX) { exp = ex; break; }
+  }
+  if (exp === null) exp = _len8TruncExp(n, 0);   // 지수부가 길면(e308) 8자 초과를 허용
+  if (plain === null) return exp;
+  return (_len8Sig(plain) < LEN8_MIN_SIG && _len8Sig(exp) > _len8Sig(plain)) ? exp : plain;
 }
 
 function fmtDate(unix) {
@@ -464,6 +540,12 @@ const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp, #panel-issue-cmp";
 const ISSUE_TEMP_SHEET = "Issue Table Temp";
 // Compare 패널이 읽는 시트 이름 — 백엔드 metrics.py 의 주입 키와 같아야 한다.
 const ISSUE_CMP_SHEET = "Issue Table Compare";
+
+// Bin 그룹(▼ 토글이 달린 행)의 Yield 가 그 Bin 의 여러 Item 을 합친 값이라는 안내
+// (사용자 요청 2026-08-26). Yield 탭 STEP 제목과 Issue Table Item 헤더가 같은 문구를
+// 쓰므로 여기서 한 번만 정의한다 — 문구를 고칠 땐 이 상수만 고치면 두 곳이 함께 바뀐다.
+const MERGE_NOTE_TEXT =
+  "(※ STEP 에 화살표 버튼이 있는 Bin 의 Yield 는 동일 Bin 의 여러 Item 들이 Merge 된 Yield 입니다.)";
 
 // 현재 DOM 에 존재하는 Issue 표 패널들 (Temp/Compare 는 해당 모드 세션에만 내용이 있다).
 function issuePanelEls() {

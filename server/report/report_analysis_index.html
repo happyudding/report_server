@@ -223,7 +223,6 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   font-size: 19px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 7px;
 }
-.results-count { font-size: 18px; color: #888; font-weight: 400; }
 .refreshing-badge { font-size: 14px; color: #aaa; font-weight: 400; }
 
 /* min-width 는 열 폭의 하한이다 — 이 값 미만으로 좁아지면 열을 뭉개는 대신 .table-wrap
@@ -239,6 +238,13 @@ th, td {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 th { background: #fafbfc; font-weight: 600; color: #555; font-size: 17px; }
+/* 열 머리글 클릭 정렬 — 클릭 가능한 열만 커서/hover 를 준다. 정렬 표시(▲/▼)는
+   ::after 가 아니라 별도 span 인데, th 가 overflow:hidden + ellipsis 라 텍스트가
+   길어지면 의사요소 기호부터 잘리기 때문이다(자리를 미리 잡아 둔다). */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { background: #f0f3f8; color: #1a6fd4; }
+th.sortable.sorted { color: #1a6fd4; }
+.sort-mark { display: inline-block; width: 14px; margin-left: 2px; font-size: 13px; color: #1a6fd4; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
 /* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
 th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 10px; }
@@ -426,8 +432,10 @@ html[data-theme="dark"] .btn-action { background: #262a33; border-color: #3a3f4b
 html[data-theme="dark"] .btn-action.primary { background: #4a90e2; border-color: #4a90e2; color: #fff; }
 html[data-theme="dark"] .opt-badge { background: #4a90e2; color: #fff; }
 html[data-theme="dark"] .results-header { color: #c6ccd6; }
-html[data-theme="dark"] .results-count { color: #8b94a3; }
 html[data-theme="dark"] th { background: #22262e; color: #9aa3b0; }
+html[data-theme="dark"] th.sortable:hover { background: #2a3038; color: #7fb3ef; }
+html[data-theme="dark"] th.sortable.sorted { color: #7fb3ef; }
+html[data-theme="dark"] .sort-mark { color: #7fb3ef; }
 html[data-theme="dark"] th,
 html[data-theme="dark"] td { border-bottom-color: #2a2e37; }
 html[data-theme="dark"] tr.empty-row td { color: #767f8c; }
@@ -541,11 +549,23 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     </div>
     <div class="filter-group">
       <label class="filter-label">정렬</label>
+      <!-- 값은 서버 _HISTORY_SORTS 키다. 열 머리글 클릭이 이 select 를 바꾸고,
+           select 변경도 머리글 표시에 반영된다(양방향 — 상태가 하나여야 한다). -->
       <select class="sel-input" id="sortSelect">
         <option value="new">최신순</option>
         <option value="old">오래된순</option>
-        <option value="product">Product</option>
-        <option value="lot">LOT</option>
+        <option value="ptype">Prod Type ↑</option>
+        <option value="ptype_desc">Prod Type ↓</option>
+        <option value="mode">Mode ↑</option>
+        <option value="mode_desc">Mode ↓</option>
+        <option value="product">Product ↑</option>
+        <option value="product_desc">Product ↓</option>
+        <option value="lot">LOT ↑</option>
+        <option value="lot_desc">LOT ↓</option>
+        <option value="fname">File name ↑</option>
+        <option value="fname_desc">File name ↓</option>
+        <option value="owner">Owner ↑</option>
+        <option value="owner_desc">Owner ↓</option>
       </select>
     </div>
     <div class="filter-actions">
@@ -557,7 +577,6 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 <!-- 결과 -->
 <div class="results-card">
   <div class="results-header">
-    <span class="results-count" id="resultsCount"></span>
     <span class="refreshing-badge" id="refreshingBadge" hidden>갱신 중…</span>
   </div>
   <div class="table-wrap">
@@ -580,15 +599,19 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
       <col style="width:126px">   <!-- Date      : 260721_14:30 수용 -->
       <col style="width:96px">    <!-- 액션(자물쇠/삭제) -->
     </colgroup>
+    <!-- data-sort = 그 열의 오름차순 정렬 키. 내림차순은 서버 화이트리스트의
+         "<key>_desc" 이며, Date 만 옛 이름(new/old)을 그대로 쓴다(저장된 링크 호환).
+         정렬은 서버가 한다 — 화면은 한 페이지만 들고 있어 JS 정렬로는 전체를
+         정렬할 수 없다(_HISTORY_SORTS 정본, server/database/sessions.py). -->
     <thead>
       <tr>
-        <th>Prod Type</th>
-        <th class="mode-col">Mode</th>
-        <th>Product</th>
-        <th class="lot-col">LOT ID</th>
-        <th>File name</th>
-        <th>Owner</th>
-        <th>Date</th>
+        <th class="sortable" data-sort="ptype" data-sort-desc="ptype_desc">Prod Type<span class="sort-mark"></span></th>
+        <th class="mode-col sortable" data-sort="mode" data-sort-desc="mode_desc">Mode<span class="sort-mark"></span></th>
+        <th class="sortable" data-sort="product" data-sort-desc="product_desc">Product<span class="sort-mark"></span></th>
+        <th class="lot-col sortable" data-sort="lot" data-sort-desc="lot_desc">LOT ID<span class="sort-mark"></span></th>
+        <th class="sortable" data-sort="fname" data-sort-desc="fname_desc">File name<span class="sort-mark"></span></th>
+        <th class="sortable" data-sort="owner" data-sort-desc="owner_desc">Owner<span class="sort-mark"></span></th>
+        <th class="sortable" data-sort="old" data-sort-desc="new">Date<span class="sort-mark"></span></th>
         <th class="act-cell"></th>
       </tr>
     </thead>
@@ -1210,6 +1233,38 @@ document.getElementById("searchBtn").addEventListener("click", () => loadHistory
 ["modeSelect", "visSelect", "mineCheck", "dateFrom", "dateTo", "sortSelect"].forEach(id => {
   document.getElementById(id).addEventListener("change", () => {
     updateOptBadge();          // mineCheck 는 배지 대상이 아니라 개수에서 빠진다
+    syncSortHeader();          // 정렬 select 를 직접 바꿔도 머리글 표시가 따라온다
+    _currentPage = 0;          // 정렬이 바뀌면 현재 페이지 번호는 의미를 잃는다
+    loadHistory();
+  });
+});
+
+// ── 열 머리글 클릭 정렬 ──
+// 정렬은 서버가 한다 — 화면은 한 페이지(PAGE_SIZE)만 들고 있어 JS 배열을 정렬하면
+// "이 페이지 안에서만" 정렬된 잘못된 결과가 된다. 그래서 클릭은 sortSelect 값을
+// 바꾸고 서버에 다시 물어보는 것으로 처리한다(정렬 상태의 진실은 sortSelect 하나).
+// 같은 열을 다시 누르면 오름↔내림 토글, 다른 열은 그 열의 기본(오름) 방향으로 간다.
+// Date 만 기본이 내림(최신순)인데, 목록의 기본 정렬이 최신순이라 첫 클릭에서 아무
+// 변화가 없으면 "안 눌린다"로 보이기 때문이다.
+function syncSortHeader() {
+  const cur = document.getElementById("sortSelect").value || "new";
+  document.querySelectorAll("th.sortable").forEach(th => {
+    const asc = th.dataset.sort, desc = th.dataset.sortDesc;
+    const on = (cur === asc) || (cur === desc);
+    th.classList.toggle("sorted", on);
+    th.querySelector(".sort-mark").textContent = on ? (cur === asc ? "▲" : "▼") : "";
+  });
+}
+document.querySelectorAll("th.sortable").forEach(th => {
+  th.addEventListener("click", () => {
+    const sel = document.getElementById("sortSelect");
+    const asc = th.dataset.sort, desc = th.dataset.sortDesc;
+    // Date 열은 desc(=최신순 'new')가 기본 — 위 주석 참조.
+    const first = (asc === "old") ? desc : asc;
+    sel.value = (sel.value === first) ? (first === asc ? desc : asc) : first;
+    updateOptBadge();
+    syncSortHeader();
+    _currentPage = 0;
     loadHistory();
   });
 });
@@ -1245,6 +1300,7 @@ document.getElementById("resetBtn").addEventListener("click", () => {
   document.getElementById("visSelect").value = "";
   document.getElementById("sortSelect").value = "new";
   updateOptBadge();
+  syncSortHeader();
   _currentPage = 0;
   loadHistory();
 });
@@ -1296,7 +1352,11 @@ function readUrl() {
   document.getElementById("dateFrom").value = p.get("from") || "";
   document.getElementById("dateTo").value = p.get("to") || "";
   document.getElementById("lotIdInput").value = p.get("q") || "";
-  document.getElementById("sortSelect").value = p.get("sort") || "new";
+  // 모르는 sort 값(옛 링크·오타)이면 select 가 빈 값이 되어 정렬 상태가 화면에서
+  // 사라진다 — 서버는 화이트리스트로 막지만 화면은 그대로 두면 어긋난다. 기본으로 되돌린다.
+  const sortSel = document.getElementById("sortSelect");
+  sortSel.value = p.get("sort") || "new";
+  if (!sortSel.value) sortSel.value = "new";
   const pg = parseInt(p.get("page") || "1", 10);
   _currentPage = (Number.isFinite(pg) && pg > 0) ? pg - 1 : 0;
   document.querySelectorAll(".pt-btn").forEach(b =>
@@ -1405,9 +1465,6 @@ function renderResults() {
   const slice = _lastRows;
   const total = _histTotal;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  document.getElementById("resultsCount").textContent =
-    total ? `(${total}건)` : "";
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
@@ -1568,6 +1625,7 @@ if (updateOptBadge() > 0) {
   optPanel.hidden = false;
   optToggleBtn.setAttribute("aria-expanded", "true");
 }
+syncSortHeader();                 // 복원된 정렬을 열 머리글 ▲/▼ 에 반영
 // 직전 목록 캐시가 있으면 서버 응답을 기다리지 않고 즉시 그린다 (같은 신원+같은 조회일 때만).
 // 신원·즐겨찾기·pw 모달은 아래 loadHistory 응답의 viewer/is_favorite 가 채운다 —
 // auth/me·favorites 선행 왕복 없이 목록 요청 1번으로 첫 화면이 끝난다.

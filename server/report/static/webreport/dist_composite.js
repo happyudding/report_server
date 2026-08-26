@@ -865,7 +865,7 @@ function dcRenderStats(comp, store, missing) {
       `<td class="st-num">${esc(f4(st.median))}</td>` +
       `<td class="st-num">${esc(f4(st.max))}</td>` +
       `<td class="st-num">${esc(f4(st.mean))}</td>` +
-      `<td class="st-num">${esc(st.sd == null ? "-" : fmtStdev(st.sd))}</td>` +
+      `<td class="st-num">${esc(st.sd == null ? "-" : fmtLen8(st.sd))}</td>` +
       `<td class="st-num${warn}">${esc(st.cpk == null ? "-" : (Math.round(st.cpk * 1000) / 1000))}</td></tr>`;
   }).join("");
   host.innerHTML = `<div class="sheet-wrap"><table class="sheet-table">` +

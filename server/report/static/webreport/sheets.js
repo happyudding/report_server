@@ -801,6 +801,12 @@ function issueSectionHeadRowsHtml(cols, sec) {
   // 잡고 있어 안내문은 그 안에서 줄바꿈만 한다 — 열이 넓어지지 않는다(.th-note CSS).
   const aiNote = c => isAiCommentCol(c)
     ? `<span class="th-note">(AI comment 는 정확하지 않을 수 있으니 참고만 하시기 바랍니다)</span>` : "";
+  // Item 헤더 밑 Merge 안내 — Bin 그룹(▼)이 있는 섹션만. 문구 정본은 core.js MERGE_NOTE_TEXT
+  // (Yield 탭 STEP 제목과 공유). Item 열은 폭이 고정이 아니라 안내문이 열을 넓히지 않도록
+  // .th-note-merge 로 max-width 를 못박는다(CSS).
+  const mergeNote = c => ((sec === "Yield" || sec === "TEMP")
+      && String(c).trim().toLowerCase() === "item")
+    ? `<span class="th-note th-note-merge">${esc(MERGE_NOTE_TEXT)}</span>` : "";
   if (!runs.some(r => r.group)) {
     return `<tr class="issue-shead-top" data-sec="${esc(sec)}">` +
       cols.map((c, k) => {
@@ -809,13 +815,13 @@ function issueSectionHeadRowsHtml(cols, sec) {
           return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
             `${esc(s.short)}${resizeHandle(k)}</th>`;
         }
-        return `<th${commentCls(c)}>${esc(displayLabel(c))}${aiNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
+        return `<th${commentCls(c)}>${esc(displayLabel(c))}${aiNote(c)}${mergeNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
       }).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
     : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}` +
-      `${aiNote(cols[r.start])}${resizeHandle(r.start)}${toggleAllBtn(r.start)}</th>`
+      `${aiNote(cols[r.start])}${mergeNote(cols[r.start])}${resizeHandle(r.start)}${toggleAllBtn(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);

@@ -224,11 +224,25 @@ _UPLOADER_MATCH = ("LOWER(TRIM(CASE WHEN INSTR(s.uploaded_by, '\\') > 0"
 
 # 정렬 화이트리스트. 어떤 키를 골라도 session_id 를 마지막에 붙여 offset 페이지 간
 # 순서가 흔들리지 않게 한다.
+# 목록 열 머리글 클릭 정렬이 이 표를 그대로 쓴다 — 화면은 한 페이지만 들고 있어
+# (서버 페이지네이션) JS 배열 정렬로는 전체를 정렬할 수 없기 때문이다. 열마다
+# 오름(<key>)/내림(<key>_desc) 두 벌을 둔다. 'new'/'old' 는 Date 열의 두 방향이며
+# 종전 URL·저장된 링크 호환을 위해 이름을 그대로 둔다.
 _HISTORY_SORTS = {
     "new": "s.created_at DESC",
     "old": "s.created_at ASC",
     "product": "s.product COLLATE NOCASE ASC",
+    "product_desc": "s.product COLLATE NOCASE DESC",
     "lot": "s.lot_id COLLATE NOCASE ASC",
+    "lot_desc": "s.lot_id COLLATE NOCASE DESC",
+    "ptype": "s.product_type COLLATE NOCASE ASC",
+    "ptype_desc": "s.product_type COLLATE NOCASE DESC",
+    "mode": "COALESCE(s.mode, 'Normal') COLLATE NOCASE ASC",
+    "mode_desc": "COALESCE(s.mode, 'Normal') COLLATE NOCASE DESC",
+    "fname": "s.file_name COLLATE NOCASE ASC",
+    "fname_desc": "s.file_name COLLATE NOCASE DESC",
+    "owner": "s.uploaded_by COLLATE NOCASE ASC",
+    "owner_desc": "s.uploaded_by COLLATE NOCASE DESC",
 }
 
 # 자유 검색어(q)가 훑는 컬럼 — 종전 클라이언트 필터의 haystack 과 동일하게 맞춘다.

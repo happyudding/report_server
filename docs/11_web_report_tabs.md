@@ -577,11 +577,20 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     zebra(`tr:nth-child(even) td`)·hover 가 특이도 (0,2,2) 로 `.compare-table td.eq-bad`(0,2,1)를
     이겨 짝수 행·마우스오버에서 배경만 사라지던 문제 때문이다(`cpk-warn` 과 같은 처방).
     `AVG차`·`AVG차(%)` 헤더에는 위 수식을 `.eq-formula` 작은 글씨로 병기한다.
-    **표시 규약**: 서버가 이미 반올림한 값(average 4자리·cpk 3자리·limit 6자리)은 프런트에서
-    다시 반올림하지 않고 그대로 찍는다(`_cmpServer` = cpk.js `String(v)`) — 이중 반올림하면
-    같은 값을 보여주는 CPK 탭과 표시가 갈린다. 서버가 유일하게 반올림하지 않는 stdev 만
-    표시 시점에 유효숫자를 맞춘다(`_cmpStdev` → core.js `fmtStdev`: 소수 3자리, |v|<1 이면
-    유효숫자 3자리까지 자리수 확장 — 원값은 CPK Limit 역산이 계속 쓰므로 불변).
+    **표시 규약** (2026-08-26 개정): 서버 반올림 자리수는 컬럼마다 다르다(min~max 6자리·
+    average 4자리·cpk/cp 3자리·limit 6자리, stdev 만 **무반올림**). 그래서 `String(v)` 로
+    그냥 찍으면 `2347582934789.234783` 같은 값 하나가 컬럼 폭을 통째로 밀어냈다 —
+    **통계 5컬럼(min/median/max/average/stdev)은 표시 길이를 8자(부호 제외)로 줄인다**
+    (core.js `fmtLen8`, CPK 탭·Compare `_cmpStdev`·Item_detail·Composite 공용).
+    규칙: 원문이 8자 이하면 손대지 않음 · **버림**(반올림 아님 — `9.9999999`→`9.999999`,
+    자리올림 금지) · 끝자리 0 제거 · 유효숫자 4자리 미만으로 뭉개지면 지수표기(`3.3423e-6`).
+    축약된 셀만 원값을 `title` 툴팁 + `.cpk-abbr` 점선 밑줄로 보여준다.
+    `cpl`/`cpu`/`cp`/`cpk`·limit 은 서버가 이미 짧게 주므로 **원문 그대로**(`_cmpServer`).
+    ⚠️ **표시 전용이다 — payload 값은 불변**이므로 CPK Limit 역산(`cpkComputeTargets`)·
+    Item_detail 가우시안 곡선·Excel Download 는 계속 원값을 쓴다.
+    구현 함정 3종은 [tests/test_cpk_len8_js.py](../tests/test_cpk_len8_js.py) 가 고정한다
+    (지수부 길이 누락 → 값 100배 오차 / 지수표기 끝자리 0 제거 → 문자열 깨짐 /
+    곱셈 버림 → 부동소수점 오차로 `8.7`→`8.6`). `fmtStdev` 는 호출자가 없어졌지만 보존.
     회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py)
     (`test_single_source_group_matches_cpk_sheet` 이 average/stdev/cpk + limit 을 CPK 시트와 대조).
 - **Issue Table Compare 탭 (Compare 모드 전용, 2026-08-20 신설)**: Compare 결과를 **기존

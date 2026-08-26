@@ -16,10 +16,11 @@ function _cmpServer(v) {
   return esc(String(v));
 }
 // stdev 는 서버가 유일하게 반올림하지 않고 내려보내는 값이라(Limit 역산이 원값에 의존)
-// 표시할 때만 유효숫자를 맞춘다 — CPK 탭·Item_detail 과 같은 fmtStdev(core.js)를 쓴다.
+// 표시할 때만 자리수를 맞춘다 — CPK 탭·Item_detail 과 같은 fmtLen8(core.js, 표시 8자 제한)
+// 을 쓴다. 같은 stdev 가 화면마다 다른 자리수로 보이지 않게 통일한 것이다(2026-08-26).
 function _cmpStdev(v) {
   if (v === null || v === undefined || v === "") return "–";
-  return esc(fmtStdev(v));
+  return esc(fmtLen8(v));
 }
 function _cmpDeltaCell(v, digits, extraCls, title) {
   const tip = title ? ` title="${esc(title)}"` : "";

@@ -152,7 +152,8 @@ function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
     const groups = sg.groups || [];
     const label = String(sg.step || "").trim() || "(기타)";
     return `<div class="yield-step-section" data-step="${esc(label)}">` +
-      `<div class="yield-step-title">STEP ${esc(label)}</div>` +
+      `<div class="yield-step-title">STEP ${esc(label)}` +
+      `<span class="merge-note">${esc(MERGE_NOTE_TEXT)}</span></div>` +
       renderYieldTable(cols, groups, `${keyPrefix || ""}${si}`,
                        yieldStepPassRow(sg.step, byStep)) + `</div>`;
   }).join("");
