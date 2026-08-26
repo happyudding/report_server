@@ -124,6 +124,17 @@ try {
 
     if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
 
+    # 런처 사본을 payload 안에 넣는다 (versions\<ver>\launcher\Honey.exe).
+    # 루트의 Honey.exe 는 자동 업데이트 대상이 아니라서, 이 사본이 없으면 런처 수정이
+    # 각 PC 에 영영 반영되지 않는다 — 앱이 기동 10초 뒤 이것으로 루트를 갈아끼운다
+    # (transport/launcher_selfupdate.py). 매니페스트 생성 **전에** 넣어야 델타로도
+    # 따라온다.
+    $LauncherPayloadDir = Join-Path $AppDist "launcher"
+    if (-not (Test-Path $LauncherPayloadDir)) {
+        New-Item -ItemType Directory -Path $LauncherPayloadDir | Out-Null
+    }
+    Copy-Item $LauncherExe (Join-Path $LauncherPayloadDir "Honey.exe") -Force
+
     # 델타 업데이트용 파일 목록. 앱 폴더 안(.files.json)에도 같은 내용이 들어가 zip 에
     # 함께 실린다 — 설치되면 그것이 다음 업데이트의 "무엇이 바뀌었나" 판정 기준이 된다.
     # honey.env 를 쓴 뒤에 만들어야 그 파일까지 목록에 들어간다.

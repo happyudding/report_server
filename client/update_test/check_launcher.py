@@ -23,10 +23,17 @@ STUB_OK = SYS32 / "hostname.exe"      # exit 0
 STUB_CRASH = SYS32 / "where.exe"      # 인자 없이 실행하면 exit 2
 
 
-def make_version(root, version, stub):
+def make_version(root, version, stub, internal=True):
+    """가짜 버전 폴더. internal=False 면 **반쯤 지워진 폴더**를 흉내낸다.
+
+    실제 onedir 빌드에는 반드시 _internal 이 있고, 런처는 그 유무로 깨진 잔재를
+    실행 후보에서 뺀다 (launcher.runnable).
+    """
     d = root / "versions" / version
     d.mkdir(parents=True, exist_ok=True)
     shutil.copy2(stub, d / "HoneyApp.exe")
+    if internal:
+        (d / "_internal").mkdir(exist_ok=True)
     return d
 
 
@@ -108,6 +115,18 @@ def main():
         check("종료코드 1", run_launcher(root) == 1)
         check("로그에 no runnable version", "no runnable" in launcher_log(root))
 
+        print("[4-1] 반쯤 지워진 버전 폴더는 실행 후보에서 뺀다")
+        root = work / "broken"
+        root.mkdir()
+        shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+        make_version(root, "9.0.0", STUB_OK)
+        make_version(root, "9.0.1", STUB_OK, internal=False)   # rmtree 실패 잔재
+        write_current(root, "9.0.1\n9.0.0\n")
+        check("깨진 폴더를 건너뛰고 정상 버전 실행", run_launcher(root) == 0)
+        log = launcher_log(root)
+        check("9.0.1 을 실행하지 않았다", "launch 9.0.1" not in log)
+        check("9.0.0 을 실행했다", "launch 9.0.0" in log)
+
         print("[5] --wait-pid: 살아 있는 프로세스를 기다린다")
         root = work / "waitpid"
         root.mkdir()
@@ -128,9 +147,71 @@ def main():
         check("실제로 기다렸다 (2초 이상)", waited >= 2.0)
         check("로그에 wait for pid", f"wait for pid {sleeper.pid}" in launcher_log(root))
 
+        check_apply_update(work)
+
         print("\nALL OK")
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def check_apply_update(work):
+    """_apply_update 의 실패 분류 — 서버·UI 없이 함수만 직접 부른다.
+
+    여기서 지키려는 계약은 하나다: **로컬 권한 실패는 전체 zip 으로 폴백하지 않는다.**
+    폴백하면 331MB 를 받고 같은 자리에서 또 실패한다(2026-08-26 현장 증상).
+    """
+    sys.path.insert(0, str(CLIENT_DIR))
+    import importlib
+
+    launcher = importlib.import_module("launcher")
+    au = importlib.import_module("transport.app_update")
+
+    print("[6] _apply_update 실패 분류")
+    root = work / "apply"
+    (root / "versions").mkdir(parents=True)
+    (root / "updates").mkdir()
+    logs = []
+
+    def logf(message):
+        logs.append(message)
+
+    # 잠긴 폴더 → prepare_target 이 LocalWriteError → 다운로드 시도 자체가 없어야 한다.
+    locked = root / "versions" / "9.9.9"
+    locked.mkdir()
+    (locked / "HoneyApp.exe").write_bytes(b"x")
+    holder = open(locked / "locked.dll", "wb")
+    holder.write(b"in-use")
+    holder.flush()
+    downloads = []
+    real_download = au.download
+    au.download = lambda *a, **k: downloads.append(a[0]) or real_download(*a, **k)
+    try:
+        launcher._apply_update(
+            root, "http://127.0.0.1:1", "9.9.9", {"file": "x.zip"}, None,
+            lambda *a: True, logf)
+        raise AssertionError("잠긴 폴더인데 설치가 진행됐다")
+    except au.LocalWriteError as exc:
+        check("LocalWriteError 가 그대로 올라온다", str(exc.path).endswith("9.9.9"))
+    finally:
+        au.download = real_download
+        holder.close()
+    check("전체 zip 을 받지 않았다 (중복 실패 제거)", not downloads)
+
+    # 완성된 폴더 → adopt. 역시 아무것도 받지 않는다.
+    done = root / "versions" / "9.8.0"
+    (done / "_internal").mkdir(parents=True)
+    (done / "HoneyApp.exe").write_bytes(b"app")
+    au.write_file_manifest(done, au.build_file_manifest(done))
+    downloads.clear()
+    au.download = lambda *a, **k: downloads.append(a[0]) or real_download(*a, **k)
+    try:
+        mode = launcher._apply_update(
+            root, "http://127.0.0.1:1", "9.8.0", {"file": "x.zip"}, None,
+            lambda *a: True, logf)
+    finally:
+        au.download = real_download
+    check("완성된 폴더는 adopt", mode == "adopt")
+    check("adopt 는 다운로드 0", not downloads)
 
 
 if __name__ == "__main__":

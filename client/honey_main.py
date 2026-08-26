@@ -34,7 +34,8 @@ from PyQt6.QtWidgets import (
 )
 
 from transport.config import CHROMIUM_FLAGS, CURRENT_VERSION, SERVER_BASE_URL
-from transport import app_update, update_policy, updater, uploader, version_check
+from transport import (app_update, launcher_selfupdate, update_policy, updater,
+                       uploader, version_check)
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -4454,19 +4455,31 @@ def _apply_cute_font(app):
 
 
 def _schedule_version_cleanup():
-    """버전 폴더 방식이면 정상 기동 10초 뒤 옛 버전·잔재를 정리한다.
+    """버전 폴더 방식이면 정상 기동 10초 뒤 옛 버전·잔재를 정리하고 런처를 갱신한다.
 
     창이 뜨고 10초를 버텼다 = 새 버전 첫 실행이 성공했다는 뜻이라, 이때 직전 버전
     1개만 롤백용으로 남기고 나머지를 지운다. 실패해도 무해한 best-effort 라
     데몬 스레드로 돌린다 (종료를 붙잡지 않는다).
+
+    같은 시점에 루트 Honey.exe(런처)도 이 버전이 들고 온 사본으로 교체한다 — 런처는
+    자동 업데이트 대상이 아니라서, 이게 없으면 런처 수정이 각 PC 에 영영 반영되지
+    않는다. 지금 런처는 이미 종료했으므로 파일이 잠겨 있지 않다.
     """
     root = app_update.install_root()
     if root is None:
         return
     current, previous = app_update.read_current(root)
-    timer = threading.Timer(
-        10.0, app_update.startup_cleanup, args=(root,),
-        kwargs={"keep_versions": (current or CURRENT_VERSION, CURRENT_VERSION, previous)})
+
+    def _maintain():
+        # 둘은 독립이다 — 정리가 실패해도(보호 폴더 등) 런처 교체는 해야 한다.
+        try:
+            app_update.startup_cleanup(
+                root, keep_versions=(current or CURRENT_VERSION, CURRENT_VERSION, previous))
+        except Exception as exc:   # noqa: BLE001 - best-effort
+            app_update.ulog(f"CLEANUP 실패(무시): {type(exc).__name__}: {exc}")
+        launcher_selfupdate.maybe_replace_launcher(root, current)
+
+    timer = threading.Timer(10.0, _maintain)
     timer.daemon = True
     timer.start()
 

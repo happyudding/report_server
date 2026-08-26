@@ -13,6 +13,8 @@
   - **델타 조립** — 안 바뀐 파일 재사용(하드링크), 바뀐 것만 다운로드, sha256 거부,
     실패 시 잔재 없음. 미니 HTTP 서버를 띄워 실제 다운로드까지 돈다.
   - 런처가 쓰는 나머지 헬퍼 (is_newer / can_write / 서버주소 우선순위 / 실패 카운터)
+  - **prepare_target** — 완성된 폴더 채택(adopt), 깨진 잔재 치우기, 잠긴 폴더에서
+    LocalWriteError + **전체 zip 을 받지 않는다**(2026-08-26 현장 재현)
 """
 import os
 import shutil
@@ -228,6 +230,19 @@ def main():
             check("진행 콜백이 불렸다", bool(seen))
             check("tmp 잔재 없음", not list((root / "versions").glob("*.tmp-*")))
 
+            # adopt 판정은 여기서 한다 — 뒤쪽 [10] 이 9.0.1\honey.env 를 덮어쓰는데,
+            # 델타가 그 파일을 하드링크로 재사용하므로 9.1.0 의 크기까지 함께 변한다
+            # (실체 공유의 실제 성질이다). 그 뒤에 검사하면 미완성으로 보인다.
+            print("[8-1] adopt — 완성된 폴더는 다시 받지 않는다")
+            check("델타로 설치된 폴더는 완성 상태", au.verify_version_dir(final))
+            check("완성 폴더는 adopt",
+                  au.prepare_target(root, "9.1.0", remote_files) == "adopted")
+            check("adopt 는 폴더를 건드리지 않는다",
+                  (final / "HoneyApp.exe").read_bytes() == b"app-stub-9.1.0")
+            check("다른 버전의 매니페스트면 adopt 하지 않는다",
+                  au.prepare_target(root, "9.1.0", local_files) == "cleared"
+                  and not final.exists())
+
             print("[9] 델타 sha256 불일치 → 설치 안 됨")
             tampered = [dict(f) for f in remote_files]
             for entry in tampered:
@@ -271,6 +286,64 @@ def main():
         check("다른 버전이면 0 부터", au.read_fail_count(root, "9.2.0") == 0)
         au.clear_fail_count(root)
         check("리셋", au.read_fail_count(root, "9.1.0") == 0)
+
+        print("[11] 실패 카운터 v2 — 런처를 고쳐 배포하면 과거 기록이 풀린다")
+        (root / au.FAILCOUNT_FILENAME).write_text("9.1.0 3\n", encoding="utf-8")
+        check("구 2토큰 포맷은 0 (stuck PC 자동 해제)",
+              au.read_fail_count(root, "9.1.0", "2026.08.26") == 0)
+        au.bump_fail_count(root, "9.1.0", "2026.08.26")
+        au.bump_fail_count(root, "9.1.0", "2026.08.26")
+        check("같은 빌드면 누적", au.read_fail_count(root, "9.1.0", "2026.08.26") == 2)
+        check("빌드가 다르면 0", au.read_fail_count(root, "9.1.0", "2026.09.01") == 0)
+        au.clear_fail_count(root)
+
+        print("[12] prepare_target — 대상 폴더 준비 (다운로드 전에 끝낸다)")
+        check("없으면 absent", au.prepare_target(root, "7.0.0") == "absent")
+
+        # 깨진 잔재 = 옆으로 치우고 정리. rmtree 로 반쯤 파괴하지 않는다.
+        broken = root / "versions" / "9.3.0"
+        (broken / "_internal").mkdir(parents=True)
+        (broken / "HoneyApp.exe").write_bytes(b"partial")     # 매니페스트 없음 = 미완성
+        check("깨진 잔재는 cleared", au.prepare_target(root, "9.3.0") == "cleared")
+        check("치운 뒤 자리가 비었다", not broken.exists())
+        check("old- 잔재도 정리됨", not list((root / "versions").glob("*.old-*")))
+
+        print("[13] 잠긴 폴더 — LocalWriteError + 전체 zip 을 받지 않는다")
+        locked = root / "versions" / "9.4.0"
+        locked.mkdir()
+        (locked / "HoneyApp.exe").write_bytes(b"x")
+        holder = open(locked / "locked.dll", "wb")   # 실행 중 DLL 을 흉내낸다
+        holder.write(b"in-use")
+        holder.flush()
+        try:
+            au.prepare_target(root, "9.4.0")
+            raise AssertionError("잠긴 폴더가 통과했다")
+        except au.LocalWriteError as exc:
+            check(f"LocalWriteError ({exc.path and Path(exc.path).name})",
+                  str(exc.path).endswith("9.4.0"))
+            check("실패 경로를 진단에 담는다", "failing_path" in exc.details())
+        finally:
+            holder.close()
+        check("치우기 실패해도 원본은 온전하다",
+              (locked / "locked.dll").read_bytes() == b"in-use")
+
+        print("[14] 런처 자가교체 — 앱이 루트 Honey.exe 를 갱신한다")
+        from transport import launcher_selfupdate as ls   # noqa: E402
+
+        (root / "Honey.exe").write_bytes(b"OLD-LAUNCHER")
+        au.write_current(root, "9.0.0", "8.9.9")
+        check("사본이 없는 구 릴리스는 아무것도 하지 않는다",
+              ls.maybe_replace_launcher(root) is False
+              and (root / "Honey.exe").read_bytes() == b"OLD-LAUNCHER")
+
+        bundled = root / "versions" / "9.0.0" / "launcher"
+        bundled.mkdir(parents=True, exist_ok=True)
+        (bundled / "Honey.exe").write_bytes(b"NEW-LAUNCHER")
+        check("사본이 있으면 교체", ls.maybe_replace_launcher(root) is True)
+        check("루트 런처가 새 것", (root / "Honey.exe").read_bytes() == b"NEW-LAUNCHER")
+        check("같은 해시면 두 번 하지 않는다",
+              ls.maybe_replace_launcher(root) is False)
+        check("스테이징 잔재 없음", not list(root.glob(".Honey.exe.new")))
 
         print("\nALL OK")
     finally:

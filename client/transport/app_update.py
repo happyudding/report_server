@@ -14,21 +14,30 @@ versions\\<ver>.tmp-<pid> 에 풀고, 완성되면 versions\\<ver> 로 rename �
 current.txt 만 원자적으로 바꾸고 런처를 다시 띄운다. 구 batch 스왑 방식
 (transport/updater.py)이 겪던 DLL 잠금·robocopy 실패·백신 차단이 구조적으로 없다.
 
-이 모듈은 updater.py 를 대체할 목적이지만, 아직은 **병행 추가**다 — updater.py 와
-기존 릴리스 파이프라인은 그대로 두고, honey_main 은 HONEY_UPDATE_TEST=1 일 때만
-이쪽 경로를 쓴다.
+이 모듈은 updater.py(구 batch 스왑)를 대체한다. 어느 경로를 쓸지는 환경변수가 아니라
+**설치 구조**가 정한다 — install_root() 가 versioned 레이아웃을 인식하면 이쪽이다.
+(HONEY_UPDATE_TEST 게이트는 2026-08-12 제거됐다.)
+
+**기존 버전 폴더를 통째로 지우지 않는다** (2026-08-26). 완성돼 있으면 채택(adopt)하고,
+깨진 잔재면 옆으로 rename 해 치운다 — rmtree 는 잠긴 파일 하나에 WinError 5 로 실패하면서
+폴더를 반쯤 파괴하는데, 그게 현장에서 업데이트를 영구히 막았다. 위험한 로컬 조작은
+전부 prepare_target() 이 **다운로드 전에** 끝낸다.
 
 함수 대부분이 root 를 인자로 받는다 — 빌드본 없이도 가짜 트리로 검증할 수 있게 하기
 위해서다 (client/update_test/check_app_update.py).
 """
+import ctypes
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -42,10 +51,12 @@ VERSIONS_DIRNAME = "versions"
 UPDATES_DIRNAME = "updates"
 CURRENT_FILENAME = "current.txt"
 MANIFEST_FILENAME = ".files.json"     # 버전 폴더 안의 파일 목록 캐시 (델타 판정용)
-FAILCOUNT_FILENAME = ".update_fail"   # "<버전> <연속 실패 횟수>"
+FAILCOUNT_FILENAME = ".update_fail"   # "<버전> <연속 실패 횟수> <런처 빌드>"
+ELEVATED_RESULT_FILENAME = ".elevated_result.json"   # 승격 프로세스 → 부모 진단 채널
 
 _NET_TIMEOUT = 5        # 서버 질의 — 앱 기동을 붙잡으면 안 되므로 짧게
 _DOWNLOAD_TIMEOUT = 60  # 데이터 수신 — 큰 파일 대비
+_DOWNLOAD_RETRIES = 2   # 네트워크 오류만 재시도 (취소·해시 불일치는 즉시 포기)
 
 _LOG_MAX_BYTES = 1_000_000
 _rotated = False
@@ -57,6 +68,49 @@ class InstallCancelled(Exception):
 
 class DownloadCancelled(Exception):
     """progress_cb 가 False 를 돌려줘 다운로드를 중단했다 (런처 진행창의 취소)."""
+
+
+class LocalWriteError(Exception):
+    """설치 폴더의 파일 조작(생성·rename·삭제)이 권한/잠금으로 실패했다.
+
+    **네트워크 실패와 반드시 구분해야 한다.** 이것이 나면 전체 zip 을 다시 받아도
+    같은 자리에서 또 실패하므로(2026-08-26 현장: 델타 실패 → 331MB 재다운로드 →
+    같은 rename 에서 재실패), 호출부는 폴백하지 말고 권한 상승 경로로 가야 한다.
+
+    path 는 실제로 막힌 경로다 — 사용자에게 그대로 보여줘야 조치할 수 있다.
+    """
+
+    def __init__(self, message, path=None, winerror=None, readonly=None):
+        super().__init__(message)
+        self.path = str(path) if path else ""
+        self.winerror = winerror
+        self.readonly = readonly
+
+    def details(self):
+        """report_failure context / 실패창에 넣을 진단 조각."""
+        out = {"failing_path": self.path}
+        if self.winerror is not None:
+            out["winerror"] = self.winerror
+        if self.readonly is not None:
+            out["readonly"] = "1" if self.readonly else "0"
+        return out
+
+
+def _is_readonly(path) -> bool:
+    try:
+        return not (os.stat(path).st_mode & stat.S_IWRITE)
+    except OSError:
+        return False
+
+
+def _local_error(message, path, exc=None):
+    """OSError 를 LocalWriteError 로 승격 (실패 경로·winerror·읽기전용 여부 첨부)."""
+    winerror = getattr(exc, "winerror", None)
+    detail = f"{message}: {path}"
+    if exc is not None:
+        detail = f"{detail} ({type(exc).__name__}: {exc})"
+    return LocalWriteError(detail, path=path, winerror=winerror,
+                           readonly=_is_readonly(path))
 
 
 def is_frozen() -> bool:
@@ -196,6 +250,161 @@ def extract_payload(zip_path, dest_dir, progress_cb=None):
                         raise InstallCancelled()
 
 
+# ── 삭제 / 대상 폴더 준비 ────────────────────────────────────────────────────
+def _rmtree_robust(path, attempts=3, delay=0.5) -> bool:
+    """읽기전용 해제 + 제한 재시도로 지운다. 끝내 못 지우면 False (예외 아님).
+
+    쓰는 쪽이 "치워두고 나중에 지운다" 전략이라 삭제 실패가 치명적이지 않다 —
+    실패를 예외로 올리면 업데이트가 멈추는데, 정작 새 버전 설치에는 지장이 없다.
+    백신 실시간 감시가 갓 만든 파일을 잠깐 잡고 있는 경우가 흔해 재시도를 둔다.
+    """
+    path = Path(path)
+
+    def _retry(func, target, _exc):
+        # 읽기전용 속성은 관리자 권한과 무관하게 삭제를 막는다 — 풀고 한 번 더.
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except OSError:
+            pass
+
+    for attempt in range(attempts):
+        if not path.exists():
+            return True
+        try:
+            # onexc 는 3.12+, onerror 는 그 이전 — 런처가 어느 파이썬으로 빌드되든 돌아야 한다.
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=_retry)
+            else:
+                shutil.rmtree(path, onerror=lambda f, t, _i: _retry(f, t, None))
+        except OSError as exc:
+            ulog(f"RMTREE 실패({attempt + 1}/{attempts}) {path}: {exc}")
+        if not path.exists():
+            return True
+        if attempt + 1 < attempts:
+            time.sleep(delay)
+    return not path.exists()
+
+
+def verify_version_dir(version_dir, remote_files=None) -> bool:
+    """그 버전 폴더가 **온전히 설치된 것**인가 (그렇다면 다시 만들 필요가 없다).
+
+    매니페스트 + 파일 존재·크기 대조까지만 한다. 전 파일 sha256 은 752MB 를 다시
+    읽는 일이라 기동을 수십 초 붙잡는다 — 앱 본체 하나만 실측 검증한다.
+    remote_files 가 있으면 "그 버전이 맞는지"까지 본다(없으면 로컬 캐시만 신뢰).
+    """
+    version_dir = Path(version_dir)
+    if not (version_dir / APP_EXE_NAME).is_file():
+        return False
+    local_files = read_file_manifest(version_dir)
+    if not local_files:
+        return False
+    if remote_files is not None:
+        def _key(files):
+            return sorted((f.get("p"), f.get("h")) for f in files)
+        if _key(local_files) != _key(remote_files):
+            return False
+    app_hash = None
+    for entry in local_files:
+        rel, size = entry.get("p"), entry.get("s")
+        if not rel:
+            return False
+        target = version_dir / rel
+        try:
+            if size is not None and target.stat().st_size != int(size):
+                return False
+        except OSError:
+            return False
+        if rel.lower() == APP_EXE_NAME.lower():
+            app_hash = entry.get("h")
+    if app_hash:
+        try:
+            if sha256_file(version_dir / APP_EXE_NAME) != app_hash:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def prepare_target(root, version, remote_files=None) -> str:
+    """설치 **전에** versions\\<version> 자리를 비운다. 반환 'adopted'|'cleared'|'absent'.
+
+    이 함수가 이 모듈의 핵심 안전장치다. 예전에는 install 함수들이 마지막 순간에
+    `shutil.rmtree(final)` 을 했는데, 그 한 줄이 세 가지를 한꺼번에 망쳤다:
+      1) 잠긴 파일 하나에 WinError 5 → 331MB 를 다 받은 **뒤에** 실패
+      2) 부분 삭제로 폴더가 반쯤 파괴돼 다음 실행도 같은 자리에서 실패
+      3) 델타·전체 zip 이 같은 코드라 실패가 두 번 반복 (현장 증상 그대로)
+    이제 위험한 조작을 전부 여기로 앞당기고, 삭제 대신 **옆으로 rename** 한다.
+
+    - 이미 완성된 폴더면 'adopted' — 아무것도 받지 않고 그대로 쓴다.
+    - 깨진 잔재는 versions\\<ver>.old-<pid>-<uuid> 로 치우고 best-effort 삭제.
+    - 치우기 자체가 막히면 LocalWriteError (다운로드는 시작조차 하지 않는다).
+    """
+    root = Path(root)
+    versions = root / VERSIONS_DIRNAME
+    try:
+        versions.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise _local_error("versions 폴더를 만들 수 없습니다", versions, exc) from exc
+
+    # versions\ 아래에 실제로 쓸 수 있는지 — can_write(root) 는 루트만 보므로
+    # 하위 폴더에만 걸린 ACL 을 못 잡는다 (현장에서 통과시켜 놓고 뒤에서 터졌다).
+    probe = versions / f".wtest-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    try:
+        probe.mkdir()
+    except OSError as exc:
+        raise _local_error("versions 폴더에 쓸 수 없습니다", versions, exc) from exc
+    finally:
+        try:
+            probe.rmdir()
+        except OSError:
+            pass
+
+    final = versions / version
+    if not final.exists():
+        return "absent"
+
+    if verify_version_dir(final, remote_files):
+        ulog(f"PREPARE adopt {final} (완성된 폴더 — 재설치하지 않는다)")
+        return "adopted"
+
+    aside = versions / f"{version}.old-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    try:
+        final.rename(aside)
+    except OSError as exc:
+        raise _local_error("기존 버전 폴더를 치울 수 없습니다", final, exc) from exc
+    ulog(f"PREPARE cleared {final} -> {aside.name}")
+    if not _rmtree_robust(aside):
+        ulog(f"PREPARE 잔재 삭제 보류 {aside.name} (다음 정리에서 수거)")
+    return "cleared"
+
+
+def _promote(tmp, final, remote_files=None):
+    """조립이 끝난 tmp 를 final 로 승격. 실패는 LocalWriteError 로 통일한다.
+
+    prepare_target 이 자리를 비워 뒀다는 전제지만, 그 사이에 다른 프로세스가 같은
+    버전을 설치했을 수 있다 — 그게 온전하면 우리 tmp 를 버리고 그 결과를 쓰고,
+    깨진 것이면 여기서 다시 치운다(마지막 순간의 rmtree 대신 rename-aside).
+    """
+    if final.exists():
+        if verify_version_dir(final, remote_files):
+            ulog(f"PROMOTE 이미 설치됨 — tmp 폐기 {tmp.name}")
+            _rmtree_robust(tmp)
+            return final
+        aside = final.with_name(f"{final.name}.old-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+        try:
+            final.rename(aside)
+        except OSError as exc:
+            raise _local_error("기존 버전 폴더를 치울 수 없습니다", final, exc) from exc
+        ulog(f"PROMOTE cleared {final.name} -> {aside.name}")
+        _rmtree_robust(aside)
+    try:
+        tmp.rename(final)
+    except OSError as exc:
+        raise _local_error("새 버전 폴더로 이름을 바꿀 수 없습니다", final, exc) from exc
+    return final
+
+
 # ── 설치 ────────────────────────────────────────────────────────────────────
 def check_disk(root, need_bytes):
     """(여유공간 충분?, 여유 MB, 필요 MB). zip 크기 미상이면 4GB 를 기준으로 본다.
@@ -210,11 +419,19 @@ def check_disk(root, need_bytes):
     return free >= need, free // (1024 * 1024), need // (1024 * 1024)
 
 
+def _guard_running_version(final, version):
+    """실행 중인 버전 폴더는 건드리지 않는다 (전체·델타 양쪽 공통)."""
+    running = Path(sys.executable).resolve().parent if is_frozen() else None
+    if running is not None and final.resolve() == running:
+        raise RuntimeError(f"실행 중인 버전({version})은 다시 설치할 수 없습니다")
+
+
 def install_version(root, version, zip_path, progress_cb=None):
     """새 버전을 versions\\<version> 에 설치하고 그 경로를 반환.
 
     tmp 폴더에 다 푼 뒤 rename 이라, 실패·취소하면 tmp 만 지우면 되고 완성된
-    버전 폴더가 반쯤 만들어진 채로 남지 않는다.
+    버전 폴더가 반쯤 만들어진 채로 남지 않는다. 대상 자리를 비우는 일은
+    prepare_target() 이 **다운로드 전에** 끝냈다는 전제다.
     """
     root = Path(root)
     versions = root / VERSIONS_DIRNAME
@@ -222,24 +439,18 @@ def install_version(root, version, zip_path, progress_cb=None):
     final = versions / version
     tmp = versions / f"{version}.tmp-{os.getpid()}"
 
-    running = Path(sys.executable).resolve().parent if is_frozen() else None
-    if running is not None and final.resolve() == running:
-        raise RuntimeError(f"실행 중인 버전({version})은 다시 설치할 수 없습니다")
+    _guard_running_version(final, version)
 
     if tmp.exists():
-        shutil.rmtree(tmp, ignore_errors=True)
+        _rmtree_robust(tmp)
     ulog(f"INSTALL extract -> {tmp}")
     try:
         extract_payload(zip_path, tmp, progress_cb)
         if not (tmp / APP_EXE_NAME).exists():
             raise RuntimeError(f"압축 해제 결과에 {APP_EXE_NAME} 이 없습니다")
-        if final.exists():
-            # 이전에 중단된 같은 버전 잔재 — 부분 폴더는 믿지 않고 통째로 다시 넣는다.
-            ulog(f"INSTALL replace existing {final}")
-            shutil.rmtree(final)
-        tmp.rename(final)
+        final = _promote(tmp, final)
     except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _rmtree_robust(tmp)
         raise
     ulog(f"INSTALL done {final}")
     return final
@@ -268,8 +479,12 @@ def startup_cleanup(root, keep_versions=()):
     """앱이 정상 기동한 뒤 부르는 잔재 정리 (best-effort, 전부 무시 가능한 실패).
 
     - versions\\ 에서 keep_versions 외 폴더 삭제 (현재/이전 2개만 유지)
-    - 중단된 *.tmp-* 폴더 삭제
+    - 중단된 *.tmp-* / 치워 둔 *.old-* 폴더 삭제
     - updates\\ 의 zip 삭제 (설치 성공/실패 시 지우지만 놓친 것 수거)
+
+    보호 폴더(Program Files 등)에서는 일반 권한으로 지워지지 않는다 — 그때는 조용히
+    남겨 두고, 다음 승격 업데이트(launcher --elevated-update)가 같은 함수를 관리자
+    권한으로 다시 돌려 수거한다.
     """
     root = Path(root)
     keep = {v for v in keep_versions if v}
@@ -284,11 +499,10 @@ def startup_cleanup(root, keep_versions=()):
             continue
         if entry.name in keep:
             continue
-        try:
-            shutil.rmtree(entry)
+        if _rmtree_robust(entry):
             removed.append(entry.name)
-        except OSError as exc:
-            ulog(f"CLEANUP 실패(무시) {entry.name}: {exc}")
+        else:
+            ulog(f"CLEANUP 실패(무시) {entry.name}")
     try:
         for zip_file in (root / UPDATES_DIRNAME).glob("*.zip"):
             zip_file.unlink()
@@ -431,11 +645,33 @@ def fetch_file_manifest(base_url, version, timeout=_NET_TIMEOUT):
     return files
 
 
-def download(url, dest, expected_sha256=None, progress_cb=None, timeout=_DOWNLOAD_TIMEOUT):
+def download(url, dest, expected_sha256=None, progress_cb=None,
+             timeout=_DOWNLOAD_TIMEOUT, retries=_DOWNLOAD_RETRIES):
     """스트리밍 다운로드 + sha256 검증. progress_cb(done,total) 가 False 면 취소.
 
-    실패·취소 시 **받다 만 파일을 반드시 지운다** — 남겨두면 다음 실행이 그것을
-    온전한 것으로 착각할 여지가 생긴다.
+    끊긴 연결·타임아웃만 재시도한다 — 취소는 사용자 의사이고, sha256 불일치는
+    서버 파일이 잘못됐다는 뜻이라 다시 받아도 같은 결과다.
+    """
+    last = None
+    for attempt in range(max(1, retries + 1)):
+        try:
+            return _download_once(url, dest, expected_sha256, progress_cb, timeout)
+        except (urllib.error.URLError, OSError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                raise            # 404 등은 재시도해도 같다 (전체 zip 폴백이 맞는 상황)
+            last = exc
+            if attempt + 1 >= max(1, retries + 1):
+                break
+            wait = 1 + 2 * attempt
+            ulog(f"DOWNLOAD 재시도 {attempt + 1} ({type(exc).__name__}: {exc}) — {wait}s 후")
+            time.sleep(wait)
+    raise last
+
+
+def _download_once(url, dest, expected_sha256=None, progress_cb=None,
+                   timeout=_DOWNLOAD_TIMEOUT):
+    """단발 다운로드. 실패·취소 시 **받다 만 파일을 반드시 지운다** — 남겨두면
+    다음 실행이 그것을 온전한 것으로 착각할 여지가 생긴다.
     """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -564,8 +800,11 @@ def install_delta(root, version, base_url, remote_files, source_dir,
     versions.mkdir(parents=True, exist_ok=True)
     final = versions / version
     tmp = versions / f"{version}.tmp-{os.getpid()}"
+
+    _guard_running_version(final, version)   # 전체 zip 경로와 같은 가드 (2026-08-26 대칭화)
+
     if tmp.exists():
-        shutil.rmtree(tmp, ignore_errors=True)
+        _rmtree_robust(tmp)
 
     reuse, fetch = plan_delta(remote_files, source_dir, local_files)
     fetch_bytes = sum(int(e.get("s") or 0) for e in fetch)
@@ -574,7 +813,10 @@ def install_delta(root, version, base_url, remote_files, source_dir,
     ulog(f"DELTA plan reuse={len(reuse)} fetch={len(fetch)} "
          f"bytes={fetch_bytes / 1024 / 1024:.1f}MB")
     try:
-        tmp.mkdir(parents=True, exist_ok=True)
+        try:
+            tmp.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise _local_error("조립용 임시 폴더를 만들 수 없습니다", tmp, exc) from exc
         for entry, src_rel in reuse:
             how = link_or_copy(Path(source_dir) / src_rel, _safe_target(tmp, entry["p"]))
             stats["linked" if how == "link" else "copied"] += 1
@@ -593,11 +835,9 @@ def install_delta(root, version, base_url, remote_files, source_dir,
         if not (tmp / APP_EXE_NAME).exists():
             raise RuntimeError(f"조립 결과에 {APP_EXE_NAME} 이 없습니다")
         write_file_manifest(tmp, remote_files)
-        if final.exists():
-            shutil.rmtree(final)
-        tmp.rename(final)
+        final = _promote(tmp, final, remote_files)
     except BaseException:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _rmtree_robust(tmp)
         raise
     ulog(f"DELTA done {final} linked={stats['linked']} copied={stats['copied']} "
          f"fetched={stats['fetch']}")
@@ -629,14 +869,24 @@ def report_failure(base_url, message, context=None, version=""):
 
 
 # ── 반복 실패 방지 ──────────────────────────────────────────────────────────
-def read_fail_count(root, version):
-    """그 버전의 연속 실패 횟수. 다른 버전이 기록돼 있으면 0 (새 버전이면 리셋)."""
+# 파일 포맷은 "<버전> <횟수> <런처빌드>" 3토큰이다. 2토큰(구 포맷)이거나 빌드가 다르면
+# 0 으로 본다 — **런처를 고쳐 배포하면 과거 실패 기록이 자동으로 풀린다**. 이게 없으면
+# 3회 실패로 포기 상태가 된 PC 는 고친 런처를 받아도 영영 재시도하지 않는다.
+# 빈 빌드값도 반드시 토큰 하나를 차지해야 한다 — 공백으로 쓰면 split 이 2토큰으로
+# 읽어 카운터가 매번 0 으로 리셋되고, 반복 실패 방지 자체가 무력해진다.
+_BUILD_NONE = "-"
+
+
+def read_fail_count(root, version, launcher_build=""):
+    """그 버전의 연속 실패 횟수. 다른 버전·다른 런처 빌드의 기록이면 0."""
     try:
         text = (Path(root) / FAILCOUNT_FILENAME).read_text(encoding="utf-8-sig").strip()
     except OSError:
         return 0
     parts = text.split()
-    if len(parts) != 2 or parts[0] != str(version):
+    if len(parts) != 3 or parts[0] != str(version):
+        return 0
+    if parts[2] != (str(launcher_build) or _BUILD_NONE):
         return 0
     try:
         return int(parts[1])
@@ -644,11 +894,11 @@ def read_fail_count(root, version):
         return 0
 
 
-def bump_fail_count(root, version):
-    count = read_fail_count(root, version) + 1
+def bump_fail_count(root, version, launcher_build=""):
+    count = read_fail_count(root, version, launcher_build) + 1
     try:
         (Path(root) / FAILCOUNT_FILENAME).write_text(
-            f"{version} {count}\n", encoding="utf-8")
+            f"{version} {count} {str(launcher_build) or _BUILD_NONE}\n", encoding="utf-8")
     except OSError:
         pass
     return count
@@ -657,5 +907,165 @@ def bump_fail_count(root, version):
 def clear_fail_count(root):
     try:
         (Path(root) / FAILCOUNT_FILENAME).unlink()
+    except OSError:
+        pass
+
+
+# ── 권한 상승 (ACL 로 막힌 PC 전용 보조 경로) ────────────────────────────────
+# 평소에는 쓰이지 않는다. prepare_target 이 LocalWriteError 를 냈을 때만 런처가
+# 사용자 동의를 받아 자기 자신을 한 번 승격 실행한다. 승격 프로세스는 **업데이트만**
+# 하고 끝나며, 앱(HoneyApp.exe)은 언제나 일반 권한으로 실행된다.
+ERROR_CANCELLED = 1223          # UAC 창에서 '아니오' — 실패가 아니라 사용자 선택이다
+ERROR_ALREADY_EXISTS = 183
+
+
+def acquire_update_mutex(root):
+    """설치 루트별 mutex. 이미 다른 프로세스가 쥐고 있으면 None.
+
+    같은 폴더를 두 프로세스가 동시에 업데이트하면 서로의 tmp/rename 을 밟는다.
+    반환된 핸들은 프로세스가 살아 있는 동안 들고 있어야 한다(GC 되면 풀린다).
+    """
+    try:
+        key = hashlib.sha1(str(Path(root).resolve()).lower().encode("utf-8")).hexdigest()[:16]
+        kernel32 = ctypes.windll.kernel32
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, True, f"Local\\HoneyUpd_{key}")
+        if not handle:
+            return None
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+            return None
+        return handle
+    except Exception:   # noqa: BLE001 - mutex 를 못 만들어도 업데이트는 진행돼야 한다
+        return None
+
+
+def release_update_mutex(handle):
+    if not handle:
+        return
+    try:
+        kernel32 = ctypes.windll.kernel32
+        kernel32.ReleaseMutex(ctypes.c_void_p(handle))
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+    except Exception:
+        pass
+
+
+def is_elevated() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:   # noqa: BLE001
+        return False
+
+
+class _ShellExecuteInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong),
+                ("fMask", ctypes.c_ulong),
+                ("hwnd", ctypes.c_void_p),
+                ("lpVerb", ctypes.c_wchar_p),
+                ("lpFile", ctypes.c_wchar_p),
+                ("lpParameters", ctypes.c_wchar_p),
+                ("lpDirectory", ctypes.c_wchar_p),
+                ("nShow", ctypes.c_int),
+                ("hInstApp", ctypes.c_void_p),
+                ("lpIDList", ctypes.c_void_p),
+                ("lpClass", ctypes.c_wchar_p),
+                ("hkeyClass", ctypes.c_void_p),
+                ("dwHotKey", ctypes.c_ulong),
+                ("hIcon", ctypes.c_void_p),
+                ("hProcess", ctypes.c_void_p)]
+
+
+def run_elevated(exe, args, cwd=None, timeout_sec=900):
+    """UAC 로 exe 를 실행하고 끝날 때까지 기다린다. 반환 ('ok'|'cancelled'|'error', 정보).
+
+    subprocess 로는 승격할 수 없다 — ShellExecuteEx 의 'runas' 동사만 UAC 를 띄운다.
+    """
+    SEE_MASK_NOCLOSEPROCESS = 0x00000040
+    SEE_MASK_NOASYNC = 0x00000100
+    info = _ShellExecuteInfo()
+    info.cbSize = ctypes.sizeof(info)
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC
+    info.lpVerb = "runas"
+    info.lpFile = str(exe)
+    info.lpParameters = subprocess.list2cmdline([str(a) for a in args])
+    info.lpDirectory = str(cwd) if cwd else None
+    info.nShow = 1   # SW_SHOWNORMAL — 승격 프로세스의 진행창이 보여야 한다
+    try:
+        if not ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(info)):
+            code = ctypes.windll.kernel32.GetLastError()
+            if code == ERROR_CANCELLED:
+                return "cancelled", "사용자가 관리자 권한 요청을 취소했습니다"
+            return "error", f"권한 상승 실패 (code={code})"
+    except Exception as exc:   # noqa: BLE001
+        return "error", f"권한 상승 실패 ({type(exc).__name__}: {exc})"
+
+    handle = info.hProcess
+    if not handle:
+        return "error", "권한 상승 프로세스 핸들을 얻지 못했습니다"
+    try:
+        kernel32 = ctypes.windll.kernel32
+        waited = kernel32.WaitForSingleObject(ctypes.c_void_p(handle),
+                                              int(timeout_sec * 1000))
+        if waited != 0:
+            return "error", f"업데이트가 {int(timeout_sec)}초 안에 끝나지 않았습니다"
+        code = ctypes.c_ulong()
+        kernel32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+        return ("ok" if code.value == 0 else "error"), f"exit={code.value}"
+    finally:
+        try:
+            ctypes.windll.kernel32.CloseHandle(ctypes.c_void_p(handle))
+        except Exception:
+            pass
+
+
+def normalize_acl(root) -> bool:
+    """설치 루트에 Users 수정 권한을 상속으로 부여 (승격 상태에서만 의미 있다).
+
+    **설치보다 먼저** 불러야 한다 — 나중에 부르면 승격 프로세스가 만든 새 폴더가
+    관리자 소유 그대로 남아 다음 업데이트가 또 막힌다. 이 한 번으로 그 PC 는
+    이후 UAC 없이 업데이트된다(= 근본 해결).
+
+    batch 를 만들지 않고 직접 실행한다 — .bat 은 cp949 인코딩 함정이 있고 여기서는
+    필요가 없다.
+    """
+    try:
+        # /Q 가 없으면 icacls 가 파일마다 "처리된 파일:" 을 콘솔에 직접 써서
+        # (capture_output 으로도 안 막힌다) 승격 창 뒤에 검은 창이 번쩍인다.
+        completed = subprocess.run(
+            ["icacls", str(root), "/grant", "*S-1-5-32-545:(OI)(CI)M", "/T", "/C", "/Q"],
+            capture_output=True, text=True, timeout=300,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        ok = completed.returncode == 0
+        ulog(f"ACL normalize rc={completed.returncode} {str(completed.stdout)[-200:]}")
+        return ok
+    except Exception as exc:   # noqa: BLE001 - ACL 실패가 업데이트를 막지는 않는다
+        ulog(f"ACL normalize 실패(무시): {type(exc).__name__}: {exc}")
+        return False
+
+
+def write_elevated_result(root, payload):
+    """승격 프로세스 → 부모 진단 채널 (성공 판정은 current.txt 가 정본)."""
+    try:
+        target = Path(root) / UPDATES_DIRNAME
+        target.mkdir(parents=True, exist_ok=True)
+        (target / ELEVATED_RESULT_FILENAME).write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_elevated_result(root):
+    try:
+        return json.loads((Path(root) / UPDATES_DIRNAME / ELEVATED_RESULT_FILENAME)
+                          .read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+
+
+def clear_elevated_result(root):
+    try:
+        (Path(root) / UPDATES_DIRNAME / ELEVATED_RESULT_FILENAME).unlink()
     except OSError:
         pass

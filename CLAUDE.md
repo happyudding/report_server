@@ -329,8 +329,21 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      `PATCH /session/<sid>/meta` 는 **analysis_key 를 재산출하지 않는다** — 산출물
      (parquet·manifest·summary)이 전부 그 키로 저장돼 있어 키를 바꾸면 세션이 자기 데이터를
      잃는다. 어긋나는 건 dedup(같은 데이터 재업로드) 매칭뿐이다.
-4. 클라이언트 자동 업데이트는 batch 스크립트 + 외부 다운로드 방식. 실행 중인 exe
-   에 직접 쓰지 말 것 (Windows 락).
+4. **클라이언트 자동 업데이트는 실행 중인 exe 에 직접 쓰지 않는다** (Windows 락).
+   현재 활성 경로는 **런처 레이아웃**이다 — 새 버전을 `versions\<ver>` 에 만들고
+   `current.txt` 만 바꾼다(batch 없음). 구 batch 스왑(`transport/updater.py`)은
+   `AUTO_INSTALL_ENABLED=False` 로 사실상 비활성이다. 상세·함정 전부
+   [docs/04](docs/04_honey_update.md).
+   - **기존 버전 폴더를 `rmtree` 로 지우지 말 것** (2026-08-26 현장 장애). 완성돼 있으면
+     채택(adopt), 깨진 잔재는 옆으로 rename — 위험한 로컬 조작은 전부
+     [app_update.py](client/transport/app_update.py) `prepare_target()` 이
+     **다운로드 전에** 끝낸다.
+   - **로컬 권한 실패(`LocalWriteError`)에 전체 ZIP 을 다시 받지 말 것.** 같은 자리에서
+     또 실패한다(현장: 델타 실패 → 331MB 재다운로드 → 재실패). 그 경우는 UAC 1회 승격
+     경로(`--elevated-update`)로 간다. 앱(`HoneyApp.exe`)은 **언제나 일반 권한** 실행.
+   - 런처(`Honey.exe`)를 고쳤으면 `launcher.LAUNCHER_BUILD` 를 올린다(실패 카운터 리셋).
+     각 PC 반영은 payload 동봉 사본을 앱이 교체한다
+     ([launcher_selfupdate.py](client/transport/launcher_selfupdate.py)).
 5. **Distribution 차트 데이터 다운샘플링 절대 금지.**
    모든 데이터 포인트를 빠짐없이 차트에 표현해야 한다.
    `_MAX_CDF_POINTS`, `_downsample`, `max_points` 같은 포인트 상한 로직을 절대 추가하지 말 것.

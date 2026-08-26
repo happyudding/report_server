@@ -43,6 +43,12 @@ WAIT_PARENT_SEC = 30.0
 MAX_UPDATE_FAILS = 3         # 같은 버전에서 이만큼 연속 실패하면 그 버전은 건너뛴다
 FAILURE_AUTORUN_SEC = 10     # 실패 안내창이 이 시간 뒤 자동으로 닫히고 앱이 뜬다
 APP_WINDOW_WAIT_SEC = 90.0   # 기동 대기창을 최대 이만큼 띄워 둔다 (그 뒤엔 접는다)
+ELEVATED_TIMEOUT_SEC = 900   # 승격 업데이트가 이 시간 안에 안 끝나면 기존 버전으로 간다
+
+# 런처 빌드 식별자 — .update_fail 기록에 함께 남는다. **런처를 고쳐 배포하면 이 값을
+# 올려라**: 과거의 "3회 실패로 포기" 기록이 자동으로 풀려, 그 버그로 멈춰 있던 PC 가
+# 새 런처를 받는 즉시 다시 시도한다 (transport/app_update.read_fail_count).
+LAUNCHER_BUILD = "2026.08.26"
 
 # ── 브랜드 색 (꿀단지 = 노란 계열) ───────────────────────────────────────────
 # 런처는 리소스 파일을 들고 다니지 않는다(onefile 이라 풀어 쓰는 비용이 있고, 아이콘
@@ -114,6 +120,17 @@ def write_current(root: Path, current: str, previous=None) -> None:
     os.replace(tmp, root / CURRENT_FILENAME)
 
 
+def runnable(version_dir: Path) -> bool:
+    """이 폴더를 실행 후보로 볼 것인가.
+
+    HoneyApp.exe 만 보면 **반쯤 지워진 폴더**도 후보가 된다(옛 rmtree 실패의 잔재).
+    onedir 빌드는 _internal 없이는 뜨지 못하므로 그 존재까지 함께 본다 — stat 두 번이라
+    기동을 지연시키지 않는다. 정밀 검증은 하지 않는다: 최종 방어선은 기존의 15초
+    crash 감시 + 자동 롤백이다.
+    """
+    return (version_dir / APP_EXE_NAME).exists() and (version_dir / "_internal").is_dir()
+
+
 def installed_versions(root: Path):
     """실행 가능한 버전 폴더를 최신순으로 (current.txt 가 없거나 깨졌을 때의 폴백)."""
     out = []
@@ -122,7 +139,7 @@ def installed_versions(root: Path):
     except OSError:
         return out
     for entry in entries:
-        if (entry / APP_EXE_NAME).exists() and re.fullmatch(r"\d+(\.\d+)*", entry.name):
+        if runnable(entry) and re.fullmatch(r"\d+(\.\d+)*", entry.name):
             out.append(entry.name)
     out.sort(key=lambda v: tuple(int(x) for x in v.split(".")), reverse=True)
     return out
@@ -138,7 +155,7 @@ def candidates(root: Path):
     for ver in installed_versions(root):
         if ver not in order:
             order.append(ver)
-    return [v for v in order if (root / VERSIONS_DIRNAME / v / APP_EXE_NAME).exists()]
+    return [v for v in order if runnable(root / VERSIONS_DIRNAME / v)]
 
 
 def message_box(text: str, enabled: bool = True) -> None:
@@ -495,22 +512,41 @@ def wait_for_app_window(proc, version, timeout_sec, logf, show_ui=True):
 
 # ── 업데이트 ────────────────────────────────────────────────────────────────
 def _apply_update(root, base_url, remote, manifest, current, progress, logf):
-    """실제 설치. 델타를 먼저 시도하고 안 되면 전체 zip. 반환: 'delta' | 'full'.
+    """실제 설치. 반환: 'adopt' | 'delta' | 'full'.
+
+    순서가 중요하다 — **설치 자리를 먼저 확보한 뒤에 받는다**(prepare_target).
+    예전에는 다 받고 나서 대상 폴더를 지우려다 실패했고, 델타와 전체 zip 이 같은
+    코드였던 탓에 331MB 를 받고 같은 자리에서 또 실패했다(2026-08-26 현장).
+
+    LocalWriteError(로컬 권한·잠금)는 **절대 전체 zip 으로 폴백하지 않는다** — 다시
+    받아도 결과가 같다. 호출부가 그것을 보고 권한 상승 경로로 넘어간다.
 
     current.txt 는 여기서 건드리지 않는다 — 호출부가 성공을 확인한 뒤 마지막에 바꾼다.
     """
     source_dir = root / VERSIONS_DIRNAME / current if current else None
     local_files = app_update.read_file_manifest(source_dir) if source_dir else None
 
+    remote_files = None
     if local_files:
         try:
             remote_files = app_update.fetch_file_manifest(base_url, remote)
+        except Exception as exc:   # noqa: BLE001 - 델타는 최적화일 뿐, 없으면 전체 zip
+            logf(f"file manifest unavailable ({type(exc).__name__}: {exc})")
+
+    # 여기서 나는 LocalWriteError 는 그대로 밖으로 나간다 (아무것도 받지 않은 상태).
+    state = app_update.prepare_target(root, remote, remote_files)
+    logf(f"prepare target {remote}: {state}")
+    if state == "adopted":
+        return "adopt"
+
+    if local_files and remote_files:
+        try:
             app_update.install_delta(
                 root, remote, base_url, remote_files, source_dir, local_files,
                 progress_cb=lambda d, t: progress(f"새 버전 {remote} 내려받는 중...", d, t))
             return "delta"
-        except app_update.DownloadCancelled:
-            raise
+        except (app_update.DownloadCancelled, app_update.LocalWriteError):
+            raise            # 취소는 사용자 의사, 권한 실패는 전체 zip 도 실패한다
         except Exception as exc:   # noqa: BLE001 - 델타는 최적화일 뿐, 실패하면 전체로
             logf(f"delta unavailable ({type(exc).__name__}: {exc}) -> full zip")
 
@@ -541,7 +577,7 @@ def _update_with_ui(root, base_url, remote, manifest, current, logf):
 
     ui = ProgressWindow(remote)   # 실패하면 예외 → 호출부가 업데이트를 건너뛴다
     events = queue.Queue()
-    outcome = {"ok": False, "error": "", "cancelled": False}
+    outcome = {"ok": False, "error": "", "cancelled": False, "local_error": None}
 
     def progress(text, done, total):
         events.put(("progress", text, done, total))
@@ -587,11 +623,131 @@ def _update_with_ui(root, base_url, remote, manifest, current, logf):
             return
         outcome["error"] = f"{type(exc).__name__}: {exc}"
         logf(f"update FAILED {outcome['error']}")
+        if isinstance(exc, app_update.LocalWriteError):
+            # 권한/잠금이면 호출부가 UAC 한 번을 물어본다 — 여기서 실패창을 띄우면
+            # 사용자가 같은 일로 두 번 클릭하게 되므로 창을 조용히 닫는다.
+            outcome["local_error"] = exc
+            finish()
+            return
         ui.show_failure(str(exc)[:200], f"{base_url.rstrip('/')}/honey/download", finish)
 
     ui.root.after(100, poll)
     ui.root.mainloop()
     return outcome
+
+
+def ask_elevate(version, failing_path, show_ui=True) -> bool:
+    """"관리자 권한으로 업데이트할까요?" — 사용자가 고르지 않으면 기존 버전으로 간다.
+
+    무인 PC(재부팅 후 자동 실행 등)에서 이 창이 응답을 기다리며 서 있으면 앱이 영영
+    안 뜬다. 그래서 카운트다운 뒤 자동으로 '나중에'를 고른다 — 업데이트는 부가
+    기능이고 앱이 뜨는 것이 본 기능이라는 원칙(모듈 docstring)의 연장이다.
+    """
+    if not show_ui:
+        return False
+    try:
+        import tkinter as tk
+    except Exception:   # noqa: BLE001 - 창을 못 띄우면 승격은 포기하고 앱을 띄운다
+        return False
+
+    choice = {"yes": False}
+    try:
+        win = tk.Tk()
+        frame = build_shell(tk, win, "Honey 업데이트", "관리자 권한이 필요합니다")
+        tk.Label(frame, text=f"새 버전 {version} 을 설치하려면 관리자 권한이 필요합니다.",
+                 bg=BG_CREAM, fg=INK, anchor="w", justify="left",
+                 font=(UI_FONT, 10)).pack(fill="x")
+        if failing_path:
+            tk.Label(frame, text=f"막힌 경로: {failing_path}", bg=BG_CREAM, fg=INK_SUB,
+                     anchor="w", justify="left", wraplength=420,
+                     font=(UI_FONT, 9)).pack(fill="x", pady=(6, 0))
+        tk.Label(frame, text="'예'를 누르면 Windows 권한 확인 창이 한 번 뜹니다.\n"
+                             "Honey 자체는 계속 일반 권한으로 실행됩니다.",
+                 bg=BG_CREAM, fg=INK_SUB, anchor="w", justify="left",
+                 font=(UI_FONT, 9)).pack(fill="x", pady=(8, 0))
+        buttons = tk.Frame(frame, bg=BG_CREAM)
+        buttons.pack(fill="x", pady=(14, 0))
+
+        def pick(yes):
+            choice["yes"] = yes
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+        later = tk.Button(buttons, text="나중에", width=14, relief="flat",
+                          bg=BG_BAND, fg=INK, activebackground=GOLD_BAR,
+                          font=(UI_FONT, 9), command=lambda: pick(False))
+        later.pack(side="right")
+        tk.Button(buttons, text="권한 상승하여 업데이트", width=22, relief="flat",
+                  bg=GOLD_BAR, fg=INK, activebackground=GOLD,
+                  font=(UI_FONT, 9, "bold"), command=lambda: pick(True)
+                  ).pack(side="right", padx=(0, 8))
+        win.protocol("WM_DELETE_WINDOW", lambda: pick(False))
+
+        countdown = {"left": FAILURE_AUTORUN_SEC}
+
+        def tick():
+            countdown["left"] -= 1
+            if countdown["left"] <= 0:
+                pick(False)
+                return
+            later.config(text=f"나중에 ({countdown['left']})")
+            win.after(1000, tick)
+
+        later.config(text=f"나중에 ({countdown['left']})")
+        win.after(1000, tick)
+        center_window(win)
+        win.mainloop()
+    except Exception:   # noqa: BLE001
+        return False
+    return choice["yes"]
+
+
+def _elevated_update(root, target, logf, show_ui=True) -> int:
+    """--elevated-update: **업데이트만** 하고 끝난다 (앱을 띄우지 않는다).
+
+    관리자 권한으로 앱을 실행하지 않는 것이 이 모드의 불변식이다 — 그렇게 하면
+    앱이 만드는 파일까지 전부 관리자 소유가 되어 문제가 되돌아온다.
+    """
+    if app_update is None:
+        return 1
+    current, _prev = read_current(root)
+    base_url = app_update.read_server_url(root, current)
+
+    # ACL 정상화를 **설치보다 먼저** 한다. 나중에 하면 이 프로세스가 만든 새 폴더가
+    # 관리자 소유로 남아 다음 업데이트가 또 막힌다. 이 한 번으로 이후에는 UAC 없이
+    # 업데이트된다 — 그게 이 경로의 존재 이유다.
+    app_update.normalize_acl(root)
+
+    try:
+        manifest = app_update.fetch_manifest(base_url)
+        remote = str(manifest.get("version") or "") or target
+    except Exception as exc:   # noqa: BLE001 - 서버가 안 되면 여기서 끝낸다
+        logf(f"elevated: version check failed ({type(exc).__name__}: {exc})")
+        app_update.write_elevated_result(root, {"ok": False, "error": "version check"})
+        return 1
+    if target and remote != target:
+        logf(f"elevated: target {target} != server {remote} — 서버 값을 따른다")
+
+    outcome = _update_with_ui(root, base_url, remote, manifest, current, logf)
+    if not outcome["ok"]:
+        app_update.write_elevated_result(
+            root, {"ok": False, "error": outcome["error"] or "cancelled",
+                   "target": remote})
+        return 1
+
+    write_current(root, remote, current)
+    app_update.clear_fail_count(root)
+    logf(f"elevated: current -> {remote} (prev {current})")
+    # 보호 폴더에서는 일반 권한 정리가 계속 실패해 옛 버전이 쌓인다 — 관리자
+    # 권한을 쥔 지금 함께 수거한다.
+    try:
+        app_update.startup_cleanup(root, keep_versions=(remote, current))
+    except Exception as exc:   # noqa: BLE001 - 정리 실패가 업데이트를 되돌리지 않는다
+        logf(f"elevated: cleanup 실패(무시) {type(exc).__name__}: {exc}")
+    app_update.write_elevated_result(root, {"ok": True, "target": remote})
+    return 0
 
 
 def try_update(root, argv, show_ui=True):
@@ -616,14 +772,6 @@ def try_update(root, argv, show_ui=True):
         current, _prev = read_current(root)
         base_url = app_update.read_server_url(root, current)
 
-        # 받기 전에 판정한다 — 331MB 를 다 받고 나서 쓰기 실패로 끝나면 최악이다.
-        if not app_update.can_write(root):
-            logf(f"update skipped: 설치 폴더에 쓸 수 없음 ({root})")
-            app_update.report_failure(
-                base_url, "설치 폴더에 쓸 수 없습니다 (관리자 권한 필요)",
-                {"stage": "permission", "root": str(root)}, current or "")
-            return
-
         try:
             manifest = app_update.fetch_manifest(base_url)
         except Exception as exc:   # noqa: BLE001 - 오프라인은 흔한 정상 상황이다
@@ -635,23 +783,50 @@ def try_update(root, argv, show_ui=True):
             app_update.clear_fail_count(root)
             return
 
-        fails = app_update.read_fail_count(root, remote)
+        fails = app_update.read_fail_count(root, remote, LAUNCHER_BUILD)
         if fails >= MAX_UPDATE_FAILS:
             logf(f"update skipped: {remote} 연속 {fails}회 실패 — 더 시도하지 않는다")
             return
 
-        logf(f"update {current} -> {remote} 시작")
-        outcome = _update_with_ui(root, base_url, remote, manifest, current, logf)
+        # 같은 설치 폴더를 두 프로세스가 동시에 만지지 않게 한다 (사용자가 런처를
+        # 두 번 눌렀거나, 승격 프로세스가 아직 돌고 있는 경우).
+        mutex = app_update.acquire_update_mutex(root)
+        if mutex is None:
+            logf("update skipped: 다른 프로세스가 이미 업데이트 중이다")
+            return
+        try:
+            logf(f"update {current} -> {remote} 시작")
+            outcome = _update_with_ui(root, base_url, remote, manifest, current, logf)
 
-        if outcome["ok"]:
-            write_current(root, remote, current)     # 성공한 뒤에만 포인터를 바꾼다
-            app_update.clear_fail_count(root)
-            logf(f"current -> {remote} (prev {current})")
-        elif outcome["error"]:
-            count = app_update.bump_fail_count(root, remote)
+            if outcome["ok"]:
+                write_current(root, remote, current)   # 성공한 뒤에만 포인터를 바꾼다
+                app_update.clear_fail_count(root)
+                logf(f"current -> {remote} (prev {current})")
+                return
+            if not outcome["error"]:
+                return                                  # 사용자 취소 — 조용히 넘어간다
+
+            # 로컬 권한/잠금이면 다시 받아도 소용없다 — UAC 한 번으로 해결되는지 묻는다.
+            local_exc = outcome.get("local_error")
+            if local_exc is not None and _try_elevated_update(
+                    root, base_url, remote, current, local_exc, logf, show_ui):
+                return
+
+            count = app_update.bump_fail_count(root, remote, LAUNCHER_BUILD)
+            context = {"target": remote, "attempt": count}
+            if local_exc is not None:
+                context.update(local_exc.details())
+                # 관리자 권한으로도 못 푸는 것이 있다(실행 중인 파일 잠금, 백신 정책).
+                # 강제 종료하지 않고 **정확히 어디가 막혔는지** 알려 준다.
+                message_box(
+                    f"업데이트에 실패했습니다.\n\n{local_exc.path}\n\n"
+                    "이 폴더를 쓰는 프로그램(Honey 중복 실행, 탐색기, 백신)을 닫은 뒤\n"
+                    "Honey 를 다시 실행해 주세요.\n\n기존 버전으로 실행합니다.",
+                    show_ui)
             app_update.report_failure(
-                base_url, outcome["error"],
-                {"target": remote, "attempt": count}, current or "")
+                base_url, outcome["error"], context, current or "")
+        finally:
+            app_update.release_update_mutex(mutex)
     except BaseException as exc:   # noqa: BLE001 - 여기서 막지 못하면 앱이 안 뜬다
         try:
             logf(f"update aborted ({type(exc).__name__}: {exc})")
@@ -659,9 +834,64 @@ def try_update(root, argv, show_ui=True):
             pass
 
 
+def _try_elevated_update(root, base_url, remote, current, local_exc, logf, show_ui):
+    """권한 상승으로 한 번 더 시도. 성공하면 True (호출부는 그대로 앱을 띄운다).
+
+    성공 판정의 정본은 **current.txt** 다 — 승격 프로세스의 exit code 는 로그용이다.
+    """
+    if app_update.is_elevated():
+        logf("elevated 상태인데도 권한 실패 — 파일 잠금이나 정책 문제다")
+        return False
+    if not is_frozen_launcher():
+        logf("개발 실행 — 권한 상승은 빌드본에서만 한다")
+        return False
+    if not ask_elevate(remote, local_exc.path, show_ui):
+        logf("사용자가 권한 상승을 선택하지 않았다 — 기존 버전으로 실행")
+        return False
+
+    app_update.clear_elevated_result(root)
+    logf(f"elevated update 요청 {remote} (막힌 곳: {local_exc.path})")
+    status, info = app_update.run_elevated(
+        sys.executable, ["--elevated-update", remote], cwd=root,
+        timeout_sec=ELEVATED_TIMEOUT_SEC)
+    logf(f"elevated update 결과 {status} ({info})")
+
+    cur_now, _prev = read_current(root)
+    if cur_now == remote:
+        app_update.clear_fail_count(root)
+        logf(f"elevated update 성공 — current={cur_now}")
+        return True
+
+    result = app_update.read_elevated_result(root)
+    detail = (result or {}).get("error") or info
+    app_update.report_failure(
+        base_url, f"권한 상승 업데이트 실패: {detail}",
+        {"target": remote, "stage": f"elevated:{status}", **local_exc.details()},
+        current or "")
+    if status != "cancelled":
+        app_update.bump_fail_count(root, remote, LAUNCHER_BUILD)
+    return False
+
+
+def is_frozen_launcher() -> bool:
+    """빌드된 런처인가 (승격은 exe 를 다시 실행하는 것이라 개발 실행에선 무의미)."""
+    return bool(getattr(sys, "frozen", False))
+
+
 def main(argv) -> int:
     root = root_dir()
     show_ui = "--no-ui" not in argv
+
+    if "--elevated-update" in argv:
+        # 관리자 권한으로 다시 실행된 자신이다 — 업데이트만 하고 끝난다.
+        try:
+            target = argv[argv.index("--elevated-update") + 1]
+        except IndexError:
+            target = ""
+        # mutex 는 여기서 잡지 않는다 — 이 프로세스를 띄운 부모 런처가 쥐고 있고,
+        # 그 부모는 우리가 끝날 때까지 기다린다. 여기서 또 잡으려 하면 자기 자신에게
+        # 막혀 업데이트를 못 한다.
+        return _elevated_update(root, target, lambda m: log(root, m), show_ui)
 
     if "--wait-pid" in argv:
         try:
