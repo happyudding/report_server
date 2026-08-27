@@ -216,20 +216,26 @@ PC 에서만** 이상하면 GPU 드라이버와 Chromium 합성의 궁합을 먼
 | 버튼·모달이 깜빡이거나 통째로 사라짐 | 같은 계열. `server/landing/landing.html` 의 hover 합성 주석 3곳이 그 선례다 |
 | 렌더러 비정상 종료(`honey_render_crash`) | 위 표 참조 |
 
-**조치는 하나다 — 그 PC 에서만 소프트웨어 렌더링을 쓰게 한다.** 재빌드·재배포가 필요 없다.
+**2026-08-27 부터 클라이언트가 기본으로 `--disable-gpu-compositing` 을 적용한다**
+(`client/transport/config.py` `_CHROMIUM_FLAGS_DEFAULT` → `honey_main.main` 이
+`QTWEBENGINE_CHROMIUM_FLAGS` 로 주입) — 화면 합성만 소프트웨어로 바꾸고 GPU 프로세스
+(WebGL·raster)는 유지해, 상세 CDF·Trim 의 scattergl 속도를 지키면서 합성 단계 버그를
+우회한다. 별도 설치·사용자 조치 없이 클라 실행만으로 적용된다.
+
+그래도 깜빡이는 PC 는 전면 소프트웨어 렌더링으로 상향한다. 재빌드·재배포가 필요 없다:
 
 ```
 setx QTWEBENGINE_CHROMIUM_FLAGS "--disable-gpu"
 ```
 
-Qt 가 이 환경변수를 직접 읽는다. 사용자 환경변수라 재부팅·클라 업데이트에도 남는다.
-빌드본에 동봉된 `honey_safe_gfx.bat` 가 이 한 줄을 대신 실행한다.
+Qt 가 이 환경변수를 직접 읽는다(내장 기본값보다 우선). 사용자 환경변수라 재부팅·클라
+업데이트에도 남는다. 빌드본에 동봉된 `honey_safe_gfx.bat` 가 이 한 줄을 대신 실행한다.
 배포본에서는 `Honey.exe` 옆 `honey.env` 에 `HONEY_CHROMIUM_FLAGS=--disable-gpu` 를 적어도
-같은 효과다(`client/transport/config.py` `CHROMIUM_FLAGS` → `honey_main.main`). 단
-**honey.env 는 자동 업데이트 때 배포본 값으로 덮이므로** 영구 조치는 위 환경변수 쪽이다.
+같은 효과다. 단 **honey.env 는 자동 업데이트 때 배포본 값으로 덮이므로** 영구 조치는
+위 환경변수 쪽이다. GPU 를 원상복구(A/B 검증)하려면 `HONEY_CHROMIUM_FLAGS=none`.
 
 적용됐는지는 시작 로그 한 줄로 확인한다 — `[startup] QTWEBENGINE_CHROMIUM_FLAGS=...`
-(`(없음)` 이면 안 먹은 것이다).
+(기본 적용 시 `--disable-gpu-compositing`, `(없음)` 이면 `none` 으로 해제된 것이다).
 
 ## 5. Honey 클라이언트 (client/transport/error_report.py)
 

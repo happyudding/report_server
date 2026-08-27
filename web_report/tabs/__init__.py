@@ -38,6 +38,9 @@ class TabContext:
     product_type: str = ""
     product: str = ""
     mode: str = "Normal"                        # 분석 모드 — Map Analysis 의 DUT 병합 분기용
+    # Para Conversion(Compare) 세션의 After(DUT) source 이름들 — Map Analysis 가 그 source
+    # 들만 'All DUT' 로 접는다. 그 외 세션은 None (병합 없음).
+    para_after: list | None = None
     # ai_comment 옵션 세션만 dict (row_key→텍스트, web_report/ai_comment.py) — None 이면
     # Issue Table 에 AI Comment 컬럼 자체가 생성되지 않는다.
     ai_comments: dict | None = None
@@ -83,6 +86,7 @@ TAB_REGISTRY: tuple = (
     # include_dies=False 로 die dict 를 애초에 만들지 않는다(STEP 다수 세션의 낭비 제거).
     # strip_dies 는 DUT 모드(병합에 dies 가 필요해 생성됨)를 걷어내는 안전망으로 남긴다.
     TabSpec("Map Analysis", lambda ctx: strip_dies(build_map_analysis_rows(
-        ctx.tables, ctx.product_type, ctx.product, ctx.mode, include_dies=False))),
+        ctx.tables, ctx.product_type, ctx.product, ctx.mode, include_dies=False,
+        para_after=ctx.para_after))),
     TabSpec("Fail Bin", lambda ctx: fail_bin_ranking(ctx.yield_rows)),
 )

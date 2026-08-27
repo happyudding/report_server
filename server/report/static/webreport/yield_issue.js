@@ -1094,6 +1094,7 @@ function renderIssueTableInto(panel, rows, opts) {
     renderIssueMiniDist(panel);
     renderIssueMiniMap(panel);
     bindIssueColResize(panel);
+    markAicClamped(panel);      // AI Comment [과거사례] 가 잘렸을 때만 펼침 커서·"더보기"
     applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
     applyCmpStatsFold(panel);   // Compare 통계 접기 상태 유지 (Compare 패널만 동작)
     const ui = issueUi(panel);

@@ -262,8 +262,9 @@ class BrowserPanel(QWidget):
               file=sys.stderr)
         crashed = name.startswith(("Crashed", "Abnormal"))
         if crashed:
-            print("[renderer] GPU/드라이버 문제일 수 있음 — 재발하면 Windows 환경변수 "
-                  "QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu 설정 후 재실행해 볼 것",
+            print("[renderer] GPU/드라이버 문제일 수 있음 — 기본 --disable-gpu-compositing "
+                  "적용 중에도 재발하면 honey.env 에 HONEY_CHROMIUM_FLAGS=--disable-gpu "
+                  "(또는 Windows 환경변수 QTWEBENGINE_CHROMIUM_FLAGS)로 상향 후 재실행해 볼 것",
                   file=sys.stderr)
         try:
             from transport import error_report

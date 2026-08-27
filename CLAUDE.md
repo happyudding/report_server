@@ -566,6 +566,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     | [gap_chart.py](web_report/gap_chart.py) `MAX_TOKENS`/`MAX_DEPTH`/`MAX_REFS` | `gap_chart.js` `GC_MAX_TOKENS`/`GC_MAX_DEPTH`/`GC_MAX_REFS` |
     | [service.py](web_report/service.py) `_DC_MAX_PAIRS` / `_DC_PAIR_SEP`(U+001F) | `dist_composite.js` `DC_MAX_PAIRS` / `DC_SEP` |
     | [routes_webreport.py](server/report/routes_webreport.py) `_DIST_SEQ_BATCH_MAX` | `distribution.js` `DIST.SEQ_SIZE` (서버 상한 이하) |
+    | [tabs/cpk.py](web_report/tabs/cpk.py) `TOTAL_SOURCE`("TOTAL") | `cpk.js` `CPK_TOTAL_SOURCE` (CPK 탭 TOTAL 행 판별) |
 
     기계 검사는 [tests/test_dist_seq_js.py](tests/test_dist_seq_js.py) 의 배치 크기 하나뿐이다
     — 나머지는 사람이 지켜야 한다. 상수를 새로 이중 정의하면 그 짝을 이 표에 추가할 것.

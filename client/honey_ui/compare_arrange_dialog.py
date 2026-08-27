@@ -23,6 +23,12 @@ RawdataHubDialog 의 Item Select(``_ItemListWidget``)와 같은 규칙을 쓰되
 
 Compare 모드에서는 이 창이 공통 ``SourceNameDialog``(표 방식)를 대신한다 — 이름 변경은
 항목 더블클릭, 색 변경은 [색 변경…] 버튼으로 한다(더블클릭은 이름이 먼저 쓴다).
+
+상단 라디오로 **Normal Compare**(위 설명 그대로)와 **Para Conversion**(2026-08-27)을
+고른다. Para 는 Single Mass Data 1개 vs Para Mass Data 1개 고정이고, Confirm 후
+호출부(``honey_main._prepare_para_conversion``)가 Para 파일을 DUT 별로 펼쳐
+``Single`` + ``DUT<라벨>`` N개 source 로 업로드한다. 그래서 Para 에서는 이 창의
+이름·색이 최종 source 와 1:1 이 아니라 이름 변경·색 지정을 쓰지 않는다(DUT 모드와 같은 이유).
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QBrush, QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QColorDialog,
     QDialog,
     QDialogButtonBox,
@@ -41,14 +48,20 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
 )
 
 from honey_ui.source_name_dialog import load_palette
 
+_WIDTH = 1820                 # 기본 가로 폭 (파일명이 잘린다는 요청으로 1400→1820)
 _MOVE_BTN_W = 56               # ">>" / "<<" 가 36px 에서 잘려 보였다(2026-08-25 요청)
 _SWATCH = 14                  # 항목 앞 색 사각형 한 변(px)
 _HEAD_BG = "#DCFCE7"          # After 최상단(= limit 기준) 강조 배경
+
+# Para Conversion 모드의 그룹 라벨 — Before/After 자리를 그대로 쓰되 표기만 바꾼다.
+_PARA_LABELS = ("Single Mass Data", "Para Mass Data")
+_NORMAL_LABELS = ("Before", "After")
 
 
 def dedupe_names(names) -> list:
@@ -76,8 +89,9 @@ class CompareArrangeDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Compare — Before / After 배치 / 색")
         # source(파일)명이 길면 QListWidget 기본 ElideRight 로 잘려 어느 파일인지 구분이
-        # 안 된다(2026-08-20 요청 → 2026-08-25 재확대: 1020 → 1400). 세로는 그대로.
-        self.resize(1400, 460)
+        # 안 된다(2026-08-20 요청 → 2026-08-25 재확대: 1020 → 1400 → 2026-08-27: 1820).
+        # 세로는 그대로. 넓힌 만큼 작은 화면을 넘을 수 있어 가용 폭으로 가둔다.
+        self.resize(min(_WIDTH, self._avail_width()), 460)
         self._original = [str(n) for n in names]
         self._colors = list(colors) if colors else load_palette()
         self._colors_changed = False
@@ -136,9 +150,30 @@ class CompareArrangeDialog(QDialog):
             right.addWidget(b)
         right.addStretch(1)
 
+        # 모드 선택 — Normal 은 종전과 완전히 같고, Para Conversion 은 Para 쪽 파일을
+        # 업로드 직전에 DUT 별로 펼친다(honey_main._prepare_para_conversion).
+        self.rb_normal = QRadioButton("Normal Compare")
+        self.rb_para = QRadioButton("Para Conversion")
+        self.rb_normal.setChecked(True)
+        self.rb_normal.setToolTip("기존 Compare — 배치한 source 를 그대로 비교합니다.")
+        self.rb_para.setToolTip(
+            "Single Mass Data 1개 vs Para Mass Data 1개.\n"
+            "Para 파일은 DUT 별로 펼쳐 DUT1~N source 가 됩니다.")
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.addButton(self.rb_normal)
+        self._mode_group.addButton(self.rb_para)
+        self.rb_normal.toggled.connect(self._sync_mode)
+        mode_bar = QHBoxLayout()
+        mode_bar.addWidget(self.rb_normal)
+        mode_bar.addWidget(self.rb_para)
+        mode_bar.addStretch(1)
+
+        self.lbl_before = QLabel(_NORMAL_LABELS[0])
+        self.lbl_after = QLabel(_NORMAL_LABELS[1])
+
         grid = QGridLayout()
-        grid.addWidget(QLabel("Before"), 0, 0)
-        grid.addWidget(QLabel("After"), 0, 2)
+        grid.addWidget(self.lbl_before, 0, 0)
+        grid.addWidget(self.lbl_after, 0, 2)
         grid.addWidget(self.list_before, 1, 0)
         grid.addLayout(mid, 1, 1)
         grid.addWidget(self.list_after, 1, 2)
@@ -146,22 +181,20 @@ class CompareArrangeDialog(QDialog):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(2, 1)
 
-        btn_color = QPushButton("색 변경…")
-        btn_color.setToolTip("선택한 항목의 리포트 색을 바꿉니다 (옵션(F10) 팔레트보다 우선).")
-        btn_color.clicked.connect(self._pick_color)
-        btn_palette = QPushButton("전체 팔레트 편집…")
-        btn_palette.setToolTip("48색 팔레트를 편집해 옵션(F10)에 저장합니다.")
-        btn_palette.clicked.connect(self._edit_palette)
+        self.btn_color = QPushButton("색 변경…")
+        self.btn_color.setToolTip("선택한 항목의 리포트 색을 바꿉니다 (옵션(F10) 팔레트보다 우선).")
+        self.btn_color.clicked.connect(self._pick_color)
+        self.btn_palette = QPushButton("전체 팔레트 편집…")
+        self.btn_palette.setToolTip("48색 팔레트를 편집해 옵션(F10)에 저장합니다.")
+        self.btn_palette.clicked.connect(self._edit_palette)
         tools = QHBoxLayout()
-        tools.addWidget(btn_color)
+        tools.addWidget(self.btn_color)
         tools.addStretch(1)
-        tools.addWidget(btn_palette)
+        tools.addWidget(self.btn_palette)
 
-        hint = QLabel("· 항목 더블클릭 = Legend 이름 변경 / 항목 선택 후 [색 변경…] = 색 지정\n"
-                      "· After 최상단 source 가 limit(HiLIM/LoLIM) 기준이고 Log 비교의 대표입니다 (초록 바탕).\n"
-                      "· 업로드 순서는 After → Before 순이 되며 웹 리포트의 컬럼·범례 순서와 같습니다.\n"
-                      "· 색은 그 업로드 순서(1,2,3…)에 붙습니다 — 항목을 옮기면 색도 그 자리에 남습니다.")
-        hint.setStyleSheet("color:#64748b;")
+        self.hint = QLabel()
+        self.hint.setStyleSheet("color:#64748b;")
+        self._sync_mode()
 
         buttons = QDialogButtonBox()
         buttons.addButton("Confirm", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -170,10 +203,46 @@ class CompareArrangeDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         root = QVBoxLayout(self)
+        root.addLayout(mode_bar)
         root.addLayout(grid)
         root.addLayout(tools)
-        root.addWidget(hint)
+        root.addWidget(self.hint)
         root.addWidget(buttons)
+
+    # ── 모드 ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _avail_width() -> int:
+        """이 창을 띄울 화면의 가용 폭 (없으면 기본값 — 클램프 생략)."""
+        from PyQt6.QtWidgets import QApplication
+        screen = QApplication.primaryScreen()
+        return screen.availableGeometry().width() if screen else _WIDTH
+
+    def is_para(self) -> bool:
+        return self.rb_para.isChecked()
+
+    def _sync_mode(self, *_a):
+        """모드에 따라 그룹 라벨·안내문·색 버튼 상태를 맞춘다."""
+        para = self.is_para()
+        before, after = _PARA_LABELS if para else _NORMAL_LABELS
+        self.lbl_before.setText(before)
+        self.lbl_after.setText(after)
+        # Para 는 업로드 source 가 DUT 분할 결과라 이 창의 순번과 개수가 달라진다 —
+        # 여기서 고른 색이 엉뚱한 source 에 붙으므로 색 지정을 막는다(DUT 모드와 같은 이유).
+        for b in (self.btn_color, self.btn_palette):
+            b.setEnabled(not para)
+        if para:
+            self.hint.setText(
+                "· Single Mass Data 와 Para Mass Data 에 각각 파일 1개씩만 배치하세요.\n"
+                "· Confirm 하면 Para 파일이 DUT 별로 나뉘어 DUT1~N source 가 됩니다"
+                " (Single 쪽은 'Single').\n"
+                "· 이름·색은 자동 부여됩니다 — 이 창에서 지정하지 않습니다.\n"
+                "· Log 비교의 Value 는 각 DUT 의 첫 데이터 값으로 채워집니다.")
+        else:
+            self.hint.setText(
+                "· 항목 더블클릭 = Legend 이름 변경 / 항목 선택 후 [색 변경…] = 색 지정\n"
+                "· After 최상단 source 가 limit(HiLIM/LoLIM) 기준이고 Log 비교의 대표입니다 (초록 바탕).\n"
+                "· 업로드 순서는 After → Before 순이 되며 웹 리포트의 컬럼·범례 순서와 같습니다.\n"
+                "· 색은 그 업로드 순서(1,2,3…)에 붙습니다 — 항목을 옮기면 색도 그 자리에 남습니다.")
 
     # ── 조작 ────────────────────────────────────────────────────────────────
     def _move(self, src, dst, items):
@@ -275,7 +344,16 @@ class CompareArrangeDialog(QDialog):
                 for i in range(lw.count())]
 
     def _accept(self):
-        if not self.list_before.count() or not self.list_after.count():
+        if self.is_para():
+            # Para 는 "Single 1개 vs Para 1개" 고정이다 — Para 쪽을 DUT 로 펼치는 것이
+            # 비교 축이라 파일이 더 있으면 DUT 이름이 겹치고 축이 성립하지 않는다.
+            if self.list_before.count() != 1 or self.list_after.count() != 1:
+                QMessageBox.warning(
+                    self, "Para Conversion",
+                    f"{_PARA_LABELS[0]} 와 {_PARA_LABELS[1]} 에 각각 파일 1개씩만 "
+                    "배치해 주세요.")
+                return
+        elif not self.list_before.count() or not self.list_after.count():
             QMessageBox.warning(self, "Compare 배치",
                                 "Before 와 After 에 각각 1개 이상 배치해 주세요.")
             return
@@ -289,6 +367,8 @@ class CompareArrangeDialog(QDialog):
         - ``order``  : 업로드 순서 (After 먼저 → Before) 의 새 이름 목록.
         - ``before`` / ``after`` : 그룹별 새 이름 목록 (그룹 안 순서 유지).
         - ``colors`` : 창에서 바꿨을 때만 48색 목록, 아니면 None (옵션 팔레트 유지).
+        - ``para``   : Para Conversion 모드 여부. 참이면 호출부가 Para(after) 쪽 파일을
+          DUT 별로 펼쳐 업로드한다 — 이 창의 이름·순서는 그 분할 전 값이다.
 
         이름은 source 키라 전체에서 유일해야 한다. dedupe 는 **원본 순서 기준**으로 한 번만
         수행하고(rename_sources 와 같은 규칙), 그 결과를 그룹 목록에도 그대로 반영한다.
@@ -303,4 +383,5 @@ class CompareArrangeDialog(QDialog):
         before = [name_by_idx[i] for i, _ in before_entries]
         return {"names": deduped, "order": after + before,
                 "after": after, "before": before,
+                "para": self.is_para(),
                 "colors": list(self._colors) if self._colors_changed else None}

@@ -722,7 +722,9 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
    무효화한다. (안 풀면 통계 컬럼이 왼쪽에 고정된 채 144px 로 벌어져 가로폭이 더 커진다.)
    ⚠ 공용 규칙이 **컬럼 인덱스 하드코딩**이라 Compare 표의 컬럼을 넣고 빼면 가리키는
    대상이 밀린다. 2026-08-27 Unit 컬럼을 화면에서 빼면서 한 칸씩 당겨졌으므로 4번째까지
-   함께 무효화한다(Step·TNO·Item 은 1~3번째라 영향 없음). */
+   함께 무효화한다(Step·TNO·Item 은 1~3번째라 영향 없음).
+   (같은 날 Unit 을 payload 에서도 제거했지만 화면 컬럼 구성은 그때 이미 빠진 뒤라
+    인덱스는 그대로다 — 이 규칙은 손대지 않는다.) */
 #panel-issue-cmp .sheet-table.kind-issue tbody td:nth-child(4),
 #panel-issue-cmp .sheet-table.kind-issue tbody td:nth-child(5),
 #panel-issue-cmp .sheet-table.kind-issue tbody td:nth-child(6),
@@ -1600,8 +1602,16 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
    ⚠ hover 로 펼치지 말 것: 마우스가 지나가기만 해도 셀 높이가 바뀌어 sticky 헤더·고정열을
    얹은 Issue Table 전체가 리플로우된다(landing.html 의 hover 합성 주석과 같은 계열 함정).
    토글은 edit_mode.js 의 .content 클릭 위임에서 .aic-open 을 붙였다 뗀다. */
-.aic-past { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; cursor: pointer; }
+   ⚠ cursor·펼침 안내는 **실제로 잘렸을 때만** 준다(.aic-clamped — sheets.js 가 렌더 후
+   scrollHeight 로 재서 붙인다). 4줄 이하인데 손 모양 커서가 뜨면 눌러도 아무 변화가 없어
+   "링크가 안 먹는다"로 신고된다. */
+.aic-past { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+.aic-past.aic-clamped { cursor: pointer; }
 .aic-past.aic-open { -webkit-line-clamp: none; }
+/* 잘렸을 때만 "▾ 더보기", 펼친 뒤엔 "▴ 접기" — 펼칠 수 있다는 것 자체가 안 보이던 문제.
+   ::after 는 인라인이라 -webkit-box 안에서 마지막 줄에 자연스럽게 붙는다. */
+.aic-past.aic-clamped::after { content: " ▾ 더보기"; font-size: 11px; opacity: .75; }
+.aic-past.aic-clamped.aic-open::after { content: " ▴ 접기"; }
 .aic-act  { color: #15803d; }   /* 점검제안 — 초록 */
 .aic-badges { margin-top: 5px; padding-top: 4px; border-top: 1px dashed #e4e7ec; }
 .aic-badge { display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 9px;
@@ -2010,10 +2020,9 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
 .cpk-tool-group { display: inline-flex; align-items: center; gap: 5px; }
 .cpk-tool-group .btn-sm { margin-top: 0; }
 .cpk-tool-label { font-size: 11.5px; color: #667085; white-space: nowrap; }
-/* CPK Source 다중 선택 바 — source 이름이 길거나 많아도 줄바꿈으로 흘려 툴바를 밀지 않는다 */
-.cpk-src-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
-.cpk-src-bar .btn-sm { margin-top: 0; }
-.cpk-src-bar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+/* CPK Source 다중 선택 메뉴 — 룩·다크테마는 .issue-menu 를 그대로 쓰고(cpk.js 가 두 클래스를
+   함께 붙인다) 여기서는 목록이 길어질 때(source 20개+)의 높이 상한만 더한다. */
+.cpk-menu { max-height: 60vh; overflow-y: auto; }
 .cpk-target-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #555; }
 .cpk-target-bar input[type="number"] {
   width: 74px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px;

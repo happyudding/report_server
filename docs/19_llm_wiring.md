@@ -21,6 +21,12 @@ python tools/llm_check.py --ping     # 소비자별 상태 + 실제 왕복 확�
 ```
 값을 바꾸면 **서버 재기동**이 필요하다 — 엔진 설정은 import 시점 1회만 읽는다(§4).
 
+> ⚠️ **서버에 자격증명이 없는 경우** (Claude Enterprise 좌석은 API 키를 발급하지 않는다):
+> 위 5줄로는 연결할 수 없다. 사용자 PC 의 사내 Gateway 권한을 빌려 **업로더 PC 의 Honey 가
+> `[점검제안]` 생성을 대행**하는 설계가 승인돼 있다(미구현) →
+> [23_ai_comment_client_llm.md](23_ai_comment_client_llm.md).
+> 그 경로를 쓰는 동안 서버 `EVAL_LLM_*` 는 **미설정으로 유지**한다(켜면 이중 생성).
+
 ---
 
 ## 1. 소비자 (LLM 이 실제로 불리는 곳) — 2개

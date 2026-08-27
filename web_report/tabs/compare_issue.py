@@ -23,6 +23,16 @@ issueRowKey/issueHideStatusKey 와 반드시 동일해야 한다.
 
 Signature/AI Comment 컬럼은 싣지 않는다 — eval 엔진은 단일 세션 item 판정기라
 Before/After 비교 행에 대한 발화 개념이 없다.
+
+`Unit` 컬럼도 싣지 않는다 (2026-08-27) — Item 이름에 단위가 드러나는 경우가 많아 중복이라
+2026-08-27 에 화면(sheets.js orderColumns)에서 먼저 감췄고, payload 에서 빼려면 캐시 세대를
+갈라야 해서 보류돼 있었다. REPORT_SCHEMA_VERSION v42 에 얹어 정리했다. 반면 `개발 comment`
+는 **화면에서만** 계속 감춘다 — 그 컬럼은 사용자가 입력한 값(_comment_values)을 화면으로
+실어 나르는 통로라, payload 에서 빼면 DB 에 값이 남아도 다시 보여줄 길이 사라진다
+(CLAUDE.md 규칙 12).
+perf-guard: allow S01-report-schema — 이 제거는 **v42 와 같은 세대**다.
+REPORT_SCHEMA_VERSION 41→42 bump 는 CPK TOTAL 을 넣은 직전 커밋에 이미 들어가 있고,
+그 bump 주석이 이 Unit 정리를 함께 명시한다. 여기서 또 올리면 콜드 폭풍만 한 번 더 난다.
 """
 from __future__ import annotations
 
@@ -133,7 +143,6 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
             continue
         out = _base_row(ROW_KEY_DIST if first else "", KIND_DIST, item, meta)
         first = False
-        out["Unit"] = json_safe(r.get("units")) or ""
         out.update(_stat_cells(r.get("before"), "before"))
         out.update(_stat_cells(r.get("after"), "after"))
         out["meanshift_sigma"] = json_safe(r.get("meanshift_sigma"))
@@ -154,7 +163,6 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
         out = _base_row(ROW_KEY_DIST if first else "", KIND_NEW, item, meta)
         first = False
         stat = new_stats.get(item) or {}
-        out["Unit"] = json_safe(stat.get("units")) or ""
         out.update(_blank_stat_cells("before"))
         out.update(_stat_cells({"average": stat.get("average"),
                                 "stdev": stat.get("stdev"),
@@ -170,7 +178,7 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
     # ETC 섹션 divider — 항목이 없어도 헤더는 낸다(기존 Issue Table 과 같은 관례:
     # 프런트가 여기에 '항목 추가' 버튼을 붙인다).
     etc_head = {"Category": ROW_KEY_ETC, "구분": "", "Step": "", "TNO": "", "Item": "",
-                "Unit": "", **_blank_stat_cells("before"), **_blank_stat_cells("after"),
+                **_blank_stat_cells("before"), **_blank_stat_cells("after"),
                 "meanshift_sigma": "", "stdev_delta_pct": "", "cpk_ratio_pct": "",
                 "Distribution": "", "Status": ""}
     etc_head.update({col: "" for col in _COMMENT_COLS})
@@ -179,7 +187,6 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
     for item in cmp_etc_items or []:
         row_key = f"{ROW_KEY_ETC}|{item}"
         out = _base_row("", "", item, meta)
-        out["Unit"] = ""
         out.update(_blank_stat_cells("before"))
         out.update(_blank_stat_cells("after"))
         out["meanshift_sigma"] = ""

@@ -2296,6 +2296,7 @@ class HoneyMainWindow(QMainWindow):
                                  compare_mode=ctx["compare_mode"], options=ctx["options"],
                                  mode=ctx["mode"], source_order=ctx.get("source_order"),
                                  temperature=ctx.get("temperature"),
+                                 para=ctx.get("para"),
                                  prefetch=ctx.get("prefetch"))
         finally:
             # 배치창 취소·예외로 빠져나가도 선행 executor 가 남지 않게 한다. 정상 완료면
@@ -2792,16 +2793,24 @@ class HoneyMainWindow(QMainWindow):
             self._start_encode_prefetch()
         source_order = None
         temperature = None
+        para = None
         if mode == "Compare":
             arranged = self._ask_compare_groups()
             if arranged is None:
                 return None                      # 취소 = 실행 중단
-            self.group.rename_sources(arranged["names"])
-            options["compare"] = {"before": arranged["before"], "after": arranged["after"]}
-            source_order = arranged["order"]
-            if arranged.get("colors"):
-                # 창에서 지정한 색이 옵션(F10) 팔레트보다 우선한다 (이 리포트에만 적용).
-                options["colors"] = arranged["colors"]
+            if arranged.get("para"):
+                prepared = self._prepare_para_conversion(arranged, options)
+                if prepared is None:
+                    return None                  # 분할 불가 = 실행 중단(안내는 안에서)
+                source_order, para = prepared
+            else:
+                self.group.rename_sources(arranged["names"])
+                options["compare"] = {"before": arranged["before"],
+                                      "after": arranged["after"]}
+                source_order = arranged["order"]
+                if arranged.get("colors"):
+                    # 창에서 지정한 색이 옵션(F10) 팔레트보다 우선한다 (이 리포트에만 적용).
+                    options["colors"] = arranged["colors"]
         elif mode == "Temperature":
             arranged = temperature_arranged      # 위에서 파싱보다 먼저 받아둔 배치 결과
             # _apply_source_arrangement 가 rename 을 **먼저** 한다 — groups/order 는 이미
@@ -2835,6 +2844,8 @@ class HoneyMainWindow(QMainWindow):
             "source_order": source_order,
             # Temperature 모드 rawdata 정리 지시 (그룹 + .lt/.pds bin 매핑). 그 외 모드는 None.
             "temperature": temperature,
+            # Para Conversion 분할 지시 {alias, frames} — 그 외 모드는 None.
+            "para": para,
             # 배치창 동안 돌린 선행 인코딩 (없으면 None — 조립이 전량 인코딩한다).
             "prefetch": getattr(self, "_encode_prefetch", None),
         }
@@ -2851,6 +2862,56 @@ class HoneyMainWindow(QMainWindow):
             self._status("Compare 배치 취소")
             return None
         return dlg.result_groups()
+
+    def _prepare_para_conversion(self, arranged, options):
+        """Para Conversion 배치 → (업로드 순서, 분할 지시). 분할 불가면 None.
+
+        Para(after) 쪽 파일 1개를 DUT 별로 나눠 ``DUT<라벨>`` N개 source 로, Single(before)
+        쪽은 ``Single`` 한 개로 올린다. **분할을 클라에서 하는** 이유는 서버가 그 결과를
+        일반 Compare source 로 그대로 소비하게 하기 위해서다 — 서버 쪽 분기가 goodlog·Map
+        두 곳으로 끝나고, 파일 구성이 달라 analysis_key 도 Normal Compare 와 자연히 갈린다.
+        라벨·정렬은 서버 분할과 **같은 함수**(web_report.honeyform)를 써서 규칙이 갈리지
+        않게 한다(_dut_source_names 와 같은 이유).
+
+        세션 옵션에는 ``compare.para=True`` 를 실어 서버가 Para 세션임을 안다.
+        """
+        from web_report.honeyform import split_honeyform_df_by_dut
+
+        names = list(self.group.names())
+        # 다이얼로그가 각 1개씩을 보장한다(_accept). 여기서 다루는 이름은 창이 dedupe 를
+        # 끝낸 값이고, rename 은 Single 쪽만 바꾸므로 para_src 조회는 그 뒤에도 유효하다.
+        para_src = arranged["after"][0]
+        single_src = arranged["before"][0]
+        try:
+            md = self.group.mass_data_map[para_src]
+            df = md.to_df() if hasattr(md, "to_df") else md.df
+            parts = split_honeyform_df_by_dut(df)
+        except Exception as exc:                            # noqa: BLE001
+            QMessageBox.warning(self, "Para Conversion",
+                                f"Para Mass Data 를 DUT 로 나누지 못했습니다.\n{exc}")
+            self._status("Para Conversion 분할 실패")
+            return None
+        if not parts:
+            QMessageBox.warning(
+                self, "Para Conversion",
+                "Para Mass Data 의 DUT 종류가 1개 이하라 분할할 수 없습니다.\n"
+                "DUT 컬럼에 값이 여러 개인 파일을 선택하거나 Normal Compare 를 쓰세요.")
+            self._status("Para Conversion 분할 불가 (DUT 1종 이하)")
+            return None
+
+        # Single 쪽만 이름을 고정한다 — Para 쪽 원본 이름은 업로드에 쓰이지 않는다
+        # (그 자리를 DUT 분할본이 대신한다). rename_sources 는 **원본 순서** 리스트를 받는다.
+        renamed = ["Single" if n == single_src else n for n in names]
+        self.group.rename_sources(renamed)
+
+        dut_names = [f"DUT{label}" for label, _ in parts]
+        options["compare"] = {"before": ["Single"], "after": dut_names, "para": True}
+        # 업로드 순서는 종전 Compare 관례대로 After 먼저 — tables[0] 이 limit 기준이 된다.
+        source_order = dut_names + ["Single"]
+        para = {"alias": {name: para_src for name in dut_names},
+                "frames": dict(zip(dut_names, (sub for _, sub in parts)))}
+        self._status(f"Para Conversion — DUT {len(dut_names)}개로 분할")
+        return source_order, para
 
     def _dut_source_names(self):
         """DUT 모드에서 **서버가 만들 source 목록**(DUT 라벨 순서)을 미리 계산한다.
@@ -2925,7 +2986,7 @@ class HoneyMainWindow(QMainWindow):
             return ""
 
     def _build_webreport_parquets(self, work_group, order=None, temperature=None,
-                                  cache=None):
+                                  cache=None, para=None):
         from honey_ui.source_name_dialog import source_file_info
 
         items = []
@@ -2941,8 +3002,12 @@ class HoneyMainWindow(QMainWindow):
         # 자르고 RT limit 으로 재판정). dist pack 은 인코딩된 parquet 으로 만들어지므로
         # 여기서 정리하면 pack 도 자동으로 정리본과 일치한다.
         cleaned = self._clean_temperature_frames(work_group, names, temperature)
+        # Para Conversion: 이 이름들은 group 에 없는 **DUT 분할본**이다. md(=원본 Para
+        # source)는 메타(파일 정보)용으로만 쓰고 프레임은 분할본으로 갈아끼운다.
+        para_alias = (para or {}).get("alias") or {}
+        para_frames = (para or {}).get("frames") or {}
         for idx, name in enumerate(names):
-            md = work_group.mass_data_map[name]
+            md = work_group.mass_data_map[para_alias.get(name, name)]
             # honey_parse 산출물(7-meta honeyform)이 곧 parquet 소스다. 원본 파일을 디스크에서
             # 다시 읽지 않는다 — 여러 input 의 병합이 honey_parse 안에서 일어나므로, 원본을
             # 재-read 하면 병합 결과를 버리고 파일 1개만 올리게 된다.
@@ -2954,8 +3019,13 @@ class HoneyMainWindow(QMainWindow):
             changed = name in cleaned
             if changed:
                 df = cleaned[name]
+            # DUT 분할본은 선행 인코딩 풀에 없다(원본 df 기준으로 미리 돌렸다) — 여기서
+            # 새로 인코딩한다. Single 쪽은 분할 대상이 아니라 종전대로 풀에 적중한다.
+            para_df = para_frames.get(name)
+            if para_df is not None:
+                df = para_df
             pool = (cache or {}).get("cleaned" if changed else "raw") or {}
-            hit = pool.get(id(md))
+            hit = None if para_df is not None else pool.get(id(md))
             file_name = self._source_file_name(md, name)
             if hit is not None:
                 # 배치창이 떠 있는 동안 미리 만들어 둔 것 (_encode_sources_worker).
@@ -3042,7 +3112,8 @@ class HoneyMainWindow(QMainWindow):
             csv_name="duplicate_items.csv").exec()
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
-                        mode="Normal", source_order=None, temperature=None, prefetch=None):
+                        mode="Normal", source_order=None, temperature=None, para=None,
+                        prefetch=None):
         # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
         _begin_operation("web_report")   # 이 작업의 요청·오류를 서버에서 한 줄로 묶는다
@@ -3076,7 +3147,7 @@ class HoneyMainWindow(QMainWindow):
             # (HONEY_FLOW_PROFILE=1 — 적중률이 높을수록 0 에 가까워진다).
             with _flow_time("webreport.encode"):
                 return self._build_webreport_parquets(work_group, source_order, temperature,
-                                                      cache=cache)
+                                                      cache=cache, para=para)
         fut_encode = prep_ex.submit(_encode_stage)
 
         # Distribution pack 프리컴퓨트 — 서버가 영구 저장해 조회·재조회 모두 재정렬 없이
@@ -4517,10 +4588,11 @@ def main():
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     # honey.env 의 HONEY_CHROMIUM_FLAGS 를 Qt 가 읽는 이름으로 옮긴다. QtWebEngine 초기화
-    # 전이어야 먹으므로 QApplication 생성보다 앞이어야 한다. 기본은 빈 값 = 무변경.
+    # 전이어야 먹으므로 QApplication 생성보다 앞이어야 한다. 기본은 --disable-gpu-compositing
+    # (깜빡임 대응 — transport/config.py 참조, 해제는 HONEY_CHROMIUM_FLAGS=none).
     if CHROMIUM_FLAGS:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = CHROMIUM_FLAGS
-    # 렌더러 크래시로 GPU 우회를 적용한 PC 인지 로그만 보고 알 수 있게 값을 남긴다.
+    # 이 PC 가 어떤 GPU 우회를 적용 중인지 로그만 보고 알 수 있게 값을 남긴다.
     print(f"[startup] QTWEBENGINE_CHROMIUM_FLAGS="
           f"{os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS') or '(없음)'}")
     app = QApplication(sys.argv)

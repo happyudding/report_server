@@ -339,14 +339,15 @@ def test_note_cell_sync_same_key():
 
 
 def test_compare_columns():
-    """(신규) Compare 표 컬럼 — Unit·개발 comment 숨김 / 접기 대상 7개 / %는 1자리.
+    """(신규) Compare 표 컬럼 — 개발 comment 숨김 / 접기 대상 7개 / %는 1자리.
 
-    **화면에서만** 숨긴다(sheets.orderColumns) — 서버 payload 와 저장 키는 그대로라
-    기존 '개발 comment' 입력값이 DB 에 살아 있다(CLAUDE.md 규칙 12).
+    `개발 comment` 는 **화면에서만** 숨긴다(sheets.orderColumns) — 서버 payload 와 저장 키는
+    그대로라 기존 입력값이 DB 에 살아 있다(CLAUDE.md 규칙 12).
+    `Unit` 은 계산 파생값이라 2026-08-27(v42) 에 payload 에서 아예 제거했다 — 그래서 이
+    픽스처에도 없고, 없음을 서버 쪽에서 고정하는 것은 test_compare_issue_no_unit_column 이다.
     """
     row = {
         "Category": "CMPDIST", "구분": "산포", "Step": "P2", "TNO": "1", "Item": "ITEM_A",
-        "Unit": "V",
         "before_avg": 1.0, "before_stdev": 0.5, "before_cpk": 1.4,
         "after_avg": 1.1, "after_stdev": 0.6, "after_cpk": 1.2,
         "meanshift_sigma": 0.2, "stdev_delta_pct": -23.456789, "cpk_ratio_pct": 85.71,
@@ -370,9 +371,7 @@ def test_compare_columns():
         # distribution.js 는 Distribution 셀의 distHasData 판정에 필요하다.
         ["core.js", "distribution.js", "sheets.js"], "", harness, "cmpcols"))
     heads = " | ".join(out["headers"])
-    # 숨김 2종
-    assert not any(h.strip().lower() == "unit" for h in out["headers"]), \
-        f"Unit 컬럼이 화면에 남아 있습니다: {heads}"
+    # 화면 숨김 대상 — payload 에는 있고 화면에만 없어야 한다.
     assert "개발팀 Comment" not in heads and "개발 comment" not in heads, \
         f"개발팀 Comment 가 화면에 남아 있습니다: {heads}"
     # PTE comment 는 남아야 한다
@@ -385,7 +384,22 @@ def test_compare_columns():
     # % 2종은 소수 1자리 표시 (원값은 title 툴팁에 남는다)
     assert "-23.5" in out["cells"], f"△σ% 가 1자리로 표시되지 않았습니다: {out['cells']}"
     assert "85.7" in out["cells"], f"cpk% 가 1자리로 표시되지 않았습니다: {out['cells']}"
-    print(f"[신규] Compare 컬럼 — Unit/개발comment 숨김 · 접기 {out['foldCols']}개 · %1자리 OK")
+    print(f"[신규] Compare 컬럼 — 개발comment 숨김 · 접기 {out['foldCols']}개 · %1자리 OK")
+
+
+def test_compare_issue_no_unit_column():
+    """서버 payload 에 `Unit` 이 없다 (v42) — 화면 숨김이 아니라 실제 제거다.
+
+    `개발 comment` 는 **반대로** payload 에 남아 있어야 한다: 그 컬럼은 사용자가 입력한
+    값을 화면으로 실어 나르는 통로라, 빼면 DB 에 값이 남아도 다시 보여줄 길이 사라진다
+    (CLAUDE.md 규칙 12). 두 컬럼의 성격이 다르다는 것이 이 테스트의 요지다.
+    """
+    src = (_ROOT / "web_report" / "tabs" / "compare_issue.py").read_text(encoding="utf-8")
+    body = src[src.index("def build_compare_issue_rows"):]
+    assert '"Unit"' not in body, "compare_issue.py 가 아직 Unit 컬럼을 싣고 있습니다"
+    assert "_comment_values" in body, (
+        "개발 comment 통로(_comment_values)가 사라졌습니다 — 사용자 입력이 화면에 "
+        "나올 길이 없어집니다(규칙 12)")
 
 
 def test_compare_cols_scoped_to_compare():
@@ -521,7 +535,7 @@ def test_summary_card_and_engr():
 def main():
     static = [test_no_es_module, test_registered, test_panel_registered_in_core,
               test_dist_subtab_removed, test_compare_tab_absorbed, test_subtabs_markup,
-              test_dist_data_ensured_for_compare]
+              test_dist_data_ensured_for_compare, test_compare_issue_no_unit_column]
     browser = [test_row_keys, test_log_and_bin_tables, test_note_cell_sync_same_key,
                test_compare_columns, test_compare_cols_scoped_to_compare,
                test_subtab_switching, test_summary_card_and_engr]

@@ -20,7 +20,7 @@
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | placeholder. ⚠ **프런트 탭은 없다**(2026-08 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'으로 이관). 시트만 남아 lazy 조회/편집 라우트가 쓴다 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`). **Temperature 는 RT source 만** 입력으로 받는다(metrics 가 결정) |
-| CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값**. 유일한 예외 = Temperature 의 CT/HT(**RT Bin1 die × RT limit**, 2026-08-10) |
+| CPK | `cpk.py` | `build_cpk_rows` (source 별 행) — 통계는 **Bin1(양품) 기준 단일 값**. 유일한 예외 = Temperature 의 CT/HT(**RT Bin1 die × RT limit**, 2026-08-10). 전 source 통합 행은 `sheets["CPK Total"]` **별도 시트**(TAB_REGISTRY 밖, 2026-08-27) |
 | Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준, **Pass/Fail 단위·`OTP_`/`CHIP_ID`/`CHIPID` 이름 항목 제외** — `_cpk_skip_subject`, 2026-08-10) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
 | Issue Table Temp | `temp_fail.py` | **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정한 item 단위 행(다른 모드는 `[]`). row_key `TEMP\|<item>` |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
@@ -270,6 +270,37 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   나간다 — 계산에 쓴 규격과 화면 규격이 다르면 CPK 탭의 한계값 역산(avg ± 3·Cpk·stdev)이
   맞지 않는다. 값이 바뀌므로 `REPORT_SCHEMA_VERSION` v29(**서버 재시작 필요**).
   회귀 고정: [tests/test_cpk_temperature_basis.py](../tests/test_cpk_temperature_basis.py).
+- **Source 선택 UI + TOTAL 행 (2026-08-27 사용자 요청, v42)** — CPK 탭 툴바의 Source 는
+  **다중 선택 드롭다운**이다(`cpkSourceMenuHtml`, 룩은 `.issue-menu` 팝오버 재사용).
+  종전 토글 칩 바(2026-08-25)는 source 가 많으면 툴바 아래 한 줄을 통째로 먹고 이름이
+  길면 표를 밀어냈다. 그 이전(2026-07-14)은 단일 선택 `<select>` 였다 — 지금은 둘의 합집합.
+  - **TOTAL = 전 source 의 rawdata 를 하나의 source 로 통합**한 행이다. CPK 값 하나만
+    따로 내는 게 아니라 die 를 세로로 이어붙여 `build_cpk_rows` 와 **같은 계산**
+    (`_stats_batch` 재사용)을 돌리므로 source 별 행과 **같은 15개 컬럼**을 채운다
+    (`n/min/median/max/average/stdev/cp/cpl/cpu/cpk`). 가중평균 합성이 아니라 실제
+    병합이라 `median`·`min`·`max` 처럼 합성 불가능한 값도 정확하다 — 그래서 프런트가
+    만들어낼 수 없고 서버 계산(`build_cpk_total_rows`)이어야 한다.
+  - **`sheets["CPK Total"]` 별도 시트**이고 `sheets["CPK"]` 에는 넣지 않는다. 섞으면
+    `worst_cpk_by_subject` 를 거쳐 **Issue Table CPK 섹션 목록**·`distribution_index.cpk`·
+    Excel·public API 가 함께 바뀐다(규칙 13). `TAB_REGISTRY` 밖이라 탭도 안 생긴다 —
+    `metrics.py` 가 직접 주입한다(`sheets["Issue Table Compare"]` 와 같은 선례).
+  - **화면 규약**: 기본은 TOTAL 미선택(종전 동작 그대로). 고르면 그 항목의 **첫 행**으로
+    끼어 들어가고 이어지는 source 행은 subject/limit 이 비워진다(첫 행의 limit 이 곧
+    TOTAL 계산에 쓴 규격이라 Limit 역산과 일관). **CPK 임계 필터는 면제**된다 — cpk 가
+    좋아서 걸러진 항목도 통합 통계로 확인할 수 있어야 하기 때문. 나머지 보조 필터
+    (Unit CODE·동일Limit·검색어)는 동일 적용.
+  - **모드 제한**: Temperature 는 만들지 않는다(RT/CT/HT 는 조건이 다른 3집단이라 합치면
+    온도 스윙 폭이 σ 에 들어가 **그럴듯한 오답**이 된다). source 1개도 빈 배열.
+    계산 실패는 격리해 빈 배열로 두고 리포트는 계속 만든다 — TOTAL 하나 때문에 세션이
+    통째로 안 열리면 안 된다.
+  - limit·units 는 항목이 **처음 등장한 source** 기준(`setdefault`, `_pool_tables` 규약).
+    source 마다 규격이 다르면 TOTAL 의 cp/cpk 는 그 대표 규격 기준임에 주의.
+  - **웹 Excel Down 은 TOTAL 을 포함하지 않는다** — `sheets["CPK"]` 전량이라는 Honey 클라
+    (`client/excel_download/_sheets.py write_cpk_sheet`) 파리티를 지킨다.
+  - 대형 세션 RAM 방어로 item 컬럼을 `_TOTAL_COL_CHUNK`(256)씩 잘라 merge 한다 — 통째로
+    `pd.concat` 하면 피크가 3~6GB 로 뛰어 컴퓨트 워커가 OOM 된다.
+  회귀 고정: [tests/test_cpk_total.py](../tests/test_cpk_total.py)(서버 10건) ·
+  [tests/test_cpk_total_js.py](../tests/test_cpk_total_js.py)(프런트 12건).
 - **Bin 그룹 펼침 = 집계 헤더행 분리 (2026-08-25)**: Bin 묶음을 쓰는 표 전부
   (Yield 탭 · Issue Table Yield 섹션 · Issue Table Temp · Yield 탭 Temp Corner)에서,
   같은 Bin 에 항목이 **여럿일 때만** 접힘/펼침의 첫 줄이 달라진다.
@@ -523,6 +554,26 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     `counts.pass_to_fail`/`fail_to_pass` 만 **그룹 대표 기준**이다(화면에도 그렇게 표기).
   - `common_map.dies[].bins` — die 마다 source 별 BIN 을 실어 **마우스오버로 확인**한다.
     hover 문자열은 `waferHeatmap` 의 `opts.labelOf` 훅으로 갈아끼운다(미지정이면 종전과 동일).
+  - **Para Conversion**(2026-08-27 — `options.compare.para=True`, mode 는 계속 `Compare`):
+    Before=Single Mass Data 1개, After=같은 웨이퍼를 DUT 로 펼친 `DUT<라벨>` N개다.
+    분할은 **클라이언트가 업로드 전에** 한다([05](05_client_ui.md) `CompareArrangeDialog`) —
+    서버는 이 source 들을 일반 Compare source 로 소비하므로 대부분의 탭에 분기가 없다.
+    분기는 3곳뿐이다:
+    ① `goodlog` 의 Value 가 **DUT 별 한 칸씩**(`rows[].after_values`, 순서는 `para_duts`)이고,
+      값 기준이 공통 좌표/Bin1 reference die 가 아니라 **각 source 의 첫 데이터 행**이다
+      (Single 쪽도 같은 기준). 기존 `after_value`/`gap` 은 첫 DUT 기준으로 계속 채워
+      Excel 다운로드·구 렌더(15컬럼 고정)가 그대로 동작한다. 프런트는 `gl.para_duts` 로
+      컬럼 수를 동적화하되 **`gl:` 코멘트 키는 불변**이다(규칙 #12).
+    ② `common_map`·`bin_matrix` 는 **[All DUT 합본, Single] 2-source** 로 굽는다 —
+      DUT source 끼리는 die 좌표가 서로소라 "전 source 공통 좌표"가 공집합이 되기 때문이다.
+      프런트는 세션 source 목록이 아니라 `common_map.sources` 를 축으로 쓴다.
+    ③ Map Analysis 는 DUT source 만 `All DUT` 한 장으로 접고 Single 은 그대로 둔다
+      (`build_map_analysis_rows(para_after=…)` — 세션 전체를 접는 DUT 모드와 달리 **일부만**).
+      호출부 3곳(payload 경량 메타·lazy 조회·`seed_map`)에 같은 값을 넘겨야 정준 JSON 이
+      일치한다(규칙 #11). 캐시 분리는 전역 bump 가 아니라 `map_key` 의 조건부 `("para",)`
+      마커가 담당한다 — 기존 세션 키는 바이트 불변(규칙 #14).
+    나머지(`bin_delta`·`dist_shift`·`equivalence`·`new_items`·Yield/CPK/Distribution)는
+    Single+DUT1~N 을 그냥 N+1개 source 로 본다.
   - **Log 비교(goodlog) 표는 항상 전 항목을 그린다** (2026-07-28). 종전에는 항목·limit 이
     완전히 같으면(`identical`) `rows=[]` 로 내려 '차이 없음' 안내만 띄웠는데, limit 이 안
     바뀌어도 **항목별 Gap %** 를 봐야 한다는 요구로 `build_goodlog` 이 identical 이어도 행을

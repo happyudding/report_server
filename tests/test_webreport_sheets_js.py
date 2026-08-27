@@ -129,8 +129,13 @@ def test_ai_comment_render():
         # @[..]→@.. / *r[..]→본문 변환은 종전부터 의도된 표시 규약이라 원문과 직접
         # 비교하면 영원히 실패한다. renderAiComment 는 선두 배지를 맨 끝으로 옮기므로
         # 기준 텍스트도 같은 재배열 후 비교한다(공백 무시).
+        # 섹션 **라벨**도 같은 성격의 표시 규약이다(AIC_SEC_LABEL — 화면은 [사례]/[제안]
+        # 으로 짧게 찍고 서버 문자열·파싱 키는 [과거사례]/[점검제안] 그대로). 기준 텍스트에
+        # 같은 치환을 적용해 **본문** 글자 손실만 잡는다.
         "var ref=document.createElement('div');ref.innerHTML=linkifyComment(SAMPLE);"
         "var rt=ref.textContent;"
+        "Object.keys(AIC_SEC_LABEL).forEach(function(k){"
+        "  rt=rt.split('['+k+']').join('['+AIC_SEC_LABEL[k]+']'); });"
         "var mm=rt.match(/^\\s*((?:\\[[^\\]\\s]{1,12}\\])+)\\s*([\\s\\S]*)$/);"
         "var expected=mm?mm[2]+mm[1]:rt;"
         "out.lossless = norm(box.textContent)===norm(expected);"
@@ -262,6 +267,73 @@ def test_aic_past_expands_on_click():
     print("[정적] [과거사례] 펼침이 클릭 토글 OK")
 
 
+def test_aic_label_is_display_only():
+    """섹션 라벨 개명은 **화면 표기만**이어야 한다 — 파싱 키·서버 문자열은 불변.
+
+    서버(eval_engine recommend.make_comment)가 내는 "[과거사례]"/"[점검제안]" 을 바꾸면 그
+    평문이 payload 에 굳어 있는 기존 캐시 세션과 새 세션이 갈리고, 해소하려면
+    REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. Excel·챗봇·eval export
+    도 같은 평문을 소비한다. 그래서 파싱은 원래 토큰으로 하고 표기만 AIC_SEC_LABEL 로 건다.
+    """
+    src = (_JS / "sheets.js").read_text(encoding="utf-8")
+    assert '"과거사례": "aic-past"' in src, "파싱 키가 바뀌었습니다 (서버 문자열과 갈립니다)"
+    assert 'AIC_SECTIONS = ["현상", "과거사례", "점검제안"]' in src, \
+        "AIC_SECTIONS 는 서버가 내는 토큰 그대로여야 합니다"
+    assert "AIC_SEC_LABEL" in src, "표시 라벨 매핑(AIC_SEC_LABEL)이 사라졌습니다"
+    # 서버 원문은 그대로인지 — 여기가 바뀌면 캐시 세션과 갈린다.
+    rec = (_ROOT / "eval_analyzer" / "eval_engine" / "pipeline" / "recommend.py"
+           ).read_text(encoding="utf-8")
+    assert "[과거사례]" in rec and "[점검제안]" in rec, \
+        "서버 생성 문자열이 바뀌었습니다 — 캐시된 세션의 AI Comment 가 파싱되지 않습니다"
+    print("[정적] 섹션 라벨은 화면 표기 전용, 서버 문자열·파싱 키 불변 OK")
+
+
+def test_aic_clamp_affordance_and_drag():
+    """(h) 펼침이 **잘렸을 때만** 안내되고, 드래그 복사는 토글하지 않는다.
+
+    회귀 배경(2026-08-27 신고 "과거사례 링크가 가끔은 뜨고 가끔은 안 뜬다"):
+      ① 4줄 이하인데 cursor:pointer 라 눌러도 아무 변화가 없었다 → .aic-clamped 로 분리.
+      ② 토글 가드가 `getSelection()` 잔여 선택만 봐서, **직전에 다른 곳에서 만든 선택**이
+         남아 있어도 조용히 무시됐다 → 이번 클릭의 mousedown→click 이동거리로 판정.
+    """
+    long_txt = "유사 lot 에서 Trim 재조정으로 개선된 사례가 있습니다. " * 12
+    harness = (
+        "<style>.aic-past{display:-webkit-box;-webkit-box-orient:vertical;"
+        "-webkit-line-clamp:4;overflow:hidden;width:260px;font:13px/18px sans-serif;}"
+        ".aic-past.aic-clamped{cursor:pointer;}"
+        ".aic-past.aic-open{-webkit-line-clamp:none;}</style>"
+        f'<div class="aic-past" id="lg">{long_txt}</div>'
+        '<div class="aic-past" id="sh">유사 사례가 확인 되었습니다.</div>'
+        "<script>(function(){var out={};"
+        "markAicClamped(document);"
+        "var lg=document.getElementById('lg'), sh=document.getElementById('sh');"
+        "out.longClamped  = lg.classList.contains('aic-clamped');"
+        "out.shortClamped = sh.classList.contains('aic-clamped');"
+        # 드래그 판정 — edit_mode.js 의 aicDragged 와 같은 식(그 파일은 전역 의존이 많아
+        # 여기서 로드하지 않는다). 4px 임계.
+        "function dragged(dx,dy){return (dx*dx+dy*dy) > 16;}"
+        # 손떨림(1px)은 클릭, 30px 이동은 드래그로 판정돼야 한다.
+        "out.clickNotDrag = !dragged(1,1);"
+        "out.dragIsDrag   = dragged(30,0);"
+        # 잔여 선택이 있어도 클릭이면 펼쳐져야 한다 (종전 회귀 지점)
+        "var r=document.createRange(); r.setStart(lg.firstChild,0); r.setEnd(lg.firstChild,4);"
+        "var s=window.getSelection(); s.removeAllRanges(); s.addRange(r);"
+        "if(!dragged(1,1)) lg.classList.toggle('aic-open');"
+        "out.openedDespiteSelection = lg.classList.contains('aic-open');"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "aic_clamp"))
+    assert r["longClamped"], "4줄 넘는 [과거사례] 에 .aic-clamped 가 안 붙었습니다"
+    assert not r["shortClamped"], \
+        "짧은 [과거사례] 에 펼침 커서가 붙었습니다 — 눌러도 변화가 없어 '안 먹는다'로 보입니다"
+    assert r["clickNotDrag"], "손떨림(1px)이 드래그로 오판됩니다"
+    assert r["dragIsDrag"], "실제 드래그가 클릭으로 오판돼 복사 중 글이 접힙니다"
+    assert r["openedDespiteSelection"], \
+        "잔여 선택 때문에 펼침이 무시됩니다 — 2026-08-27 신고의 회귀 지점"
+    print("[h] [과거사례] 클램프 어포던스 + 드래그 판정 OK")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -270,13 +342,15 @@ def main():
     test_no_es_module()
     test_script_registered()
     test_aic_past_expands_on_click()
+    test_aic_label_is_display_only()
     if edge_path() is None:
-        print(f"[a~g] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
+        print(f"[a~h] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
         print("\n부분 통과 (정적 검사만)")
         return
     test_ai_comment_render()
     test_signature_choices()
     test_sig_reason_render()
+    test_aic_clamp_affordance_and_drag()
     print("\n전부 통과")
 
 

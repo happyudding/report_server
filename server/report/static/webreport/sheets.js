@@ -245,6 +245,12 @@ function linkifyComment(txt) {
 // 같은 화면을 낸다.
 const AIC_SECTIONS = ["현상", "과거사례", "점검제안"];
 const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "점검제안": "aic-act" };
+// 화면에 찍는 라벨만 짧게 바꾼다 — 파싱 키(AIC_SECTIONS)는 **서버 문자열 그대로** 둔다.
+// 서버(eval_engine recommend.make_comment)가 내는 "[과거사례]"/"[점검제안]" 을 바꾸면 그
+// 문자열이 payload 에 굳어 있는 기존 캐시 세션과 새 세션이 갈리고, 해소하려면
+// REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. Excel·챗봇·eval export 도
+// 같은 평문을 소비한다. 여기서 표기만 갈면 옛/새 payload 가 같은 화면을 낸다.
+const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "점검제안": "제안" };
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 
 // 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
@@ -298,13 +304,31 @@ function renderAiComment(txt) {
     const t = String(p.body || "").trim();
     if (!p.tag) { if (t) out += `<div class="aic-lead">${linkifyComment(t)}</div>`; return; }
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
-      `<b class="aic-tag">[${esc(p.tag)}]</b> ${linkifyComment(t)}</div>`;
+      `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
   });
   if (split.badges.length) {
     out += `<div class="aic-badges">` + split.badges.map(b =>
       `<span class="${aicBadgeClass(b)}">${esc("[" + b + "]")}</span>`).join("") + `</div>`;
   }
   return out || linkifyComment(raw);
+}
+
+// 렌더 후 [과거사례] 가 **실제로 4줄에서 잘렸는지** 재서 .aic-clamped 를 붙인다.
+// CSS 만으로는 "넘쳤는지" 를 알 수 없어(:has 로도 자기 overflow 는 못 본다) 커서·"더보기"
+// 안내가 짧은 글에도 붙었고, 눌러도 아무 변화가 없어 "링크가 안 먹는다" 로 신고됐다.
+// 호출 시점은 **행이 전부 채워진 뒤**여야 한다(renderIssueTableInto 의 fill 콜백) — 청크
+// 삽입 중에 재면 레이아웃이 확정되지 않아 오판한다.
+// ⚠ 읽기(scrollHeight)와 쓰기(classList)를 한 루프에서 섞지 말 것 — 셀마다 강제 리플로우가
+// 걸린다(cellSelPaint 와 같은 계열 함정). 읽기 패스를 먼저 끝내고 쓰기를 몰아서 한다.
+function markAicClamped(root) {
+  const els = (root || document).querySelectorAll(".aic-past");
+  if (!els.length) return;
+  const over = [];
+  els.forEach(el => { over.push(el.scrollHeight > el.clientHeight + 1); });   // 1) 읽기
+  els.forEach((el, i) => {                                                    // 2) 쓰기
+    if (over[i]) el.classList.add("aic-clamped");
+    else { el.classList.remove("aic-clamped"); el.classList.remove("aic-open"); }
+  });
 }
 
 // 서식 토큰의 본문만 남긴다 — Excel·챗봇 등 평문 소비처로 나가기 직전에만 쓴다.
@@ -427,19 +451,16 @@ function orderColumns(cols, kind) {
   const isComment = c => /comment/i.test(String(c));
 
   // Compare 시트에서만 화면에서 빼는 컬럼 (2026-08-27 사용자 요청 — 가로폭 축소).
-  //   Unit         : Item 이름에 단위가 드러나는 경우가 많아 중복
-  //   개발 comment : Compare 표에서는 PTE comment 한 칸이면 충분
-  // **화면에서만 숨긴다** — 서버 payload(compare_issue.py)와 저장 키는 그대로다.
-  // 그래야 스키마 bump 없이(콜드 폭풍 회피) 기존 세션의 '개발 comment' 입력값도
-  // DB 에 그대로 살아 있는다(CLAUDE.md 규칙 12 — 사용자 입력은 잃지 않는다).
+  // 남은 대상은 `개발 comment` 하나다 (Compare 표에서는 PTE comment 한 칸이면 충분).
+  // **화면에서만 숨긴다** — 서버 payload(compare_issue.py)와 저장 키는 그대로 둔다.
+  // 그 컬럼은 사용자가 입력한 값을 화면으로 실어 나르는 통로라, payload 에서 빼면 DB 에
+  // 값이 남아도 다시 보여줄 길이 사라진다(CLAUDE.md 규칙 12 — 사용자 입력은 잃지 않는다).
+  // `Unit` 은 계산 파생값이라 잃을 것이 없어 payload 에서 아예 제거했다
+  // (REPORT_SCHEMA_VERSION v42) — 여기서 거를 필요가 없다.
   // Compare 시트에만 있는 조합(before_*/after_* 통계 컬럼)으로 그 시트인지 판정한다 —
   // 일반 Issue Table·Yield 는 이 조건에 걸리지 않아 종전 그대로다.
   const isCmpSheet = kind === "issue" && cols.some(c => CMP_STAT_COL_RE.test(String(c).trim()));
-  const cmpHidden = c => {
-    if (!isCmpSheet) return false;
-    const n = String(c).trim();
-    return n.toLowerCase() === "unit" || n === "개발 comment";
-  };
+  const cmpHidden = c => isCmpSheet && String(c).trim() === "개발 comment";
 
   const comments = cols.filter(c => isComment(c) && !cmpHidden(c));
   // Issue Table 은 Category 컬럼을 화면에 표시하지 않는다(섹션 구분은 상단 고정 헤더 라벨이 담당).

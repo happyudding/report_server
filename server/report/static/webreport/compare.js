@@ -380,7 +380,11 @@ function goodlogSectionHtml(gl) {
     if (v === null || v === undefined) return `<td class="num"></td>`;
     return `<td class="num${Math.abs(v) >= GL_GAP_LIMIT ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
   };
-  const COLS = 15;
+  // Para Conversion 은 After 의 Value 한 칸을 DUT 별 N칸으로 편다(서버 para_duts 순서).
+  // 그 외에는 종전 그대로 15컬럼이다.
+  const duts = gl.para_duts || [];
+  const nVal = duts.length || 1;
+  const COLS = 14 + nVal;
   const rows = gl.rows || [];
   const types = rows.map(goodlogRowType);
 
@@ -410,21 +414,33 @@ function goodlogSectionHtml(gl) {
 
   // colgroup 기본 폭(px) — 사용자 드래그 리사이즈의 시작값. Item 은 기본이 너무 넓다는
   // 요청으로 좁게 잡고, 넘치는 이름은 ellipsis + title 툴팁으로 본다(table-layout:fixed).
-  const colgroup = `<colgroup>${GOODLOG_COLW.map(w => `<col style="width:${w}px">`).join("")}</colgroup>`;
+  // Para 는 마지막(After Value) 폭을 DUT 수만큼 늘린다 — 앞 14칸 인덱스는 그대로라
+  // 리사이즈 핸들·CSS 가 종전과 어긋나지 않는다.
+  const colw = GOODLOG_COLW.slice(0, 14).concat(Array(nVal).fill(GOODLOG_COLW[14]));
+  const colgroup = `<colgroup>${colw.map(w => `<col style="width:${w}px">`).join("")}</colgroup>`;
   const rz = i => `<span class="col-resize-handle" data-col="${i}"></span>`;
+  const afterSrc = duts.length ? `Para (${duts.length} DUT)` : (gl.after_source || "");
+  const valHead = duts.length
+    ? duts.map((d, i) => `<th class="num" title="${esc(d)} 첫 데이터">${esc(d)}${rz(14 + i)}</th>`).join("")
+    : `<th class="num">Value${rz(14)}</th>`;
   const head = colgroup + `<thead>
       <tr><th colspan="5">Before — ${esc(gl.before_source || "")}</th><th colspan="3">Compare</th>
           <th rowspan="2">Comment${rz(8)}</th><th class="num" rowspan="2">Gap %${rz(9)}</th>
-          <th colspan="5">After — ${esc(gl.after_source || "")}</th></tr>
+          <th colspan="${4 + nVal}">After — ${esc(afterSrc)}</th></tr>
       <tr><th>Item${rz(0)}</th><th class="num">LoLim${rz(1)}</th><th class="num">HiLim${rz(2)}</th><th>Unit${rz(3)}</th><th class="num">Value${rz(4)}</th>
           <th>Item${rz(5)}</th><th>LoLim${rz(6)}</th><th>HiLim${rz(7)}</th>
-          <th>Item${rz(10)}</th><th class="num">LoLim${rz(11)}</th><th class="num">HiLim${rz(12)}</th><th>Unit${rz(13)}</th><th class="num">Value${rz(14)}</th></tr></thead>`;
+          <th>Item${rz(10)}</th><th class="num">LoLim${rz(11)}</th><th class="num">HiLim${rz(12)}</th><th>Unit${rz(13)}</th>${valHead}</tr></thead>`;
   // Compare 열이 False 면 **그 값이 든 Before/After 셀**도 빨갛게 칠한다 — True/False 만
   // 보고 어느 숫자가 달라졌는지 눈으로 되짚어야 했다(2026-08-20 요청).
   const mm = v => (v === false) ? " gl-mismatch" : "";
   // 폭 고정(fixed layout)이라 긴 Item 명은 잘린다 — title 로 전체 이름을 볼 수 있게 한다.
   const nameCell = (v, cls) => `<td class="${cls}" title="${esc(v || "")}">${esc(v || "")}</td>`;
   const limCell = (v, cls) => `<td class="num${cls}">${glNum(v)}</td>`;
+  // After Value — Para 는 DUT 별 한 칸씩(값 없는 DUT 는 빈 칸), 그 외는 종전 1칸.
+  const valCells = r => duts.length
+    ? Array.from({ length: nVal }, (_, i) =>
+        `<td class="num">${esc((r.after_values || [])[i] || "")}</td>`).join("")
+    : `<td class="num">${esc(r.after_value || "")}</td>`;
   const rowHtml = (r, t) => {
     const mName = mm(r.compare_item_name), mLo = mm(r.compare_lolimit), mHi = mm(r.compare_hilimit);
     return `<tr class="gl-row gl-${t}">` +
@@ -435,7 +451,7 @@ function goodlogSectionHtml(gl) {
       cmpNoteCell(glNoteKey(r)) + gapCell(r.gap) +
       nameCell(r.after_item_name, mName.trim()) + limCell(r.after_lolimit, mLo) +
       limCell(r.after_hilimit, mHi) + `<td>${esc(r.after_unit || "")}</td>` +
-      `<td class="num">${esc(r.after_value || "")}</td></tr>`;
+      valCells(r) + `</tr>`;
   };
 
   // ── 표시 필터 툴바 (버튼 라벨=기능, active=적용 중) ──
@@ -658,7 +674,9 @@ function cmpMapPanelHtml(cmp) {
       <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
     </div>
     <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 2개↑ Fail=보라
-      <span class="gl-sub">(die 에 마우스를 올리면 source 별 Bin 이 보입니다)</span></h3>
+      <span class="gl-sub">(die 에 마우스를 올리면 source 별 Bin 이 보입니다${
+        (cm.sources || []).length && sources.length !== (cm.sources || []).length
+          ? " — 비교 축: " + (cm.sources || []).map(esc).join(" ↔ ") : ""})</span></h3>
     <div class="wafer-card">
       <div id="cmp-common-map" style="width:100%;height:520px;"></div>
       <div id="cmp-common-legend" class="cmp-legend"></div>
@@ -777,7 +795,11 @@ const CMP_SUB_RENDERERS = {
   "map": panel => {
     cmpFillSub(panel, "map", cmpMapPanelHtml(cmpData()));
     const cmp = cmpData();
-    drawCompareCommonMap(cmp.common_map || {}, cmp.sources || []);
+    // 공통성 맵의 source 축은 **맵 payload 자체**를 따른다 — Para Conversion 은 DUT 를
+    // 합친 2-source(All DUT / Single)라 세션 source 목록과 다르다. 옛 payload 는
+    // common_map.sources 가 없어 종전대로 cmp.sources 로 폴백한다.
+    const cm = cmp.common_map || {};
+    drawCompareCommonMap(cm, cm.sources || cmp.sources || []);
   },
   "log": panel => {
     cmpFillSub(panel, "log", cmpLogPanelHtml(cmpData()));

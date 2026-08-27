@@ -430,6 +430,28 @@ def dut_labels(data) -> list[str]:
     return sorted(dict.fromkeys(labels.tolist()), key=_dut_sort_key)
 
 
+def split_honeyform_df_by_dut(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """honeyform df 를 DUT 값별로 분할 — ``(라벨, df)`` 목록. 분할 규칙은 위와 동일.
+
+    ``split_table_by_dut`` 이 HoneyformTable 을 다루는 반면 이쪽은 **업로드 전 클라이언트**가
+    쓴다(Compare/Para Conversion — honey_main._prepare_para_conversion). 메타 6행은 그대로
+    복사하고 데이터 행만 마스크한다. DUT 종류가 1개 이하면 분할이 무의미하므로 빈 목록을
+    반환한다(호출부가 "분할 불가"로 안내). 다운샘플 없음 — 전 행 보존.
+    """
+    data = df.iloc[DATA_START_ROW:]
+    uniq = dut_labels(data)
+    if len(uniq) <= 1:
+        return []
+    labels = data["DUT"].map(_fmt_dut)
+    meta_rows = df.iloc[:DATA_START_ROW]
+    data_rows = data.reset_index(drop=True)
+    mask_src = labels.reset_index(drop=True)
+    return [(label,
+             pd.concat([meta_rows, data_rows[(mask_src == label).to_numpy()]],
+                       ignore_index=True))
+            for label in uniq]
+
+
 def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     """단일 HoneyformTable 을 DUT 컬럼 값별로 분할 — 각 DUT 가 새 source 가 된다 (DUT 모드).
 

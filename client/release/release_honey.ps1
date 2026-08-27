@@ -305,8 +305,9 @@ $honeyEnvText = @(
     "# server\env\server.env 를 고친 뒤 build_zip 을 다시 실행할 것.",
     "SERVER_BASE_URL=$BaseUrl",
     "",
-    "# 내장 브라우저(Chromium) 실행 플래그. 비워 두면 그래픽카드 가속을 그대로 쓴다.",
-    "# GPU 드라이버 궁합 문제로 화면이 깜빡이는 PC 에서만 아래 줄의 # 을 지운다.",
+    "# 내장 브라우저(Chromium) 실행 플래그. 비워 두면 기본값 --disable-gpu-compositing",
+    "# (깜빡임 대응 — 합성만 소프트웨어, WebGL 유지)이 자동 적용된다.",
+    "# 그래도 깜빡이는 PC 는 --disable-gpu 로 상향, GPU 원상복구는 =none.",
     "# ⚠ 이 파일은 자동 업데이트 때 덮인다 — 영구 조치는 honey_safe_gfx.bat 쪽이다.",
     "# HONEY_CHROMIUM_FLAGS=--disable-gpu",
     ""

@@ -12,11 +12,17 @@ source 는 **몇 개든** 될 수 있고 업로드 시 Honey 배치 다이얼로
   - goodlog    : **그룹 대표 2개** (After 최상단 vs Before 최상단) — 테스트 프로그램 diff.
   - dist_shift / equivalence : **그룹 pool 2개** (그룹 전체 die 를 합친 통계).
 다운샘플 없음(규칙 #6) — 모든 die 를 분류에 반영한다.
+
+**Para Conversion**(compare_groups 에 ``para: True``)은 Before=Single 1개 / After=같은
+웨이퍼를 DUT 로 나눈 N개다. DUT source 끼리는 die 좌표가 서로소라 "전 source 공통 좌표"가
+공집합이 되므로, **common_map·bin_matrix 만** [All DUT 합본, Single] 2-source 로 굽는다.
+goodlog 은 Value 를 DUT 별 한 칸씩(각 source 의 첫 데이터 행) 낸다. 나머지는 동일하다.
 """
 from __future__ import annotations
 
 import difflib
 from collections import Counter, defaultdict
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -25,6 +31,7 @@ from ..honeyform import HoneyformTable
 from .common import (PASS_BIN, bin_sort_key, bin_types, fmt_type, item_meta, json_safe, num,
                      round_num, to_coord)
 from .cpk import CPK_THRESHOLD, build_cpk_rows
+from .Map_analysis import DUT_POOL_LABEL
 from .significance import brown_forsythe_p, welch_p
 
 # 동일성 검증 임계값 — Grade 판정과 셀 강조가 같은 값을 쓴다(프런트에도 thresholds 로 내려감).
@@ -209,7 +216,7 @@ def _cell_value(table, row_idx, col):
     return fmt_type(raw), num(raw)
 
 
-def build_goodlog(t_after, t_before):
+def build_goodlog(t_after, t_before, *, para_after_tables=None):
     """Honey Compare Mode 의 테스트 프로그램 diff. **그룹 대표 2개**를 받는다.
 
     (구: tables 리스트를 받아 2 source 일 때만 동작. 지금은 After 최상단 / Before 최상단
@@ -217,9 +224,16 @@ def build_goodlog(t_after, t_before):
     프로그램(항목명/limit)이 완전히 같으면 ``identical: True`` 지만 **표(rows)는 그대로
     만든다** — limit 이 안 바뀌어도 항목별 값 gap% 를 봐야 한다는 요구 때문(2026-07-28).
     identical 은 프런트의 '차이 없음' 안내용 플래그일 뿐 표 생략 조건이 아니다.
+
+    ``para_after_tables`` (Para Conversion 전용): After 쪽 DUT source 전체를 받아 Value 를
+    **DUT 별 한 칸씩** 낸다(row["after_values"], 반환 dict 의 "para_duts" 순서). 값 기준도
+    달라진다 — 공통 좌표/Bin1 reference die 가 아니라 **각 source 의 첫 데이터 행**이며,
+    Single(before) 쪽도 같은 기준을 쓴다(Para 변환 검증은 프로그램 로그 첫 값 대조라는
+    요구). 미지정이면 종전 경로 그대로다.
     """
     if t_after is None or t_before is None:
         return None
+    para_tables = list(para_after_tables or [])
     a_names = list(t_after.item_columns)
     b_names = list(t_before.item_columns)
 
@@ -237,13 +251,20 @@ def build_goodlog(t_after, t_before):
             "identical": _identical()}
 
     # compare_reference row (source 당 1행): 공통 die 좌표 우선, 없으면 각자 Bin1 최상단.
-    common_xy = _common_xy(t_after, t_before)
-    if common_xy is not None:
-        ra = _ref_row_index(t_after, common_xy)
-        rb = _ref_row_index(t_before, common_xy)
+    # Para 는 DUT 마다 좌표가 갈려 공통 좌표가 성립하지 않으므로 첫 데이터 행으로 잡는다.
+    if para_tables:
+        ra = 0 if len(t_after.data) else None
+        rb = 0 if len(t_before.data) else None
+        para_rows = [(t, 0 if len(t.data) else None) for t in para_tables]
     else:
-        ra = _ref_row_index(t_after)
-        rb = _ref_row_index(t_before)
+        common_xy = _common_xy(t_after, t_before)
+        if common_xy is not None:
+            ra = _ref_row_index(t_after, common_xy)
+            rb = _ref_row_index(t_before, common_xy)
+        else:
+            ra = _ref_row_index(t_after)
+            rb = _ref_row_index(t_before)
+        para_rows = []
 
     def _mk_row(ai, bi) -> dict:
         row = {
@@ -254,6 +275,8 @@ def build_goodlog(t_after, t_before):
             "before_item_name": "", "before_lolimit": None, "before_hilimit": None,
             "before_unit": "", "before_value": "",
         }
+        if para_rows:
+            row["after_values"] = [""] * len(para_rows)
         a_num = b_num = None
         if ai is not None:
             c = a_names[ai]
@@ -262,6 +285,10 @@ def build_goodlog(t_after, t_before):
             row["after_hilimit"] = num(t_after.hilim.get(c))
             row["after_unit"] = fmt_type(t_after.units.get(c))
             row["after_value"], a_num = _cell_value(t_after, ra, c)
+            if para_rows:
+                # DUT 별 첫 행 값. after_value/gap 은 첫 DUT 기준으로 계속 채워
+                # Excel 다운로드·구 렌더(15컬럼 고정)가 그대로 동작한다.
+                row["after_values"] = [_cell_value(t, r, c)[0] for t, r in para_rows]
         if bi is not None:
             c = b_names[bi]
             row["before_item_name"] = c
@@ -310,8 +337,11 @@ def build_goodlog(t_after, t_before):
                 num(t_before.hilim.get(c)) if hi_changed else None,
             ]
 
-    return {**base, "header": GOODLOG_HEADER, "rows": rows,
-            "limit_change_map": limit_change_map}
+    out = {**base, "header": GOODLOG_HEADER, "rows": rows,
+           "limit_change_map": limit_change_map}
+    if para_rows:
+        out["para_duts"] = [t.source for t, _ in para_rows]
+    return out
 
 
 def _coord_bin_map(table):
@@ -764,9 +794,26 @@ def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
     else:
         pooled_cpk_rows = build_cpk_rows([pool_after, pool_before], items)
 
-    common_map = build_common_map(tables)
-    common_map["groups"] = groups
-    return {
+    # Para Conversion: After 가 같은 웨이퍼를 DUT 로 나눈 source 들이라 die 좌표가 서로소다.
+    # "전 source 공통 좌표" 교집합(common_map·bin_matrix)이 공집합이 되므로, 그 둘만
+    # [All DUT 합본, Single] 2-source 로 굽는다. 나머지 탭은 종전대로 전 source 를 쓴다.
+    para = bool(isinstance(compare_groups, dict) and compare_groups.get("para"))
+    if para:
+        # pool_after 가 이미 After 전체 합본이라 재concat 없이 라벨만 바꿔 재사용한다.
+        all_dut = (pool_after if pool_after is not after_tables[0]
+                   else _pool_tables(after_tables, DUT_POOL_LABEL))
+        if all_dut is pool_after:
+            all_dut = replace(pool_after, source=DUT_POOL_LABEL, file_name=DUT_POOL_LABEL)
+        map_tables = [all_dut, before_tables[0]]
+        map_after_names, map_before_names = [all_dut.source], [before_tables[0].source]
+    else:
+        map_tables = tables
+        map_after_names, map_before_names = after_names, before_names
+
+    common_map = build_common_map(map_tables)
+    common_map["groups"] = ({n: "after" for n in map_after_names}
+                            | {n: "before" for n in map_before_names}) if para else groups
+    payload = {
         "sources": [t.source for t in tables],
         "groups": groups,
         "before_sources": before_names,
@@ -774,9 +821,11 @@ def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
         "bin_delta": build_compare_bin_delta(tables),
         "common_map": common_map,
         # Honey Compare Mode 성격(테스트 프로그램 diff) — 그룹 대표 2개.
-        "goodlog": build_goodlog(after_tables[0], before_tables[0]),
-        # Bin 이 전부 같지는 않은 공통 좌표 나열(전 source).
-        "bin_matrix": build_bin_matrix(tables, before_names, after_names),
+        # Para 는 After 전체(DUT 별 Value 컬럼)를 함께 넘긴다.
+        "goodlog": build_goodlog(after_tables[0], before_tables[0],
+                                 para_after_tables=after_tables if para else None),
+        # Bin 이 전부 같지는 않은 공통 좌표 나열(전 source — Para 는 2-source).
+        "bin_matrix": build_bin_matrix(map_tables, map_before_names, map_after_names),
         # 산포 비교 — 공통 항목 Before/After 통계 병기 + Before 분모 정규화 지표
         # (meanshift σ·Cpk%·stdev 증가율·median/IQR·KS D) + focus 판정. 그룹 pool 기준.
         "dist_shift": build_dist_shift([pool_after, pool_before], pooled_cpk_rows),
@@ -788,3 +837,7 @@ def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
         # 만들어 둔 것이라 추가 비용이 없다.
         "new_items": sorted(set(pool_after.item_columns) - set(pool_before.item_columns)),
     }
+    if para:
+        # 프런트 판별 키 — Para 세션에만 있다(goodlog Value 열 분해·안내 문구).
+        payload["para"] = {"duts": after_names}
+    return payload

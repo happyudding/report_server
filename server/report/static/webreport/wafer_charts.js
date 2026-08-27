@@ -866,9 +866,11 @@ function renderMapAnalysis() {
   if (isTempMode && mapColorKey === "temp") ensureTempMapData();
   const binDesc = buildBinDescMap();   // bin → 대표 fail item(Bin Legend description)
   const tnoInfo = buildTnoInfo();      // {colorMap, items, top, cnt, otherCount} (TNO 축·Legend)
-  // DUT 모드: 병합 맵은 die 마다 dut 태그가 있고 row.duts 에 DUT 목록이 온다.
-  const isDutMode = webReportMode() === "DUT";
-  const dutList = (isDutMode && maps[0] && maps[0].duts) || [];
+  // 병합 맵은 die 마다 dut 태그가 있고 row.duts 에 DUT 목록이 온다. 판정은 모드가 아니라
+  // **데이터**로 한다 — DUT 모드 외에 Para Conversion(Compare) 의 'All DUT' 맵도 병합본이라
+  // 같은 Legend 가 필요하다. duts 를 싣는 것은 서버 병합 경로뿐이라 오탐이 없다.
+  const dutMap = maps.find(m => m && (m.duts || []).length);
+  const dutList = (dutMap && dutMap.duts) || [];
   let mapDutSelected = null;   // 강조 선택된 DUT (null = 전체 원색)
 
   // 선택 좌표 색 Legend (Map Analysis 전용). 각 항목: 색 스와치 + 좌표 + 제거(×).

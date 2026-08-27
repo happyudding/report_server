@@ -173,6 +173,19 @@ function renderActive() {
   schedulePrerender();
 }
 
+// ── [과거사례] 펼침 토글의 "드래그였나" 판정 ────────────────────────────────────
+// 이번 클릭이 텍스트 드래그(=복사 의도)였는지만 본다. 남아 있는 선택 상태를 보면
+// 직전에 다른 곳에서 만든 선택까지 걸려 토글이 조용히 죽는다(위 .aic-past 주석).
+// 임계 4px 는 손떨림 흡수용 — 그 이하 이동은 클릭으로 친다.
+const AIC_DRAG_PX = 4;
+let _aicDownXY = null;
+document.addEventListener("mousedown", e => { _aicDownXY = [e.clientX, e.clientY]; }, true);
+function aicDragged(e) {
+  if (!_aicDownXY) return false;
+  const dx = e.clientX - _aicDownXY[0], dy = e.clientY - _aicDownXY[1];
+  return (dx * dx + dy * dy) > (AIC_DRAG_PX * AIC_DRAG_PX);
+}
+
 // add/delete row (편집 테이블 공용 위임)
 document.querySelector(".content").addEventListener("click", e => {
   // Item명 클릭 → Item_detail (Yield/CPK/IssueTable/Bin상세 공용).
@@ -201,10 +214,15 @@ document.querySelector(".content").addEventListener("click", e => {
   // hover 로 펼치면 마우스가 지나가기만 해도 셀 높이가 바뀌어 표 전체가 리플로우된다.
   const aicPast = e.target.closest(".aic-past");
   if (aicPast) {
-    // 셀·텍스트를 드래그해 선택하고 뗀 것도 click 으로 오므로, 선택이 남아 있으면 토글하지
-    // 않는다 — 복사하려던 사용자가 글이 접히는 것을 보게 되면 안 된다.
-    const sel = window.getSelection();
-    if (!sel || !String(sel).trim()) aicPast.classList.toggle("aic-open");
+    // 셀·텍스트를 드래그해 선택하고 뗀 것도 click 으로 오므로, **이번 클릭이 드래그였을
+    // 때만** 토글을 건너뛴다 — 복사하려던 사용자가 글이 접히는 것을 보게 되면 안 된다.
+    //
+    // ⚠ 종전엔 `String(getSelection()).trim()` 이 비었는지만 봤는데, 그러면 **직전에 다른
+    // 곳에서 만든 선택이 남아 있기만 해도** 토글이 조용히 무시됐다("가끔은 펼쳐지고 가끔은
+    // 안 펼쳐진다"의 정체 — headless Edge 실측으로 재현). 브라우저는 글자 위 단순 클릭에도
+    // 미세 이동이 섞이면 몇 글자를 선택하므로 오검출이 잦다.
+    // 이번 클릭에서 실제로 끌었는지는 mousedown→click 좌표차로 본다(_aicDownXY).
+    if (!aicDragged(e)) aicPast.classList.toggle("aic-open");
     return;
   }
   // "탭에서 편집 ›" 등 다른 탭으로 보내는 버튼 (Yield 탭 하단 Temp Corner 섹션).

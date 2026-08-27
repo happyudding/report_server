@@ -83,6 +83,10 @@ def webreport_compare_groups(opts_raw: str, source_names):
     index 가 아니라 **이름**으로 저장하므로 Excel 왕복에서 source 가 제거돼도 안전하다.
     반환 {"before": [...], "after": [...]} / 판단 불가면 None (호출부가 legacy 폴백:
     after=sources[0], before=sources[1] — 종전 goodlog 관례와 동일).
+
+    Para Conversion 세션이면 ``"para": True`` 가 함께 실린다 — Single(before) 1개 vs
+    DUT 별로 펼친 Para(after) N개 구성이라, goodlog 값 기준과 Map 비교 대상이 달라진다
+    (tabs/compare.py). 옛 세션·Normal Compare 는 이 키가 없다.
     """
     names = [str(n) for n in (source_names or [])]
     if not opts_raw or len(names) < 2:
@@ -99,7 +103,27 @@ def webreport_compare_groups(opts_raw: str, source_names):
     after = [str(n) for n in (cmp_opt.get("after") or []) if str(n) in present]
     if not before or not after:
         return None
-    return {"before": before, "after": after}
+    groups = {"before": before, "after": after}
+    if cmp_opt.get("para"):
+        groups["para"] = True
+    return groups
+
+
+def webreport_compare_para(opts_raw: str) -> bool:
+    """webreport_options JSON → Para Conversion 세션 여부 (source 목록 없이).
+
+    cache_policy.map_key 가 쓴다 — 캐시 키는 tables 를 디코드하기 전에도 같은 값이 나와야
+    해서 이름 검증본(webreport_compare_groups)을 쓸 수 없다. compare_key 는 옵션 원문을
+    통째로 담아 이미 갈리므로 이 함수가 필요 없다.
+    """
+    if not opts_raw:
+        return False
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return False
+    cmp_opt = opts.get("compare") if isinstance(opts, dict) else None
+    return bool(isinstance(cmp_opt, dict) and cmp_opt.get("para"))
 
 
 def webreport_temperature_groups(opts_raw: str, source_names):

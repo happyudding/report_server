@@ -59,17 +59,26 @@ SERVER_BASE_URL = (
 
 CURRENT_VERSION = "3.3.0"
 
-# 내장 브라우저(QtWebEngine=Chromium) 실행 플래그. 기본은 빈 값 = 아무것도 바꾸지 않는다.
-# GPU 드라이버가 Chromium 의 부분 화면 갱신을 제대로 처리하지 못하는 PC 에서는 마우스를
-# 움직일 때마다 화면 전체가 깜빡이거나(세션 상세처럼 합성 레이어가 많은 페이지) 렌더러가
-# 죽는다. 그런 PC 에서만 `--disable-gpu` 로 소프트웨어 렌더링을 쓰게 하기 위한 통로다.
+# 내장 브라우저(QtWebEngine=Chromium) 실행 플래그. GPU 드라이버가 Chromium 의 부분 화면
+# 갱신을 제대로 처리하지 못하는 PC 에서는 마우스를 움직일 때마다 화면이 깜빡이거나
+# 체크무늬가 떴다가(세션 상세처럼 합성 레이어가 많은 페이지) 렌더러가 죽는다.
+# 2026-08-27 부터 기본값은 `--disable-gpu-compositing` — 화면 합성만 소프트웨어로 바꾸고
+# GPU 프로세스(WebGL·raster)는 유지해 상세 CDF·Trim 의 scattergl 속도를 지킨다.
+# 그래도 깜빡이는 PC 는 `--disable-gpu`(전면 소프트웨어) 로 상향, GPU 원상복구(A/B용)는
+# `HONEY_CHROMIUM_FLAGS=none`(또는 off).
 # 우선순위는 위 SERVER_BASE_URL 과 같다: PC 환경변수(QTWEBENGINE_CHROMIUM_FLAGS, Qt 가
-# 직접 읽는 이름) > honey.env 의 HONEY_CHROMIUM_FLAGS > 없음.
-CHROMIUM_FLAGS = (
+# 직접 읽는 이름) > honey.env 의 HONEY_CHROMIUM_FLAGS > 내장 기본값.
+_CHROMIUM_FLAGS_DEFAULT = "--disable-gpu-compositing"
+_chromium_flags_raw = (
     os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS")
     or _env_file_value("HONEY_CHROMIUM_FLAGS")
-    or ""
 )
+if _chromium_flags_raw is None:
+    CHROMIUM_FLAGS = _CHROMIUM_FLAGS_DEFAULT
+elif _chromium_flags_raw.strip().lower() in ("none", "off"):
+    CHROMIUM_FLAGS = ""          # 명시적 해제 — GPU 렌더링 원상복구
+else:
+    CHROMIUM_FLAGS = _chromium_flags_raw
 
 REQUEST_TIMEOUT_SEC = (10, 300)  # (connect_timeout, read_timeout)
 

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .validation import validate_mode, webreport_ai_comment
+from .validation import validate_mode, webreport_ai_comment, webreport_compare_para
 
 
 def _base(session, prep_digest: str = "") -> tuple:
@@ -159,7 +159,12 @@ def map_key(session, prep_digest: str = "") -> tuple:
     # DUT 모드는 같은 akey 라도 병합 맵(All DUT)이 다르므로 mode 포함 — dist_key 와 동일 이유.
     # dies 는 편집과 무관하므로 edits_rev 불포함. 전처리(항목 제외)는 TNO 맵의 fail 항목
     # 구성을 바꾸므로 prep 은 포함한다.
-    return _base(session, prep_digest) + (_mode(session), MAP_SCHEMA_VERSION)
+    key = _base(session, prep_digest) + (_mode(session), MAP_SCHEMA_VERSION)
+    # Para Conversion 도 같은 mode("Compare") 인데 맵이 다르다(After 만 All DUT 병합).
+    # **para 세션에만** 마커를 덧붙여 기존 세션 키는 바이트 그대로 둔다(콜드 폭풍 회피).
+    if webreport_compare_para(session.get("webreport_options") or ""):
+        key += ("para",)
+    return key
 
 
 # Temperature 항목별 fail die 인덱스(GET .../web_report/temp_map) 스키마 버전.

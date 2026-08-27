@@ -176,6 +176,19 @@ def _compare_groups_of(session, tables):
                                      [t.source for t in tables])
 
 
+def _para_after_of(session, tables):
+    """Para Conversion 세션이면 DUT 로 펼친 After source 이름들, 아니면 None.
+
+    Map Analysis 가 그 source 들만 'All DUT' 로 접는다. rows 빌더 호출부 3곳
+    (payload 경량 메타 = metrics, lazy 조회 = get_map_analysis, seed_map)이 같은 값을
+    써야 정준 JSON 이 일치한다(규칙 11).
+    """
+    groups = _compare_groups_of(session, tables)
+    if not groups or not groups.get("para"):
+        return None
+    return groups.get("after") or None
+
+
 def _compare_wanted(session) -> bool:
     """이 세션이 compare 계산 대상인가 — Compare 모드일 때만(소스 수는 tables 를 봐야 안다)."""
     return cache_policy._mode(session) == "Compare"
@@ -898,7 +911,8 @@ def get_map_analysis(session_id: str, *, report_db, upload_root: Path) -> dict:
         for table in tables:
             table.item_columns = [c for c in table.item_columns if c in selected_set]
     rows = build_map_analysis_rows(
-        tables, session.get("product_type", ""), session.get("product", ""), mode)
+        tables, session.get("product_type", ""), session.get("product", ""), mode,
+        para_after=_para_after_of(session, tables))
     return {"format": "map-dies-v1", "maps": rows}
 
 
@@ -1002,7 +1016,8 @@ def seed_map(session_id: str, session, tables, *, report_db, upload_root: Path) 
         t0 = time.perf_counter()
         rows = build_map_analysis_rows(
             tables, session.get("product_type", ""), session.get("product", ""),
-            _validate_mode(session.get("mode")))
+            _validate_mode(session.get("mode")),
+            para_after=_para_after_of(session, tables))
         raw = json.dumps({"format": "map-dies-v1", "maps": rows},
                          ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)

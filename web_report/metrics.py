@@ -253,6 +253,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         product_type=product_type,
         product=product,
         mode=mode or "Normal",
+        # Para Conversion 세션이면 Map Analysis 가 After(DUT) 만 'All DUT' 로 접는다.
+        # 여기 값은 service._para_after_of / get_map_analysis / seed_map 과 같아야 한다
+        # (경량 메타 == strip_dies(전량) 정준 JSON 일치가 계약 — 규칙 11).
+        para_after=((compare_groups or {}).get("after") or None
+                    if mode == "Compare" and (compare_groups or {}).get("para") else None),
         # None=컬럼 미표시. dict 전달은 ai_comment 옵션 세션의 콜드 빌드(service)만.
         ai_comments=ai_comments,
         signatures=(None if ai_comments is None else

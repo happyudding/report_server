@@ -113,10 +113,23 @@ def _gray_die(x, y, dut):
     return d
 
 
+# DUT 병합 맵의 source 이름. Para Conversion 의 Compare 비교 대상(tabs/compare.py)도
+# 같은 이름을 써야 Map Analysis 탭과 MAP비교가 같은 것을 가리킨다.
+DUT_POOL_LABEL = "All DUT"
+
+
 def _dut_label(source):
-    """DUT pseudo-source('DUT <label>')에서 표시용 라벨('<label>')만 추출."""
+    """DUT pseudo-source 에서 표시용 라벨만 추출.
+
+    DUT 모드는 서버가 만든 'DUT <label>'(공백 있음), Para Conversion 은 클라이언트가
+    붙인 'DUT<label>'(공백 없음)이라 두 표기를 모두 받는다.
+    """
     s = str(source)
-    return s[4:] if s.startswith("DUT ") else s
+    if s.startswith("DUT "):
+        return s[4:]
+    if s.startswith("DUT"):
+        return s[3:]
+    return s
 
 
 def _merge_dut_rows(rows):
@@ -153,7 +166,7 @@ def _merge_dut_rows(rows):
         gray_total = sum(1 for d in dies if "bin" not in d)   # 회색 die 는 bin_counts·total 제외
         orig_file = str(grp[0].get("file_name", "")).rsplit(" · DUT ", 1)[0]
         base = {
-            "source": "All DUT",
+            "source": DUT_POOL_LABEL,
             "file_name": orig_file,
             "x_min": min(xmins) if xmins else None,
             "x_max": max(xmaxs) if xmaxs else None,
@@ -179,8 +192,12 @@ def strip_dies(rows):
     return [{k: v for k, v in r.items() if k != "dies"} for r in rows]
 
 
+# perf-guard: allow S02-map-schema (Para Conversion 전용 분기 — para_after 를 주지 않는
+# 기존 세션의 rows 는 값·구조가 바이트 단위로 불변이라 옛 map 캐시가 그대로 유효하다.
+# para 세션의 분리는 MAP_SCHEMA_VERSION 전역 bump 가 아니라 cache_policy.map_key 의
+# 조건부 ("para",) 마커가 담당한다 — 전역 bump 는 전 세션 콜드 폭풍을 부른다(규칙 14).)
 def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
-                            *, include_dies=True):
+                            *, include_dies=True, para_after=None):
     """웨이퍼 맵 rows. ``include_dies=False`` 면 die 리스트를 **만들지 않고** 경량 메타
     (source/좌표틀/total/bin_counts[/step])만 낸다 — /full 이 쓰는 경로다.
 
@@ -188,16 +205,23 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
     STEP 이 여러 개면 die dict 수만 개를 만들고 즉시 버리는 낭비가 된다. 반환 값은
     ``strip_dies(build_map_analysis_rows(...))`` 와 정준 JSON 으로 동일하다.
     DUT 모드는 dies 를 병합 근거로 쓰므로(_merge_dut_rows) 이 스킵을 적용하지 않는다.
+
+    ``para_after`` (Para Conversion 전용): DUT 로 펼친 After source 이름들. 그 source 들만
+    DUT 모드와 같은 규칙으로 'All DUT' 한 장에 병합하고 Single 은 그대로 둔다 — 세션 전체를
+    병합하는 DUT 모드와 달리 **일부만** 병합한다는 점이 다르다.
     """
     # 제품 기준정보(die pitch+wafer 크기)가 있으면 고정 프레임으로 격자 틀을 덮어쓴다.
     # 없으면 frame=None → 현행(데이터 좌표 min/max) 유지.
     # DUT 모드는 DUT별 pseudo-source 를 하나의 맵으로 병합한다(die 마다 dut 태그 부여).
     frame = frame_for(product_type, product)
+    para_names = {str(n) for n in (para_after or [])}
     merge_dut = mode == "DUT"
-    # DUT 병합은 dies 를 병합 입력으로 쓴다 — 스킵하면 _merge_dut_rows 가 성립하지 않는다.
-    keep_dies = include_dies or merge_dut
     rows = []
     for table in tables:
+        # 이 source 를 병합 대상으로 볼지 — DUT 모드는 전부, Para 는 After(DUT) 만.
+        in_merge = merge_dut or (str(table.source) in para_names)
+        # DUT 병합은 dies 를 병합 입력으로 쓴다 — 스킵하면 _merge_dut_rows 가 성립하지 않는다.
+        keep_dies = include_dies or in_merge
         data = table.data
         # 행 단위 iterrows 대신 좌표를 일괄 숫자 변환하고 유효 행만 추린다
         # (변환 불가/결측 좌표 행 제외 — 기존 _to_int 의 None 처리와 동일).
@@ -236,7 +260,7 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
             "y_max": y_max,
         }
 
-        dut = _dut_label(table.source) if merge_dut else None
+        dut = _dut_label(table.source) if in_merge else None
         steps = sorted({fmt_type(v) for v in table.step.values() if fmt_type(v)},
                        key=_step_sort_key)
         # eval STEP 은 맵을 그리지 않는다. 다만 fail step 귀속(_fail_step_indexes)에는 원래
@@ -254,7 +278,7 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
                                     item=(_die_item(f) if b != PASS_BIN else None))
                                for x, y, b, f in zip(xs, ys, bins, fails)]
             row["bin_counts"] = _bin_count_rows(bins)
-            if merge_dut:
+            if in_merge:
                 row["_dut"] = dut
             rows.append(row)
             continue
@@ -284,10 +308,22 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
             if keep_dies:
                 row["dies"] = dies
             row["bin_counts"] = _bin_count_rows(count_bins)
-            if merge_dut:
+            if in_merge:
                 row["_dut"] = dut
             rows.append(row)
 
     if merge_dut:
         rows = _merge_dut_rows(rows)
+    elif para_names:
+        # Para 는 After(DUT) 행만 'All DUT' 로 접고 Single 행은 그대로 둔다.
+        # 순서는 tables 순서(After 먼저)를 따라 병합 맵을 앞에 놓는다.
+        dut_rows = [r for r in rows if r.get("_dut") is not None]
+        rest = [r for r in rows if r.get("_dut") is None]
+        merged = _merge_dut_rows(dut_rows) if dut_rows else []
+        if not include_dies:
+            # 병합 입력으로만 쓴 dies 를 여기서 버린다 — DUT 모드와 달리 Single 행은
+            # 애초에 dies 를 안 만들어, 안 버리면 두 경로(경량 == strip_dies(전량))가
+            # 어긋난다(규칙 11 정준 JSON 일치).
+            merged = strip_dies(merged)
+        rows = merged + rest
     return rows

@@ -80,8 +80,10 @@ function cpkSigmaText(v) {
 function cpkComputeTargets() {
   const cpk = parseFloat(cpkTargetVal);
   if (!(cpk > 0)) return;
-  const sheets = webReportSheets();
-  const byKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r]));
+  // TOTAL 행도 대상이다 — 그 역산은 "전 source 통합 분포 기준 규격"이라 신규 규격 산정에
+  // 오히려 유용하다. CPK 시트만 훑으면 TOTAL 행을 체크하고 역산해도 조용히 아무 일도
+  // 일어나지 않는다(침묵 실패).
+  const byKey = new Map(cpkAllRows().concat(cpkTotalRows()).map(r => [cpkRowKey(r), r]));
   for (const key of cpkSelected) {
     const row = byKey.get(key);
     if (!row) continue;
@@ -228,20 +230,69 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") cpkCloseMenu
 
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
+// TOTAL 행 후보 — source 별 행과 **같은 보조 필터**(CODE unit / 동일Limit / 검색어)를
+// 통과시키되 **CPK 임계 필터만 면제**한다(2026-08-27 사용자 결정): TOTAL 을 고르면 cpk 가
+// 좋아서 걸러진 항목도 통합 통계로 확인할 수 있어야 한다.
+function cpkTotalDisplayRows() {
+  if (!cpkShowTotal) return [];
+  let rows = cpkTotalRows();
+  if (cpkHideCodeUnit)
+    rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
+  if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));
+  else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));
+  const term = cpkSearchTerm.trim().toLowerCase();
+  if (term) rows = rows.filter(r => String(r.subject || "").toLowerCase().includes(term)
+    || CPK_TOTAL_SOURCE.toLowerCase().includes(term));
+  return rows;
+}
+
+// TOTAL 행을 subject 별로 **그 subject 의 첫 행 자리**에 끼워 넣는다. 첫 행인 이유:
+// subject/limit/units 반복 생략(아래)이 첫 행의 limit 을 대표로 보여주는데, TOTAL 의
+// limit(첫 source 기준)이 곧 TOTAL 계산에 실제로 쓴 규격이라 화면 표시와 Limit 역산이
+// 일관해진다. source 행이 하나도 안 남은 subject 의 TOTAL 도 남긴다 — 임계 필터 면제의
+// 요지가 "cpk 가 좋아서 걸러진 항목도 TOTAL 로는 보인다" 이기 때문이다.
+function cpkMergeTotal(srcRows, totalRows) {
+  if (!totalRows.length) return srcRows;
+  const bySubject = new Map();
+  for (const r of totalRows) bySubject.set(String(r.subject), r);
+  const out = [];
+  let prev = null;
+  for (const r of srcRows) {
+    const s = String(r.subject);
+    if (s !== prev) {
+      const t = bySubject.get(s);
+      if (t) { out.push(t); bySubject.delete(s); }
+      prev = s;
+    }
+    out.push(r);
+  }
+  if (bySubject.size) {
+    // srcRows 에 아예 없던 subject — 뒤에 붙이고 subject 순으로 재정렬한다.
+    // sort 는 ES2019 부터 stable 이라 같은 subject 의 source 행 순서는 보존된다.
+    out.push(...bySubject.values());
+    out.sort((a, b) => String(a.subject).localeCompare(String(b.subject))
+      || (a.source === CPK_TOTAL_SOURCE ? -1 : b.source === CPK_TOTAL_SOURCE ? 1 : 0));
+  }
+  return out;
+}
+
 function cpkBodyRows(rows) {
   if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));     // 동일Limit 제외
   else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));    // 동일Limit 만 (all=필터 없음)
+  const totals = cpkTotalDisplayRows();   // CPK 임계 필터 면제분
   if (cpkShowLowOnly) {
     // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
-    return rows
+    // 이 분기는 종전대로 subject 반복 생략을 하지 않는다 — 임계 필터로 source 행이 듬성해져
+    // 생략하면 오히려 읽기 어렵다.
+    const low = rows
       .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && cpkMatchThreshold(v); })
       .slice()
-      .sort((a, b) => String(a.subject).localeCompare(String(b.subject)))
-      .map(r => ({ ...r, _key: cpkRowKey(r) }));
+      .sort((a, b) => String(a.subject).localeCompare(String(b.subject)));
+    return cpkMergeTotal(low, totals).map(r => ({ ...r, _key: cpkRowKey(r) }));
   }
   // subject 가 연속으로 반복되면(같은 item, source 별 행) 2번째 행부터 subject/limit/units 를 비움
   let prevSubject = null;
-  return rows.map(r => {
+  return cpkMergeTotal(rows, totals).map(r => {
     const row = { ...r, _key: cpkRowKey(r) };
     if (r.subject === prevSubject) {
       row.subject = ""; row.lower_limit = ""; row.upper_limit = ""; row.units = "";
@@ -260,8 +311,11 @@ let _cpkRowsMemo = null;
 function cpkDisplayRows(rows) {
   // cpkSourceFilter 는 Set 이라 JSON.stringify 가 {} 로 접는다 — 정렬한 배열로 펴서
   // 선택이 바뀌면 반드시 메모가 무효화되게 한다(안 그러면 옛 표가 그대로 남는다).
+  // cpkShowTotal 과 TOTAL 행 개수도 넣는다 — TOTAL 은 rows(identity) **밖**에서 오므로
+  // 이게 빠지면 드롭다운에서 TOTAL 을 켜도 옛 표가 그대로 남는다(위와 같은 기전).
   const sig = JSON.stringify([cpkAbnormalMode, cpkShowLowOnly,
-    cpkLowThreshold, cpkLowOp, cpkHideCodeUnit, cpkSearchTerm, [...cpkSourceFilter].sort()]);
+    cpkLowThreshold, cpkLowOp, cpkHideCodeUnit, cpkSearchTerm, [...cpkSourceFilter].sort(),
+    cpkShowTotal, cpkTotalRows().length]);
   if (_cpkRowsMemo && _cpkRowsMemo.rows === rows && _cpkRowsMemo.sig === sig) {
     return _cpkRowsMemo.out;
   }
@@ -364,6 +418,9 @@ function renderCpk() {
   const sheets = webReportSheets();
   const rows = sheets ? (sheets["CPK"] || []) : [];
   if (!rows.length) { emptyPanel(panel, "CPK 데이터 없음"); return; }
+  // 패널을 통째로 다시 그리므로 열려 있던 Source 메뉴는 DOM 에서 사라진다 — 상태를 정리해
+  // 고아 참조를 남기지 않는다.
+  cpkCloseMenu();
 
   const targetBar = cpkTargetMode
     ? `<div class="cpk-target-bar">목표 Cpk ` +
@@ -387,6 +444,9 @@ function renderCpk() {
     const alive = new Set(sourceList);
     for (const s of [...cpkSourceFilter]) if (!alive.has(s)) cpkSourceFilter.delete(s);
   }
+  // TOTAL 은 cpkSourceFilter 밖(별도 플래그)이라 위 정리에 안 걸린다 — 서버가 행을 안 준
+  // 세션(Temperature·단일 source·v42 이전 캐시)에서 켜진 채 남지 않게 여기서 끈다.
+  if (cpkShowTotal && !cpkTotalRows().length) cpkShowTotal = false;
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" data-no-dirty placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
@@ -399,10 +459,17 @@ function renderCpk() {
     `${cpkLowBtnLabel()}</button></span>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">동일Limit 구분</span>` +
     `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 동일Limit 필터(클릭하면 순환): '동일Limit 제외'(기본)=해당 항목을 뺀 나머지 → 'ALL'=전체 표시 → '동일Limit only'=해당 항목만. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
+    // Source 다중 선택 드롭다운 — source 가 1개뿐이고 TOTAL 도 없으면 고를 것이 없어 감춘다.
+    ((sourceList.length >= 2 || cpkTotalRows().length)
+      ? `<span class="cpk-tool-group"><span class="cpk-tool-label">Source</span>` +
+        `<button type="button" id="cpkSrcBtn" class="btn-sm${cpkSourceFilter.size || cpkShowTotal ? " active" : ""}"` +
+        ` aria-haspopup="true" aria-expanded="false"` +
+        ` title="표시할 source 를 고른다 (여러 개 동시 선택 가능 · TOTAL = 전 source 통합 통계)">` +
+        `${esc(cpkSrcBtnLabel())} ▾</button></span>`
+      : "") +
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button>` +
-    `<button type="button" class="btn-sm tab-excel-btn" id="cpkExcelBtn" title="Honey Excel Download 의 CPK 시트와 동일한 xlsx 다운로드 (Bin1 기준·화면 필터 무관)">Excel Down</button></div>` +
-    cpkSourceBarHtml(sourceList) +
+    `<button type="button" class="btn-sm tab-excel-btn" id="cpkExcelBtn" title="Honey Excel Download 의 CPK 시트와 동일한 xlsx 다운로드 (Bin1 기준·화면 필터 무관 · TOTAL 행 제외)">Excel Down</button></div>` +
     targetBar +
     `<div id="cpkTableHost"></div>`;
   renderCpkTable();
@@ -472,9 +539,9 @@ function renderCpk() {
       // 역산값(cpkTargetResults)은 항목별 Margin 혼용을 위해 체크 해제 후에도 누적 보존되지만,
       // 복사 대상은 그 누적분 전체가 아니라 "체크된 행 ∩ 역산값 있는 행"이다.
       // 원본 CPK 행 순서로 훑어 화면 필터·페이지와 무관하게 선택분을 빠짐없이 담는다.
-      const sheets = webReportSheets();
+      // TOTAL 행도 뒤에 이어 훑는다 — 빠뜨리면 체크한 TOTAL 의 역산값이 조용히 누락된다.
       const lines = [["subject", "target_lolimit", "target_hilimit", "units"].join("\t")];
-      for (const r of (sheets ? (sheets["CPK"] || []) : [])) {
+      for (const r of cpkAllRows().concat(cpkTotalRows())) {
         const key = cpkRowKey(r);
         if (!cpkSelected.has(key)) continue;
         const res = cpkTargetResults.get(key);
@@ -502,21 +569,22 @@ function renderCpk() {
   // panel-cpk 는 재렌더돼도 요소 자체는 유지되므로 페이저 클릭·체크박스 위임은 1회만 바인딩한다.
   if (!cpkPanelBound) {
     panel.addEventListener("click", (e) => {
-      // Source 칩: 개별 토글(다중 선택) / "전체"=선택 전부 해제. 칩의 active 표시가
-      // 함께 바뀌어야 하므로 표만이 아니라 패널을 다시 그린다(다른 토글 버튼과 동일).
+      // Source 드롭다운 열기/닫기.
+      const srcBtn = e.target.closest("#cpkSrcBtn");
+      if (srcBtn) { cpkToggleMenu(srcBtn); return; }
+      // 메뉴 항목: 개별 토글(다중 선택) / TOTAL 토글 / "전체"=선택 전부 해제.
+      // ⚠ renderCpk()(패널 전체 재렌더)를 부르면 메뉴 DOM 이 날아가 연속 다중 선택이
+      // 불가능해진다 — 표와 메뉴/버튼만 부분 갱신한다.
       const sb = e.target.closest("[data-cpk-src]");
       if (sb) {
-        const s = sb.dataset.cpkSrc;
-        if (cpkSourceFilter.has(s)) cpkSourceFilter.delete(s);
-        else cpkSourceFilter.add(s);
+        const v = sb.dataset.cpkSrc;
+        if (v === "__all__") { cpkSourceFilter.clear(); cpkShowTotal = false; }
+        else if (v === CPK_TOTAL_SOURCE) cpkShowTotal = !cpkShowTotal;
+        else if (cpkSourceFilter.has(v)) cpkSourceFilter.delete(v);
+        else cpkSourceFilter.add(v);
         cpkPage = 1;
-        renderCpk();
-        return;
-      }
-      if (e.target.closest("[data-cpk-src-all]")) {
-        cpkSourceFilter.clear();
-        cpkPage = 1;
-        renderCpk();
+        renderCpkTable();
+        cpkRefreshMenu();
         return;
       }
       const pb = e.target.closest("[data-cpk-page]");
