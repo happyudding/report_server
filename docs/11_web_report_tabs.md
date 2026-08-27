@@ -32,10 +32,13 @@
 
 ⚠️ **표의 이름 = 시트(sheets) 키이지 화면 탭 목록이 아니다.** 둘은 대체로 같지만 어긋나는
 곳이 셋 있다: `Raw Data`(시트만 있고 탭 없음) · `Trim Analysis`(Characteristic 의 서브탭) ·
-`Issue Table Compare`(탭은 있는데 레지스트리 밖). 실제 상단 탭 11개는
+`Issue Table Compare`(탭은 있는데 레지스트리 밖). 실제 상단 탭 10개는
 [report_view.html](../server/report/report_view.html) 의 `data-tab` 이 정본:
 `summary` / `yield` / `cpk` / `issues` / `issue-temp` / `issue-cmp` / `distribution` /
-`map-analysis` / `characteristic` / `note` / `compare`.
+`map-analysis` / `characteristic` / `note`.
+
+> 구 최상위 `compare` 탭은 **2026-08-27 `issue-cmp` 에 흡수됐다** — 아래
+> "Issue Table Compare (서브탭 5개)" 절 참조.
 
 **lazy 탭 관례**: 대용량 payload(Distribution ECDF, Trim 매칭)는 `/full` 에 싣지 않고
 빈 시트로 두고 전용 라우트로 지연 로드한다. Map Analysis 는 하이브리드 — 범례·격자 틀이
@@ -476,16 +479,20 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   (B3 헤더행·A1 배너·H1 세션링크·CPK `cpk<1.33` 노란 fill·열너비/행높이). 입력이 같은 /full
   payload 라 값 파리티는 자동 — Yield 는 Pass 행+`yield_bin_groups[].rep`(접힌 상태), CPK 는
   `sheets["CPK"]` 전량·원순서(화면 필터·기준 토글 무관, 전체 die 컬럼만).
-- **Compare 탭 (2026-07-23 재정의, Before/After 그룹)**: source 2개 이상을 Before/After 두
+- **Compare 계산 (2026-07-23 재정의, Before/After 그룹)**: source 2개 이상을 Before/After 두
   그룹으로 나눈다(배치·업로드 순서는 [10](10_web_report_pipeline.md) 분석 모드 표). 그룹은
   `webreport_options.compare` → `validation.webreport_compare_groups` → `build_compare_payload`
   로 흐르고, 옵션이 없으면 `after=[s0], before=[s1]` 로 폴백해 **기존 세션 화면이 바뀌지 않는다**.
-  서브탭 4개 = `Map 비교` / `Log 비교` / `Test Time 비교` / `동일성 검증`
-  ([compare.js](../server/report/static/webreport/compare.js)).
-  **구 `산포 비교` 서브탭은 2026-08-20 제거**됐다 — 그 표는 아래 **Issue Table Compare**
-  탭으로 옮겨졌다(`dist_shift` payload 계산·`_dist_focus` 판정은 그대로다).
+
+  ⚠️ **화면은 2026-08-27 부터 `Issue Table Compare` 탭 하나다** — 구 최상위 `Compare` 탭
+  (`#panel-compare` / `renderCompare`)은 제거됐고 그 서브탭이 그리로 흡수됐다. 아래
+  "Issue Table Compare 탭" 절이 정본. 이 절의 payload 설명(`bin_matrix`·`goodlog`·
+  `dist_shift`·`equivalence`)은 **계산 쪽이라 그대로 유효**하다.
+
   `Test Time 비교` 는 **자리만 있는 빈 화면**이다(2026-08-20) — 입력 계약(7-meta
   honeyform)에 시간 컬럼이 없고 STDF 는 서버가 파싱하지 않아 원천 데이터가 없다.
+  **구 `산포 비교` 서브탭은 2026-08-20 제거**됐다 — 그 표는 Issue Table Compare 의
+  ISSUE_TABLE 서브탭이다(`dist_shift` payload 계산·`_dist_focus` 판정은 그대로다).
   - **표의 Before/After 열 순서**(2026-08-20): Log 비교·산포 비교·Bin Yield 비교는
     **Before 가 왼쪽**이다(시간순으로 읽힌다). 서버 payload 키·`GOODLOG_HEADER` 는
     after 먼저 그대로이고 **프런트 표시 순서만** 바꾼 것이다. 예외는 공통성 Map —
@@ -602,28 +609,49 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     곱셈 버림 → 부동소수점 오차로 `8.7`→`8.6`). `fmtStdev` 는 호출자가 없어졌지만 보존.
     회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py)
     (`test_single_source_group_matches_cpk_sheet` 이 average/stdev/cpk + limit 을 CPK 시트와 대조).
-- **Issue Table Compare 탭 (Compare 모드 전용, 2026-08-20 신설)**: Compare 결과를 **기존
-  Issue Table 형식**(comment / Status / 숨김)으로 정리한 표. 탭 노출 규칙은 Compare 탭과
-  같다(`tabs_topbar.syncTabVisibility`, `modeNow === "Compare"`). 카테고리 4개인데
-  **출처가 둘로 갈린다**:
-  | 카테고리 | 출처 | 코멘트 채널 |
-  |---|---|---|
-  | Distribution | 시트 `sheets["Issue Table Compare"]` — `dist_shift` 의 **focus 행 전부** + `new_items`(payload 의 `구분`="신규", 화면에는 2026-08-26 부터 미표시) | `issue_comment` (`CMPDIST\|<item>`) |
-  | ETC | 같은 시트 — ENGR 수동 추가(`edits.KIND_CMP_ETC_ITEM`) | `issue_comment` (`CMPETC\|<item>`) |
-  | Bin Transition | `compare.bin_matrix` 를 프런트가 **별도 표**로 | `compare_note` (`bm:<x>,<y>`) |
-  | Log | `compare.goodlog` 중 **추가/삭제/Limit 변경 행만** | `compare_note` (`gl:…`) |
+- **Issue Table Compare 탭 (Compare 모드 전용, 2026-08-20 신설 → 2026-08-27 서브탭 5개)**:
+  Compare 결과 전체를 담는 **단일 탭**. 탭 노출 규칙은 `tabs_topbar.syncTabVisibility`
+  (`modeNow === "Compare"`). 2026-08-27 구 최상위 `Compare` 탭을 흡수해 서브탭이 됐다.
 
-  아래 2개를 시트에 합치지 않은 이유는 축이 다르기 때문이다 — Bin Transition 은 die 좌표
-  단위, Log 는 Before/After limit 쌍이라 item 한 줄 구조에 안 들어간다. 그래서 이슈 표
-  **뒤에 형제로** 붙인다(`renderIssueTableInto` 의 `opts.extraHtml`).
-  ⚠ 표를 **감싸는 래퍼를 추가하면** `.sheet-wrap.kind-issue` 의 sticky 기준 부모가 바뀌어
-  헤더 고정이 깨진다. 하단 표에 `.sheet-table.kind-issue` 를 붙여도 안 된다(후처리가
-  패널 전역 질의라 첫 표를 잡아야 한다).
-  - **Log 는 "변경 행만"** 이다(사용자 확정) — Gap% 만 큰 행은 이슈가 아니라 값 차이 관찰이라
-    Compare 탭 > Log 비교에서 본다. 분류는 `goodlogRowType` **재사용**(사본 금지).
-  - **코멘트가 두 채널로 갈린다**: 위 2개는 Issue Table 과 같은 `issue_comment`(PTE/개발
-    2열 + Status), 아래 2개는 `compare_note` 라 **Map 비교·Log 비교 서브탭과 같은 키를
-    공유**한다(한쪽에서 적으면 다른 쪽에도 즉시 보인다 — `DATA.compare_notes` 한 벌).
+  | 서브탭 | 내용 | 빌더 | 코멘트 채널 |
+  |---|---|---|---|
+  | `ISSUE_TABLE` | Distribution(`dist_shift` focus 전부 + `new_items`) + ETC | 시트 `sheets["Issue Table Compare"]` (`compare_issue.py`) | `issue_comment` (`CMPDIST\|` / `CMPETC\|`) |
+  | `MAP비교` | 공통성 Map + 동일 좌표 Bin 비교 + Bin Yield 비교 | `compare.js cmpMapPanelHtml` | `compare_note` (`bm:<x>,<y>`) |
+  | `LOG비교` | 추가/삭제/Limit 변경 **요약표** + goodlog 전체표 | `compare.js cmpLogPanelHtml` | `compare_note` (`gl:…`) |
+  | `TESTTIME비교` | 정적 안내(데이터 없음) | report_view.html 정적 마크업 | — |
+  | `동일성검증` | Grade 표 | `compare.js cmpEquivPanelHtml` | — |
+
+  **구조상 핵심 2가지**:
+  - 탭 패널은 `#panel-issue-cmp`(서브탭 바 + 서브패널 5개)이고, **이슈 표는 그 안
+    `#panel-issue-cmp-table` 서브패널에만** 들어간다. `renderIssueTableInto` 가 대상 div 의
+    innerHTML 을 통째로 갈아치우기 때문에 서브탭 바가 그 밖에 있어야 살아남는다
+    (Characteristic 이 `#panel-trim-analysis` 를 첫 서브패널에 둔 것과 같은 관례).
+    `core.js` 의 `ISSUE_PANEL_CMP`/`ISSUE_PANEL_SEL` 이 **서브패널 id** 를 가리킨다.
+  - 서브탭은 **lazy** 다(`CMP_SUB_RENDERERS` + `cmpSubDirty`, Characteristic 패턴) —
+    공통성 Map 이 Plotly + die 수천 개라 숨김 상태 선렌더를 피한다. `issue-cmp` 는 이
+    Plotly 때문에 `edit_mode.PLOTLY_TABS` 에 등록돼 있다.
+
+  2026-08-27 변경 2건: **구 하단 Bin Transition 표 삭제**(MAP비교에 같은
+  `compareBinMatrixHtml` 표가 있어 중복 — 규칙 13) · **Log 요약표는 LOG비교 상단으로 이동**
+  (goodlog 전체표와 같은 `gl:` 키를 공유하므로 한 화면에 있어야 한다).
+  - **Log 요약표는 "변경 행만"** 이다(사용자 확정) — Gap% 만 큰 행은 이슈가 아니라 값 차이
+    관찰이라 같은 서브탭 아래 goodlog 전체표에서 본다. 분류는 `goodlogRowType` **재사용**.
+  - ⚠ **같은 `gl:` 키 셀이 LOG비교 안에 2개** 있다(요약표 + 전체표). 저장 시
+    `compare.js syncCompareNoteCells` 가 **같은 키 셀을 전부 갱신**한다 — 편집한 td 만
+    고치면 같은 항목 코멘트가 화면에서 갈린다(규칙 13). 데이터는 `DATA.compare_notes` 가
+    서버 권위본이라 항상 맞고, 갈리는 건 DOM 뿐이다.
+  - **코멘트가 두 채널로 갈린다**: ISSUE_TABLE 은 Issue Table 과 같은 `issue_comment`
+    (PTE 1열 + Status), MAP/LOG비교는 `compare_note`(`DATA.compare_notes` 한 벌).
+  - **컬럼 (2026-08-27 사용자 요청)**: `Unit` 과 `개발 comment` 는 **화면에서만 숨긴다**
+    (`sheets.js orderColumns` 의 `cmpHidden` — Compare 시트 판정은 `before_*`/`after_*`
+    컬럼 존재). payload·저장 키는 그대로라 **스키마 bump 불필요**하고 기존 '개발 comment'
+    입력값도 DB 에 살아 있다(규칙 12). payload 에서 실제로 빼는 것은 다음 번
+    `COMPARE_REPORT_SCHEMA_VERSION` bump 때로 미뤘다(그것만으로 콜드 폭풍을 부르지 않으려고).
+    `statsFold` 는 **Compare 패널만 기본 접힘**이고 접는 대상은 before/after 원시 통계 6개 +
+    `meanshift_σ` **7개**다 — `△σ%`·`cpk%` 는 항상 보이며 표시만 소수 1자리로 줄인다
+    (원값은 title 툴팁, `sheets.js CMP_PCT_COL_RE`).
+    ⚠ `report_view.html` 의 `#panel-issue-cmp … td:nth-child(4)/(5)/(6)` 무효화 규칙은
+    **컬럼 인덱스 하드코딩**이라 컬럼을 넣고 뺄 때마다 함께 점검해야 한다.
   - **row_key(저장 키, 불변)**: `CMPDIST|<item>` / `CMPETC|<item>`. 숨김·Status 키도 같다
     (행이 곧 item). 숨김은 **CMPDIST 만** 허용한다(CMPETC 는 항목 자체를 지운다 — 기존 ETC
     와 같은 취급, `service._ISSUE_HIDABLE_PREFIXES`). 서버가 Category 셀에 **섹션 키를
@@ -641,12 +669,15 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     | 헤더 표기 축약 | `sheets.js COLUMN_DISPLAY_ALIAS` — `meanshift_sigma→meanshift_σ` / `stdev_delta_pct→△σ%` / `cpk_ratio_pct→cpk%`. **표시 전용**(저장 키·payload 키는 원문 그대로) |
     | `구분`(산포/신규) 컬럼 숨김 | `sheets.js orderColumns` 가 Category 와 같은 방식으로 화면 컬럼에서 제외. 서버는 계속 값을 싣는다(`compare_issue._base_row`) — **payload 무변경이라 캐시 세대를 올리지 않는다** |
     | 산포 미니셀 | `sheets.js` Distribution 셀 화이트리스트에 `CMPDIST`/`CMPETC` 추가 → 일반 Issue Table 과 **같은** 지연 렌더 경로(`renderIssueMiniDist` → `distribution_batch`). variant 를 안 붙여 전체 범위 ECDF 라 Before/After 곡선이 한 셀에 겹쳐 그려진다 |
-  - ⚠ **하단 2표가 "잘려서 안 보이던" 이유** (2026-08-26 수정): `.sheet-wrap.kind-issue` 는
+  - ⚠ **구 하단 2표가 "잘려서 안 보이던" 이유** (2026-08-26 수정, 그 표들은 2026-08-27
+    서브탭으로 이동해 지금은 하단 형제가 없다): `.sheet-wrap.kind-issue` 는
     `position:sticky` + 뷰포트 `max-height` 라 표가 화면에 눌러앉는다. 뒤 형제가 없는
     메인/Temp 패널은 문제가 없지만 이 패널만 `.cmpiss-extra` 가 그 뒤라 영영 가려졌다.
     → `#panel-issue-cmp .sheet-wrap.kind-issue { position: static }` 한 줄로 푼다(래퍼 추가
-    금지 규칙을 지키면서). 내부 스크롤·섹션 헤더 sticky 는 그대로다(헤더 고정 기준은
-    position 이 아니라 overflow 컨테이너). 같은 스코프로 공용 규칙의 5·6번째 컬럼
+    금지 규칙을 지키면서). **이 한 줄은 계속 유지한다** — 서브탭 흡수 후 sticky 층이
+    `.cmp-toolbar`(서브탭 바) → `.issue-toolbar` → `.issue-hscroll` 3층이 됐는데, 표 본체까지
+    sticky 면 그 위에 또 눌러앉는다. 내부 스크롤·섹션 헤더 sticky 는 그대로다(헤더 고정
+    기준은 position 이 아니라 overflow 컨테이너). 같은 스코프로 공용 규칙의 컬럼
     좌측고정·`min-width:144px`(원래 Map/Distribution 용)도 무효화한다 — 이 표엔 Map 이 없어
     그 자리가 통계 컬럼이다.
   - **ETC scope 분리**: ETC 항목 목록은 `etc_item`(메인) ↔ `cmp_etc_item`(Compare) 으로
@@ -1381,8 +1412,8 @@ Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — E
 | 8 | `sig_reason.js` | Signature 판정 근거 팝업(`?` 버튼) |
 | 9 | `wafer_charts.js` | wafer map + fail-bin 차트(Plotly) |
 | 10 | `stdf_map.js` | STDF Map(값 기반 웨이퍼 맵 서브모드) |
-| 11 | `compare.js` | Compare 모드 + 표 헬퍼·compare_note 바인딩 |
-| 12 | `compare_issue.js` | Issue Table Compare 탭 — **11·7 재사용이라 그 뒤** |
+| 11 | `compare.js` | Compare 서브패널 빌더(map/log/equiv) + 서브탭 전환(`showCmpSub`) + 표 헬퍼·compare_note 바인딩 |
+| 12 | `compare_issue.js` | Issue Table Compare **탭 진입점** + ISSUE_TABLE 서브패널 — **11·7 재사용이라 그 뒤** |
 | 13 | `map_select.js` | Map 좌표 선택(chip)·`mapSelMarkerTraces`·Summary 카드 |
 | 14 | `cpk.js` | CPK 탭 |
 | 15 | `distribution.js` | Distribution 갤러리·툴바 (`DIST` 상수·`DIST_VARIANTS`) |

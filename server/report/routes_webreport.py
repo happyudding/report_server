@@ -924,7 +924,7 @@ def web_report_rawdata_replace(session_id):
     덧붙일 대상), rows_preserved 는 "행을 하나도 안 건드렸다"는 신고다(전처리 셀 패치를
     지우지 않는 근거). 둘 다 rawedit.replace_sources 가 검증한다."""
     if request.headers.get("X-Honey-Agent") != "1":
-        abort(403, "X-Honey-Agent header required")
+        return jsonify({"error": "Rawdata 원본 수정은 Honey 앱에서만 가능합니다."}), 403
     session = _require_web_report_session(session_id)
     denied = _editor_guard(session)
     if denied:

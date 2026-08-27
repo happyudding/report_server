@@ -138,7 +138,7 @@ def eval_labels_import():
     UI 가 행별 목록을 그대로 렌더해야 하는 데이터지 전송 실패가 아니다.
     """
     if request.headers.get("X-Honey-Agent") != "1":
-        abort(403, "X-Honey-Agent header required")
+        return jsonify({"error": "선례 DB Input 은 Honey 앱에서만 가능합니다."}), 403
     uid = _current_user()
     if not uid:
         return jsonify({"error": "Honey 신원이 필요합니다 — Honey 앱에서 실행해 주세요."}), 401

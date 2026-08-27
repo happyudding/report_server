@@ -102,14 +102,14 @@ const TAB_RENDERERS = {
   },
   // Temperature 전용 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표 (yield_issue.js).
   "issue-temp": () => renderIssueTempTab(),
-  // Compare 전용 — 산포 검출·신규 item·Bin Transition·Log 를 이슈 표로 (compare_issue.js).
-  // PLOTLY_TABS 에는 넣지 않는다 — 미니셀은 관측 후 lazy 렌더라 Plotly 도착 전에 그려도
-  // 빈 차트가 남지 않는다(Issue Table 과 같은 취급).
+  // Compare 전용 — 서브탭 5개(ISSUE_TABLE/MAP비교/LOG비교/TESTTIME비교/동일성검증)로
+  // 구 최상위 Compare 탭을 흡수했다(2026-08-27, compare_issue.js + compare.js).
+  // MAP비교가 Plotly 공통성 Map 을 그리므로 **PLOTLY_TABS 에 포함**한다(미니셀만 있던
+  // 종전과 달라진 점 — 안 넣으면 Plotly 도착 전 진입 시 빈 맵이 남는다).
   "issue-cmp": () => renderCompareIssueTab(),
   "cpk": renderCpk,
   "distribution": renderDistribution,
   "map-analysis": renderMapAnalysis,
-  "compare": renderCompare,
   // "raw-data" 탭 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 로 이관.
   // 관련 JS(renderRawDataTab 등)와 #panel-raw-data 는 비활성 상태로 남겨둠(참조 안전).
   // Characteristic(서브탭: Trim Analysis / Shmoo / BV / Analog Chart / TCB / DVO)은
@@ -128,7 +128,7 @@ function activeTabName() {
 // Plotly 로 그리는 탭들. plotly.min.js 는 async 로드라 시작 탭(표 기반)이 뜬 뒤에도
 // 아직 도착하지 않았을 수 있다 — 그 사이 이 탭들이 렌더되면 차트가 비어버리므로
 // dirty 를 유지한 채 도착을 기다렸다 다시 그린다. (표 탭은 Tabulator+canvas 만 쓴다)
-const PLOTLY_TABS = { "distribution": 1, "map-analysis": 1, "compare": 1, "characteristic": 1 };
+const PLOTLY_TABS = { "distribution": 1, "map-analysis": 1, "issue-cmp": 1, "characteristic": 1 };
 
 function renderTab(name) {
   if (!tabDirty[name] || !TAB_RENDERERS[name]) return;
@@ -1384,8 +1384,12 @@ async function doDelete(pin) {
       showToast(j.error || "삭제 실패");
       return;
     }
-    showToast("삭제되었습니다. 검색결과로 이동합니다.");
-    setTimeout(() => { location.href = "/pe/report/"; }, 700);
+    showToast("휴지통으로 이동했습니다. 검색결과로 이동합니다.");
+    // ?trashed= 를 달고 넘어간다 — 검색결과 화면이 이 값으로 되돌리기 배너를 띄운다.
+    // (복원 API 는 업로더·삭제한 본인에게 열려 있는데 여태 그 입구가 화면에 없었다.)
+    setTimeout(() => {
+      location.href = "/pe/report/?trashed=" + encodeURIComponent(SESSION_ID);
+    }, 700);
   } catch (e) {
     showToast("삭제 실패: " + e.message);
   }

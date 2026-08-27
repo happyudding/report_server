@@ -36,6 +36,14 @@ _PIN_RE = re.compile(r"^\d{4}$")
 _MAX_CHARTS = 10000   # 차트 수 제한 없음 (2000개 이상 지원)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
+# 세션 error_message 에 남기지 않을 **인프라 설정 안내** 접두 (storage_gateway 가 내는 문구).
+# 사용자가 고칠 수 없는 서버 설정 얘기라 세션 오류로 보이면 안 된다 — 응답 warnings 에는
+# 그대로 남으므로 진단 정보가 사라지는 것은 아니다.
+_INFRA_NOTE_PREFIXES = (
+    "S3 not configured",
+    "charts received but S3 not configured",
+)
+
 
 def _collect_chart_pngs(files):
     """multipart 의 chart_0, chart_1, ... 를 순서대로 PNG bytes 리스트로.
@@ -274,10 +282,16 @@ def upload_xlsx():
     warnings.extend(artifact_result["warnings"])
 
     # 비치명적 경고는 error_message 에 보존(조회/디버깅용)하되 status 는 done.
-    if warnings:
+    # 단 **인프라 설정 안내**는 제외한다 (2026-08-27): S3 미설정은 이 업로드의 문제가
+    # 아니고 실제로 로컬 폴백에 저장된다(storage_gateway._issue_images). 그런데 이 문구가
+    # error_message 에 들어가면 정상 세션이 GET /result 로 오류 문자열을 내보내
+    # 사용자·관리자에게 "이 업로드는 실패했다"로 읽힌다. 응답 JSON 의 warnings 는
+    # 종전 그대로 전부 싣는다(구 클라 하위호환·서버 로그 추적용).
+    real_warnings = [w for w in warnings if not w.startswith(_INFRA_NOTE_PREFIXES)]
+    if real_warnings:
         report_db.update_session(
             session_id, status="done",
-            error_message=("; ".join(warnings))[:500],
+            error_message=("; ".join(real_warnings))[:500],
         )
     else:
         report_db.update_session(session_id, status="done")

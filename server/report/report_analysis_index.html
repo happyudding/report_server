@@ -329,6 +329,26 @@ td.fname-cell .fname-txt {
 }
 .toast.show { opacity: 1; }
 
+/* 삭제 되돌리기 배너 — 토스트와 달리 **사라지지 않는다**. 오삭제를 알아차리는 데 몇 초로는
+   모자라고, 복원 API 는 업로더/삭제자에게 열려 있는데 여태 입구가 화면에 없어 모든 오삭제가
+   관리자 문의로 갔다. 토스트(bottom 24px)와 겹치지 않게 그 위에 띄운다. */
+.undobar {
+  display: none; position: fixed; bottom: 74px; left: 50%; transform: translateX(-50%);
+  align-items: center; gap: 14px; z-index: 1001;
+  background: #1f2937; color: #fff; padding: 12px 16px; border-radius: 8px;
+  font-size: 15px; box-shadow: 0 6px 20px rgba(0,0,0,.25);
+}
+.undobar.show { display: flex; }
+.undobar .ub-btn {
+  border: none; border-radius: 5px; padding: 7px 14px; font-size: 14px;
+  font-weight: 700; cursor: pointer; background: #4a90e2; color: #fff;
+}
+.undobar .ub-btn:disabled { background: #64748b; cursor: default; }
+.undobar .ub-close {
+  border: none; background: transparent; color: #cbd5e1; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0 2px;
+}
+
 .modal-overlay {
   display: none; position: fixed; inset: 0;
   background: rgba(0,0,0,.4); z-index: 100;
@@ -673,6 +693,13 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 
 <div class="toast" id="toast"></div>
 
+<!-- 삭제 되돌리기 배너 (목록 삭제 직후 + 세션 상세에서 삭제하고 ?trashed= 로 넘어온 경우) -->
+<div class="undobar" id="undoBar">
+  <span id="undoBarText">휴지통으로 이동했습니다.</span>
+  <button class="ub-btn" id="undoBarRestore">복원</button>
+  <button class="ub-close" id="undoBarClose" title="닫기">✕</button>
+</div>
+
 <!-- 로그인 모달 (일반 브라우저 — Honey 는 UA 로 자동 식별되어 불필요) -->
 <div class="modal-overlay" id="idModal">
   <div class="modal-box">
@@ -783,7 +810,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   <div class="modal-box">
     <p class="modal-title">휴지통으로 이동</p>
     <p class="modal-desc" id="delModalDesc">이 세션을 휴지통으로 이동합니다. 30일간 보관되며,
-      이후 관리자가 영구 삭제할 수 있습니다. (복원은 관리자에게 문의)</p>
+      그 안에는 업로더 또는 삭제한 본인이 이 화면에서 복원할 수 있습니다.</p>
     <div class="modal-actions">
       <button class="modal-btn" id="delModalCancel">취소</button>
       <button class="modal-btn danger" id="delModalConfirm">휴지통으로 이동</button>
@@ -1760,8 +1787,8 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
       showToast(j.error || "삭제 실패");
       return;
     }
-    showToast("휴지통으로 이동됨");
     document.getElementById("delModal").classList.remove("show");
+    showUndoBar(_delSid);
     loadHistory();
   } catch (e) {
     showToast("삭제 실패: " + e.message);
@@ -1770,6 +1797,65 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
     btn.textContent = label;
   }
 });
+
+// ── 삭제 되돌리기 (휴지통 복원) ────────────────────────────────────────────────
+// 서버 API(POST /session/<sid>/restore)는 업로더 또는 **삭제한 본인**에게 열려 있는데
+// 화면에 입구가 없어 지금까지 모든 오삭제가 관리자 문의로 갔다. 배너는 자동으로 사라지지
+// 않는다 — 잘못 지웠다는 걸 깨닫는 데 토스트 2초는 너무 짧다.
+let _undoSid = null;
+function showUndoBar(sid) {
+  _undoSid = sid;
+  const bar = document.getElementById("undoBar");
+  const btn = document.getElementById("undoBarRestore");
+  document.getElementById("undoBarText").textContent =
+    "휴지통으로 이동했습니다. 30일 안에는 복원할 수 있습니다.";
+  btn.disabled = false;
+  btn.textContent = "복원";
+  bar.classList.add("show");
+}
+function hideUndoBar() {
+  _undoSid = null;
+  document.getElementById("undoBar").classList.remove("show");
+}
+document.getElementById("undoBarClose").addEventListener("click", hideUndoBar);
+document.getElementById("undoBarRestore").addEventListener("click", async () => {
+  if (!_undoSid) return;
+  const btn = document.getElementById("undoBarRestore");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "복원 중…";
+  try {
+    const res = await fetch(`/pe/report/session/${_undoSid}/restore`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(j.error || "복원 실패");
+      btn.disabled = false;
+      btn.textContent = "복원";
+      return;
+    }
+    hideUndoBar();
+    showToast("복원되었습니다.");
+    loadHistory();
+  } catch (e) {
+    showToast("복원 실패: " + e.message);
+    btn.disabled = false;
+    btn.textContent = "복원";
+  }
+});
+// 세션 상세에서 삭제하고 넘어온 경우(?trashed=<sid>) — 배너를 띄우고 쿼리는 지운다.
+// (남겨두면 새로고침·즐겨찾기에서 이미 복원한 세션의 배너가 되살아난다.)
+(function initTrashedParam() {
+  const sid = new URLSearchParams(location.search).get("trashed");
+  if (!sid) return;
+  const u = new URL(location.href);
+  u.searchParams.delete("trashed");
+  history.replaceState(null, "", u.pathname + u.search + u.hash);
+  showUndoBar(sid);
+})();
 
 // ── 비공개 토글 (업로더 본인만) ──
 async function togglePrivate(sid) {

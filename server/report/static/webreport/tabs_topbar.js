@@ -3,11 +3,17 @@
 // 받는다. 종전에는 페이지 로드 시 무조건 둘 다 받아서, Summary 만 보고 나가는 사용자도
 // 전량 다운로드 비용을 냈다. ensure* 는 멱등이라 중복 호출은 진행 중 promise 를 재사용한다.
 function ensureTabData(tab) {
-  const issueLike = (tab === "issues" || tab === "issue-temp");
-  if (tab === "distribution" || issueLike) ensureDistData();
-  if (tab === "map-analysis" || issueLike) ensureMapData();
+  // Issue Table Compare 도 Distribution 미니셀을 그린다 — 여기서 빠져 있으면 표는 뜨는데
+  // 미니 차트만 비어 있다(2026-08-27 확인·수정). 단 **Map 계열은 받지 않는다**: Compare
+  // 이슈 표에는 Map 컬럼이 없어(report_view.html 의 5·6번째 컬럼 보정 참조) 수백만 die 를
+  // 헛받게 된다. ensureTempMapData 는 원래 Temperature 전용이라 조건을 좁혀도 동작이 같다.
+  const needDist = (tab === "distribution" || tab === "issues" ||
+                    tab === "issue-temp" || tab === "issue-cmp");
+  const needMap = (tab === "map-analysis" || tab === "issues" || tab === "issue-temp");
+  if (needDist) ensureDistData();
+  if (needMap) ensureMapData();
   // Issue Table Temp 의 Map 셀은 항목별 fail die 인덱스가 따로 필요하다(Temperature 전용).
-  if (issueLike && typeof ensureTempMapData === "function") ensureTempMapData();
+  if (tab === "issue-temp" && typeof ensureTempMapData === "function") ensureTempMapData();
 }
 
 // ── tab switching ──────────────────────────────────────────────────────────
@@ -140,9 +146,8 @@ function syncTabVisibility() {
   });
   // 1b) 모드 전용 탭: Compare/Commonality 는 각 모드(web_report)에서만 표시.
   const modeNow = web ? webReportMode() : "Normal";
-  const compareBtn = document.querySelector('.tab[data-tab="compare"]');
-  if (compareBtn) compareBtn.style.display = (modeNow === "Compare") ? "" : "none";
-  // Issue Table Compare 도 Compare 모드 전용 (산포 검출·Bin Transition·Log 를 이슈 표로).
+  // Issue Table Compare 는 Compare 모드 전용 — 서브탭 5개(ISSUE_TABLE/MAP비교/LOG비교/
+  // TESTTIME비교/동일성검증)로 구 최상위 Compare 탭을 흡수했다(2026-08-27).
   const cmpIssBtn = document.querySelector('.tab[data-tab="issue-cmp"]');
   if (cmpIssBtn) cmpIssBtn.style.display = (modeNow === "Compare") ? "" : "none";
   // Issue Table Temp 는 Temperature 모드 전용 (CT/HT 를 RT Limit 으로 재판정한 표).

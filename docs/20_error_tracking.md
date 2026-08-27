@@ -172,6 +172,7 @@ teardown                   → 단계 회수        _emit_slow_event() → slow_
 |---|---|---|
 | `unhandled_exception` | critical | [ops.py](../server/ops.py) 전역 핸들러 (스택 전문 포함) |
 | `compute_unavailable` | warning | 같은 곳 — BrokenProcessPool/TimeoutError → 503 (스택 없음: 서버 버그가 아니라 용량 문제) |
+| `http_error` | critical | 같은 파일 `HTTPException` 핸들러 — **5xx abort 만**(4xx 는 정상 흐름이라 로그만) → 아래 §4-2 |
 | `slow_request` | warning | [metrics.py](../server/admin_panel/metrics.py) `_emit_slow_event` — `REPORT_SLOW_REQ_MS`(10초) 초과. 기존 `runtime_*.log` 통계와 달리 **요청 상관 ID가 붙는다**. 단 **요청이 끝나야** 도는 teardown 훅이다 |
 | `stuck_request` | critical | 같은 파일 `_check_stuck_requests` — **아직 안 끝난** 요청이 임계 초과(**업로드 `REPORT_UPLOAD_SLOW_SEC` 100초 / 그 외 `REPORT_STUCK_REQ_SEC` 120초**, 판정은 `_stuck_threshold` 한 곳). 샘플러(10초)가 돌며 잡고, **첫 1회 스레드 덤프**(`diagnose_stuck_*.txt`)를 함께 남긴다. 위 slow 는 teardown 에서만 돌아 **영영 안 끝나는 요청은 구조적으로 한 줄도 남기지 못했다** — 2026-08-19 업로드 hang(클라 300초 timeout, 서버 무기록, 종료 때 "진행 중 10건" 으로만 존재를 앎)이 그 공백이었다. 사건·로그·덤프 머리말에 **그때의 단계**(`stage`/`stage_source`)가 함께 실린다 → §3-1 |
 | `upload_failed` | 400=info / 503=warning / 500=critical | [upload_webreport.py](../server/upload_webreport.py) `_record_upload_failure` (+ 감사 `action=upload, result=fail`) |
@@ -183,8 +184,25 @@ teardown                   → 단계 회수        _emit_slow_event() → slow_
 | `honey_upload_slow` | warning | Honey → 같은 곳. **성공했는데도** 서버 응답 대기가 60초를 넘긴 업로드. 실패만 보고하면 임계 직전 상태(=다음 타임아웃의 예보)를 영영 못 본다 |
 | `honey_render_crash` | warning | Honey 내장 브라우저의 렌더러(QtWebEngineProcess) 비정상 종료 — [embedded_browser.py](../client/embedded_browser.py) `_on_render_terminated`. GPU/드라이버가 흔한 원인이라 `status`/`exit_code`/`url` 을 context 로 싣는다. 클라 로그(`log/<날짜>.txt`)에는 `--disable-gpu` 조치 힌트도 남는다 |
 
-**의도된 HTTPException(404 등)은 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
-못 쓸 물건이 된다.
+**의도된 4xx(404·403 등)는 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
+못 쓸 물건이 된다. 5xx `abort` 만 `http_error` 로 남긴다(§4-2).
+
+### 4-2. abort 응답의 한국어화 (2026-08-27)
+
+`abort(code, "...")` 는 werkzeug 기본 **영문 HTML** 로 나갔다. 프런트 fetch 는 전부
+`j.error` 를 읽어 toast 를 띄우므로 HTML 본문에는 그 키가 없어 화면이 조용히 비었고,
+브라우저 주소창 이동(비공개·삭제 세션 링크)은 영문 오류 벽을 봤다. 라우트의 `abort` 는
+200곳이 넘어 하나씩 고칠 수 없으므로 [ops.py](../server/ops.py) 의 `HTTPException` 핸들러
+한 곳에서 감싼다.
+
+- **커스텀 응답을 든 abort 는 통과** — `abort(make_response(jsonify(...)))`(CSRF 403 등)의
+  의도된 본문을 덮어쓰지 않는다(`e.response is not None`).
+- **description 에 한글이 있으면 그대로** 쓴다(이미 사용자용으로 쓴 문구). 영문이면
+  상태코드별 한국어로 갈고 원문은 `detail` 에 남긴다.
+- **JSON/HTML 갈림은 `Accept` 에 `text/html` 이 **명시**됐는지**로 판정한다.
+  `accept_mimetypes.accept_html` 은 fetch 의 기본 `*/*` 에도 True 라 쓸 수 없다 —
+  그걸 쓰면 모든 XHR 이 HTML 을 받는다.
+- 5xx 만 `http_error` 사건 + `error_id`(=request_id). 4xx 는 로그만.
 
 ### 4-1. 내장 브라우저가 특정 PC 에서만 이상하다 — GPU 우회
 

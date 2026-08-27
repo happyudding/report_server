@@ -1,3 +1,8 @@
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ 이 파일에는 lib 목록이 없다 — build_honey.spec 을 읽어 이름만 바꾼다.     │
+# │ lib 을 바꾸려면 build_honey.spec 을 고치고 client/LIB_HANDOFF.md 에 남긴다.│
+# │ 단, build_honey.spec 의 name= 을 건드렸다면 아래 치환 규칙도 함께 볼 것.  │
+# └──────────────────────────────────────────────────────────────────────────┘
 # PyInstaller spec — 사용: pyinstaller build_honeyapp.spec  → dist/HoneyApp/HoneyApp.exe
 #
 # 버전 폴더 방식에서 앱 본체는 HoneyApp.exe 다 (설치 루트의 Honey.exe 는 런처).

@@ -452,7 +452,7 @@ def update_session_meta_route(session_id):
     """
     if request.headers.get("X-Honey-Agent") != "1":
         if not _is_master():
-            abort(403, "X-Honey-Agent header required")
+            return jsonify({"error": "세션 정보 수정은 Honey 앱의 편집창에서만 가능합니다."}), 403
         _require_csrf()
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)

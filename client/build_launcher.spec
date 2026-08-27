@@ -1,3 +1,8 @@
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ lib 구성(특히 아래 excludes)을 바꾸면 client/LIB_HANDOFF.md 에 남길 것.   │
+# │ 머지 충돌이 나면 코드보다 그 문서를 먼저 본다.                           │
+# │ 런처는 앱과 lib 정책이 정반대다 — 무거운 패키지는 넣는 게 아니라 막는다. │
+# └──────────────────────────────────────────────────────────────────────────┘
 # PyInstaller spec — 사용: pyinstaller --workpath build_launcher --distpath dist_launcher build_launcher.spec
 # 버전 폴더 방식의 런처(Honey.exe) 를 onefile 로 만든다 → dist_launcher/Honey.exe
 #

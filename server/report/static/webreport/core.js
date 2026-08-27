@@ -537,8 +537,13 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
 // — 같은 id 가 여러 패널에 생기면 document.getElementById 가 엉뚱한 패널을 잡는다.
 const ISSUE_PANEL_MAIN = "panel-issues";
 const ISSUE_PANEL_TEMP = "panel-issue-temp";
-const ISSUE_PANEL_CMP = "panel-issue-cmp";
-const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp, #panel-issue-cmp";
+// ⚠ Compare 만 **탭 패널이 아니라 그 안의 서브패널**이다 (2026-08-27 Compare 탭 흡수).
+// 탭 패널 #panel-issue-cmp 는 서브탭 바 + 서브패널 5개를 담고, 이슈 표는 그 중 ISSUE_TABLE
+// 서브패널(#panel-issue-cmp-table)에만 들어간다 — renderIssueTableInto 가 대상 div 의
+// innerHTML 을 통째로 갈아치우기 때문에 서브탭 바가 그 밖에 있어야 살아남는다.
+// (Characteristic 이 #panel-trim-analysis 를 첫 서브패널에 둔 것과 같은 관례.)
+const ISSUE_PANEL_CMP = "panel-issue-cmp-table";
+const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp, #panel-issue-cmp-table";
 // Temp 패널이 읽는 시트 이름 — 백엔드 tabs/temp_fail.TEMP_SHEET 와 같아야 한다.
 const ISSUE_TEMP_SHEET = "Issue Table Temp";
 // Compare 패널이 읽는 시트 이름 — 백엔드 metrics.py 의 주입 키와 같아야 한다.
@@ -549,6 +554,13 @@ const ISSUE_CMP_SHEET = "Issue Table Compare";
 // 쓰므로 여기서 한 번만 정의한다 — 문구를 고칠 땐 이 상수만 고치면 두 곳이 함께 바뀐다.
 const MERGE_NOTE_TEXT =
   "(※ STEP 에 화살표 버튼이 있는 Bin 의 Yield 는 동일 Bin 의 여러 Item 들이 Merge 된 Yield 입니다.)";
+
+// Temperature 탭 판정 기준 안내 (2026-08-27). 이 표가 "CT/HT 측정값을 RT source 의
+// Limit 으로 다시 판정한 결과" 라는 사실이 지금까지 source 이름 옆 RT 배지 tooltip
+// 한 줄에만 있었다 — 그 규칙을 모르면 왜 CT/HT 가 fail 로 잡히는지 알 수 없다.
+const TEMP_JUDGE_NOTE_TEXT =
+  "(※ 이 표는 CT / HT 측정값을 RT source 의 Limit 기준으로 다시 판정한 결과입니다. " +
+  "RT 표식이 붙은 source 가 그 기준입니다.)";
 
 // 현재 DOM 에 존재하는 Issue 표 패널들 (Temp/Compare 는 해당 모드 세션에만 내용이 있다).
 function issuePanelEls() {
@@ -565,9 +577,12 @@ function issuePanelsQueryAll(sel) {
   return out;
 }
 // 인자 없는 호출의 기본 패널 — 활성 탭이 Issue 계열이면 그것, 아니면 기본 패널.
+// Compare 는 서브패널이라 .active 가 .cmp-subpanel.active 와 같은 클래스다 —
+// **ISSUE_TABLE 서브탭이 켜져 있을 때만** 잡힌다(다른 서브탭에선 이슈 툴바 자체가
+// 안 보이므로 반환하지 않는 게 맞다).
 function activeIssuePanel() {
   return document.querySelector("#panel-issues.active, #panel-issue-temp.active, " +
-                                "#panel-issue-cmp.active")
+                                "#panel-issue-cmp-table.active")
     || document.getElementById(ISSUE_PANEL_MAIN);
 }
 // 그 패널이 그린 rows 배열 (저장 diff·낙관 반영의 기준 데이터).
@@ -586,10 +601,13 @@ function issueUi(panel) {
   const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
   // hideClose/hideOpen: Status 별 행 숨김(액션 메뉴 — yield_issue.applyIssueStatusFilter).
   // 검색과 독립된 별도 클래스(.row-status-hide)라 둘을 동시에 걸 수 있다.
-  // statsFold: Compare 패널 전용 — Before/After 통계 9컬럼 접기(툴바 '통계 접기').
-  // 화면 표시 상태일 뿐이라 저장하지 않는다(새로고침하면 펼침으로 돌아간다).
+  // statsFold: Compare 패널 전용 — before/after 원시 통계 6개 + meanshift_σ 접기
+  // (툴바 '통계 접기'). △σ%·cpk% 는 접기 대상이 아니라 항상 보인다(sheets.CMP_FOLD_COL_RE).
+  // **Compare 패널만 기본 접힘**이다(2026-08-27 사용자 요청) — 펼치면 가로폭이 너무 넓어
+  // 정작 먼저 봐야 할 △σ%·cpk% 가 화면 밖으로 밀린다. 화면 표시 상태일 뿐이라 저장하지
+  // 않는다(새로고침하면 이 기본값으로 돌아간다).
   if (!issueUiState[id]) issueUiState[id] = { search: "", delMode: false,
                                               hideClose: false, hideOpen: false,
-                                              statsFold: false };
+                                              statsFold: (id === ISSUE_PANEL_CMP) };
   return issueUiState[id];
 }

@@ -3159,7 +3159,9 @@ class HoneyMainWindow(QMainWindow):
             return
         except Exception as exc:
             # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
-            self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
+            self._append_run_log(
+                f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}"
+                " — 이 세션은 Distribution 첫 조회가 느릴 수 있습니다")
 
         try:
             progress.set("데이터 분석 중... (Web Report)", value=38, status="데이터 분석 중...")
@@ -3247,6 +3249,7 @@ class HoneyMainWindow(QMainWindow):
 
         progress.success(f"Web Report 완료: session_id {sid}", value=100)
         self._append_run_log(_upload_timing_line(timing, "완료"))
+        dist_note = self._note_dist_precompute(result, dist_pack)
         # 성공했어도 서버 대기가 길었으면 알린다 — 그게 다음 번 타임아웃의 예보다.
         # (실패만 보고하면 임계 직전 상태를 영영 못 본다.)
         if timing.get("wait_sec", 0) >= _UPLOAD_SLOW_WAIT_SEC:
@@ -3256,7 +3259,7 @@ class HoneyMainWindow(QMainWindow):
                                    "lot": meta.get("lot_id", ""),
                                    "sources": len(parquet_items), "session": sid, **timing})
         self._append_run_log(f"Web Report URL: {url}")
-        self._status(f"Web Report 완료: {sid}")
+        self._status(f"Web Report 완료: {sid}{dist_note}")
         # 완료 팝업 없이 바로 내장 브라우저(웹 화면)로 전환하고 입력/설정 창을 닫는다.
         self._open_in_embedded(url)
         panel = getattr(self, "slide_controls", None)
@@ -3693,7 +3696,9 @@ class HoneyMainWindow(QMainWindow):
             progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
             dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain)
         except Exception as exc:
-            self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
+            self._append_run_log(
+                f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}"
+                " — 이 세션은 Distribution 첫 조회가 느릴 수 있습니다")
         prep_ex.shutdown(wait=False)
 
         manifest = {
@@ -3752,15 +3757,34 @@ class HoneyMainWindow(QMainWindow):
 
         progress.success(f"업로드 완료: session_id {sid}", value=100)
         self._append_run_log(_upload_timing_line(timing, "완료"))
+        dist_note = self._note_dist_precompute(result, dist_pack)
         if timing.get("wait_sec", 0) >= _UPLOAD_SLOW_WAIT_SEC:
             _report_error("honey_upload_slow",
                           f"서버 응답 대기 {timing.get('wait_sec')}s",
                           context={"path": "xlsx_ingest", "session": sid, **timing})
         self._append_run_log(f"Web Report URL: {url}")
-        self._status(f"업로드 완료: {sid}")
+        self._status(f"업로드 완료: {sid}{dist_note}")
         # 완료 팝업 없이 내장 브라우저(웹 화면)로 바로 전환한다 (_run_web_report 와 동일).
         self._open_in_embedded(url)
         self._set_busy(False)
+
+    def _note_dist_precompute(self, result, dist_pack):
+        """분포 프리컴퓨트가 서버에 저장됐는지 확인해 알린다. 상태바에 붙일 접미사 반환.
+
+        pack 은 서버가 **영구 저장**해 두고 조회 때 덧셈만 하는 파생 데이터다. 크기 초과나
+        결손으로 서버가 버리면 업로드 자체는 성공이지만 그 세션만 Distribution 첫 조회가
+        매번 수십 초 걸린다 — 지금까지 사용자에게 알리는 경로가 없어 "왜 이 세션만 느리냐"를
+        아무도 설명하지 못했다. 업로드 실패가 아니므로 팝업 없이 실행 로그 + 상태바로만 알린다.
+        구 서버는 dist_pack_saved 키가 없으므로 **키가 있을 때만** 판정한다.
+        """
+        if dist_pack is None or "dist_pack_saved" not in (result or {}):
+            return ""
+        if result.get("dist_pack_saved"):
+            return ""
+        self._append_run_log(
+            "⚠ 분포 데이터가 서버에 저장되지 않았습니다 — 이 세션은 Distribution "
+            "첫 조회가 느릴 수 있습니다 (다시 업로드하면 해소될 수 있습니다)")
+        return " (⚠ 분포 데이터 제외)"
 
     def _confirm_upload_report(self, report):
         """전처리 결과를 요약해 업로드 전 확인받는다 (정확도 안전장치).

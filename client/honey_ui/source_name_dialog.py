@@ -66,7 +66,9 @@ from honey_ui.source_naming import apply_role_suffix
 from honey_ui.temperature_pairing import (ROLES, LIMIT_FILTER, dedupe_names, parse_limit_files,
                                           suggest_groups, suggest_groups_by_role)
 
-_PATH_CHARS = 70              # 파일명 열 폭 (고정폭 글꼴 기준 = 문자 수 그대로)
+_PATH_CHARS = 95              # 파일명 열 **기본** 폭 (고정폭 글꼴 기준 = 문자 수 그대로).
+                              # 셀에는 전체 경로가 들어 있고 이건 처음 보이는 폭일 뿐이다 —
+                              # 열 경계를 드래그해 넓히면 생략(…) 없이 전부 보인다.
 _LEGEND_CHARS = 12            # Legend 열 폭·입력 제한 (기본)
 _LEGEND_CHARS_TEMP = 15       # Temperature 는 _RT/_CT/_HT 접미사 3자를 더한다
 _MAX_VISIBLE_ROWS = 21        # 이만큼은 스크롤 없이 보인다 (그 이상은 세로 스크롤바)
@@ -99,6 +101,11 @@ def shorten_path(path, limit: int = _PATH_CHARS) -> str:
 
     파일명이 가장 중요하고 그 다음이 바로 위 폴더(lot/run)라 잘라내는 건 항상 앞쪽이다.
     전체 원문은 툴팁이 책임진다.
+
+    ⚠️ **표 셀에는 더 이상 쓰지 않는다** (2026-08-27). 여기서 문자열을 미리 잘라 넣으면
+    사용자가 열 폭을 아무리 넓혀도 `…` 가 그대로 남는다 — 잘린 것이 표시가 아니라
+    데이터이기 때문이다. 지금은 셀에 **전체 경로**를 넣고 좁을 때만 Qt 가 표시용으로
+    줄이므로(``ElideMiddle``), 열을 넓히거나 가로 스크롤하면 전부 보인다.
     """
     text = str(path or "").strip()
     if not text or len(text) <= limit:
@@ -470,12 +477,22 @@ class SourceNameDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.table.setWordWrap(False)
+        # 파일 열은 전체 경로를 담고 있으므로 열을 넓히면 표가 창보다 넓어질 수 있다.
+        # 픽셀 단위 가로 스크롤이 있어야 넓힌 만큼 실제로 볼 수 있다.
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setItemDelegateForColumn(1, _MaxLenDelegate(self._legend_max, self))
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         header = self.table.horizontalHeader()
         # 마지막 열이 색(고정폭)이 됐으므로 stretch 는 Legend 열이 받는다.
         header.setStretchLastSection(False)
+        # 파일 열은 사용자가 경계를 끌어 넓힐 수 있어야 한다 — 셀에 전체 경로가 들어
+        # 있으므로 넓힌 만큼 생략이 풀린다. Stretch 인 Legend 열이 대신 줄어들다
+        # 최소폭에 닿으면 그때부터 가로 스크롤바가 붙는다.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(60)          # Legend 가 0폭으로 접히지 않게
+        header.setSectionsMovable(False)
         if not self._is_temp:
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         if self._is_dut:
@@ -612,6 +629,8 @@ class SourceNameDialog(QDialog):
             "· 색 칸을 더블클릭하면 이 리포트에만 적용되는 색으로 바꿉니다"
             "(옵션(F10) 팔레트보다 우선).",
             "· 파일 이름 위에 마우스를 올리면 전체 경로가 보입니다. 삭제는 할 수 없습니다.",
+            "· 경로가 …로 줄어 보이면 '입력 파일' 열 머리 오른쪽 경계를 드래그해 넓히세요"
+            " (아래 가로 스크롤바로 이동). 경계를 더블클릭하면 가장 긴 경로에 맞춰집니다.",
         ]
         return self._hint_label(lines)
 
@@ -658,7 +677,9 @@ class SourceNameDialog(QDialog):
                     r, QTableWidgetItem(f"{r + 1} ★" if r == 0 and not self._is_dut
                                         else str(r + 1)))
 
-                cell = QTableWidgetItem(shorten_path(row.path, self._path_chars))
+                # 전체 경로를 그대로 넣는다 — 좁을 때만 Qt 가 ElideMiddle 로 줄여 그리고,
+                # 열을 넓히면 생략 없이 전부 보인다 (shorten_path docstring ⚠️ 참조).
+                cell = QTableWidgetItem(row.path)
                 cell.setFont(self._mono)
                 cell.setToolTip(row.path or "(원본 파일 경로 정보 없음)")
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1076,15 +1097,27 @@ class SourceNameDialog(QDialog):
         self.lbl_limits.setStyleSheet("color:#166534;")
 
     # ── 크기 ────────────────────────────────────────────────────────────────
+    def _path_column_width(self, unit_mono):
+        """파일 열의 **처음 보이는** 폭 = _path_chars 자 (모드별 허용치 그대로).
+
+        경로가 짧아도 줄이지 않는다 — Temperature 가 Normal 보다 22자 넓다는 모드별
+        차이(2026-08-24)가 실제 세션 경로 길이에 좌우되면 안 되고, 이 창의 목적 자체가
+        "가능한 한 많이 보여 주기"라 빈 폭을 아낄 이유가 없다.
+        여기서 멈추는 것은 처음 보이는 폭일 뿐이고 셀에는 전체 경로가 들어 있으므로,
+        더 긴 경로는 사용자가 열 경계를 끌면(또는 더블클릭하면) 그대로 드러난다.
+        """
+        return self._path_chars * unit_mono + 18
+
     def _apply_size(self):
         """21행까지 스크롤 없이 — 그 이상이면 세로 스크롤바가 자동으로 붙는다."""
         unit_mono = QFontMetrics(self._mono).horizontalAdvance("0")
         unit_ui = QFontMetrics(self.font()).horizontalAdvance("0")
-        self.table.setColumnWidth(0, self._path_chars * unit_mono + 18)
+        path_w = self._path_column_width(unit_mono)
+        self.table.setColumnWidth(0, path_w)
         self.table.setColumnWidth(1, self._legend_max * unit_ui + 28)
         width = self._legend_max * unit_ui + 28
         if not self._is_dut:                       # DUT 는 파일 열을 숨긴다
-            width += self._path_chars * unit_mono + 18
+            width += path_w
         if self._is_temp:
             # Group 칸은 드롭다운 화살표(≈20px)가 폭을 먹는다 — 이름 자리 확보용으로 넓힌다.
             for col, w in ((2, 118), (3, 92)):

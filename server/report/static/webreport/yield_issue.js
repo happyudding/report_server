@@ -691,14 +691,13 @@ function issueToolbarHtml(panelId) {
   // 'TNO 전체 펼치기' 는 툴바에서 빼고 Yield 섹션 헤더의 Step 열 아래 작은 ▼ 아이콘으로
   // 옮겼다(2026-08-10 사용자 요청 — sheets.js issueSectionHeadRowsHtml). 동작·핸들러
   // (data-issue-act="toggle-all")는 그대로다.
-  // Compare 패널은 카테고리가 4개다 — 위 2개(Distribution/ETC)는 이 표의 섹션이라
-  // 섹션 키로 점프하고, 아래 2개(Bin Transition/Log)는 표 뒤에 붙는 **별도 표**라
-  // 앵커 id 로 점프한다(data-issue-anchor).
+  // Compare 패널(ISSUE_TABLE 서브탭)의 이 표에는 섹션이 2개(Distribution/ETC)뿐이라
+  // 섹션 키로만 점프한다. 구 Bin Transition/Log 앵커 점프는 2026-08-27 그 표들이
+  // MAP비교/LOG비교 서브탭으로 옮겨가며 없앴다 — 숨김 서브패널의 요소로
+  // scrollIntoView 하면 아무 일도 일어나지 않는다.
   const jumpAndToggle = isTemp ? "" : (isCmp
     ? `<span class="issue-jump-group" title="카테고리로 이동">` +
         `<button type="button" class="btn-sm" data-issue-jump="CMPDIST">Distribution</button>` +
-        `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-bin">Bin Transition</button>` +
-        `<button type="button" class="btn-sm" data-issue-anchor="cmpiss-log">Log</button>` +
         `<button type="button" class="btn-sm" data-issue-jump="CMPETC">ETC</button>` +
       `</span>` +
       // Before/After 통계 9컬럼(before_avg ~ cpk_ratio_pct)을 한꺼번에 접는다
@@ -1057,7 +1056,9 @@ function bindIssueColResize(panel) {
 // Issue 표 렌더 본체 — Issue Table / Issue Table Temp / Issue Table Compare 세 패널과
 // 조회/편집 모드가 공유한다.
 // opts.edit=true 면 comment 두 열만 편집 가능(ISSUE_COMMENT_COLS).
-// opts.extraHtml: 표 **뒤에 형제로** 붙일 마크업(Compare 탭의 Bin Transition/Log 표).
+// opts.extraHtml: 표 **뒤에 형제로** 붙일 마크업. 현재 쓰는 곳은 없다 — 구 Compare 탭의
+//   Bin Transition/Log 표가 유일한 소비자였고 2026-08-27 서브탭으로 옮겨갔다. 경로는
+//   남겨둔다(앞으로 같은 필요가 생길 수 있고, 아래 제약은 그때도 그대로다).
 //   ⚠ 표를 감싸는 요소를 추가하면 .sheet-wrap.kind-issue 의 sticky 기준 부모가 바뀌어
 //   헤더 고정이 깨진다 — 형제로만 붙인다(sheets.js renderSheetTable 주석).
 //   그 안의 표에는 .sheet-table.kind-issue 클래스를 쓰지 말 것(아래 fill 대상 질의가
@@ -1121,5 +1122,12 @@ function renderIssueTempTab() {
     edit: MODE === "edit",
     emptyText: "RT Limit 을 벗어난 CT / HT 항목이 없습니다",
   });
+  // 판정 기준 안내 — 이 표가 왜 CT/HT 를 fail 로 잡는지는 source 이름 옆 RT 배지
+  // tooltip 에만 있었다. renderIssueTableInto 가 innerHTML 을 통째로 교체하므로
+  // 표를 그린 **뒤** 얹는다 (renderIssues 의 tempWarnHtml 과 같은 순서 이유).
+  if (panel) {
+    panel.insertAdjacentHTML("afterbegin",
+      `<div class="temp-note">${esc(TEMP_JUDGE_NOTE_TEXT)}</div>`);
+  }
 }
 

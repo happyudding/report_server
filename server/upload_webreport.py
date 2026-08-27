@@ -121,6 +121,22 @@ def _read_files():
     return items
 
 
+def _emit_dist_dropped(what, detail):
+    """선택 첨부(dist blob/pack)를 버렸음을 진단 사건으로 남긴다 (best-effort).
+
+    로그 한 줄만으로는 나중에 "이 세션만 조회가 느리다" 신고가 왔을 때 세션과 이어붙일
+    수 없다. 업로드는 정상 완료되므로 실패가 아니라 warning 이며, 클라 쪽에는 응답의
+    dist_pack_saved/dist_blob_seeded 로 이미 사실이 나간다."""
+    try:
+        import diagnostics
+        diagnostics.emit("warning", "server", "dist_precompute_dropped",
+                         http_status=200, error_type="dropped",
+                         message=f"{what} 건너뜀 — {detail}"[:500],
+                         **diagnostics.current_ids())
+    except Exception:
+        pass
+
+
 def _read_dist_blobs():
     """클라 프리컴퓨트 Distribution blob(gzip) 필드 — 선택 첨부(구 클라는 없음).
 
@@ -139,6 +155,8 @@ def _read_dist_blobs():
             # 조용히 버리면 "왜 이 세션만 조회가 느리지"를 나중에 추적할 수 없다.
             _log.warning("[upload_webreport] dist_blob(%s) 건너뜀 — %s bytes", variant,
                          len(data) if data else 0)
+            _emit_dist_dropped(f"dist_blob({variant})",
+                               f"{len(data) if data else 0} bytes")
             continue
         blobs[variant] = data
     return blobs
@@ -168,16 +186,20 @@ def _read_dist_pack():
         if not data or len(data) > _MAX_WEBREPORT_BYTES:
             _log.warning("[upload_webreport] dist_pack 건너뜀 — chunk %d 크기 %s bytes",
                          idx, len(data) if data else 0)
+            _emit_dist_dropped("dist_pack",
+                               f"chunk {idx} 크기 {len(data) if data else 0} bytes")
             return None
         total += len(data)
         if total > budget:
             _log.warning("[upload_webreport] dist_pack 건너뜀 — 합계 %d bytes > 상한 %d",
                          total, budget)
+            _emit_dist_dropped("dist_pack", f"합계 {total} bytes > 상한 {budget}")
             return None
         chunks[idx] = data
         idx += 1
     if not chunks:
         _log.warning("[upload_webreport] dist_pack 건너뜀 — index 는 있는데 chunk 가 없음")
+        _emit_dist_dropped("dist_pack", "index 는 있는데 chunk 가 없음")
         return None
     return {"index": index_text, "chunks": chunks}
 

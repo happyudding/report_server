@@ -21,11 +21,17 @@ function collectGrid(panelEl, baseGrid) {
 // **같은 렌더러를 쓰는 일반 Issue Table·Yield 에는 영향이 없다**.
 const CMP_STAT_COL_RE = /^(before|after)_(avg|stdev|cpk)$/i;
 
-// 위 6개 + 비교지표 3개 = 툴바 '통계 접기' 버튼이 한꺼번에 숨기는 컬럼 집합
-// (사용자 요청 2026-08-26 — 가로폭이 너무 넓다). 렌더 시 col/th/td 에 cmp-stat-col
-// 클래스를 붙여 두고 CSS(#panel-issue-cmp.cmp-stats-folded)가 통째로 감춘다.
-const CMP_FOLD_COL_RE = /^(before|after)_(avg|stdev|cpk)$|^(meanshift_sigma|stdev_delta_pct|cpk_ratio_pct)$/i;
+// 툴바 '통계 접기' 버튼이 한꺼번에 숨기는 컬럼 집합 (사용자 요청 2026-08-26 — 가로폭 축소).
+// 렌더 시 col/th/td 에 cmp-stat-col 클래스를 붙여 두고
+// CSS(#panel-issue-cmp-table.cmp-stats-folded)가 통째로 감춘다.
+// 2026-08-27: **△σ%(stdev_delta_pct)와 cpk%(cpk_ratio_pct)는 접기 대상에서 뺐다** —
+// 이 둘은 Compare 에서 가장 먼저 보는 지표라 기본 접힘 상태에서도 남아 있어야 한다.
+// 접는 것은 before/after 원시 통계 6개 + meanshift_σ = 7개.
+const CMP_FOLD_COL_RE = /^(before|after)_(avg|stdev|cpk)$|^meanshift_sigma$/i;
 function isCmpFoldCol(c) { return CMP_FOLD_COL_RE.test(String(c || "").trim()); }
+
+// 접기에서 살아남는 비교지표 2종 — 표시만 소수 1자리로 줄인다(원값은 title 툴팁).
+const CMP_PCT_COL_RE = /^(stdev_delta_pct|cpk_ratio_pct)$/i;
 
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
@@ -420,13 +426,29 @@ function tempSourceCount() {
 function orderColumns(cols, kind) {
   const isComment = c => /comment/i.test(String(c));
 
-  const comments = cols.filter(isComment);
+  // Compare 시트에서만 화면에서 빼는 컬럼 (2026-08-27 사용자 요청 — 가로폭 축소).
+  //   Unit         : Item 이름에 단위가 드러나는 경우가 많아 중복
+  //   개발 comment : Compare 표에서는 PTE comment 한 칸이면 충분
+  // **화면에서만 숨긴다** — 서버 payload(compare_issue.py)와 저장 키는 그대로다.
+  // 그래야 스키마 bump 없이(콜드 폭풍 회피) 기존 세션의 '개발 comment' 입력값도
+  // DB 에 그대로 살아 있는다(CLAUDE.md 규칙 12 — 사용자 입력은 잃지 않는다).
+  // Compare 시트에만 있는 조합(before_*/after_* 통계 컬럼)으로 그 시트인지 판정한다 —
+  // 일반 Issue Table·Yield 는 이 조건에 걸리지 않아 종전 그대로다.
+  const isCmpSheet = kind === "issue" && cols.some(c => CMP_STAT_COL_RE.test(String(c).trim()));
+  const cmpHidden = c => {
+    if (!isCmpSheet) return false;
+    const n = String(c).trim();
+    return n.toLowerCase() === "unit" || n === "개발 comment";
+  };
+
+  const comments = cols.filter(c => isComment(c) && !cmpHidden(c));
   // Issue Table 은 Category 컬럼을 화면에 표시하지 않는다(섹션 구분은 상단 고정 헤더 라벨이 담당).
   // 단 rows 의 Category 데이터 필드는 섹션 판정(rowSection)에 그대로 쓰이므로 여기서 컬럼만 뺀다.
   // Compare 시트의 "구분"(산포/신규)도 화면 컬럼에서 뺀다 (2026-08-26 사용자 요청) —
   // 섹션 헤더가 이미 Distribution/ETC 를 구분하고 신규 항목은 before_* 가 비어 알 수 있다.
   // 서버 payload 는 그대로 두므로(행 dict 에 값은 남음) 스키마 bump·재빌드가 없다.
   let rest = cols.filter(c => !isComment(c)
+    && !cmpHidden(c)
     && !(kind === "issue" && String(c).trim().toLowerCase() === "category")
     && !(kind === "issue" && String(c).trim() === "구분")
     // 토글 전용 내부 마킹 필드 + Signature 셀 렌더 보조 필드(_sig/_sigrev) 제외
@@ -1260,6 +1282,20 @@ function renderSheetTable(rows, opts) {
           cpkTitle = ` title="${esc(txt)}"`;
           txt = short;
           clsParts.push("cpk-abbr");
+        }
+      }
+      // △σ%(stdev_delta_pct) / cpk%(cpk_ratio_pct) — 소수 1자리로 줄여 보여준다
+      // (사용자 요청 2026-08-27). 서버는 각각 6·2자리로 내려주는데(compare.py _calc_gap /
+      // _ratio_pct) 그대로 찍으면 '-23.456789' 처럼 길어 컬럼을 밀어낸다.
+      // **표시만 줄이고 원값은 title 툴팁에 남긴다** — 서버 payload 는 손대지 않는다.
+      if (!cpkTitle && opts.kind === "issue" && !isEmpty && CMP_PCT_COL_RE.test(String(c))) {
+        const num = parseFloat(txt);
+        if (!isNaN(num)) {
+          const short = num.toFixed(1);
+          if (short !== txt.trim()) {
+            cpkTitle = ` title="${esc(txt)}"`;
+            txt = short;
+          }
         }
       }
       // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).

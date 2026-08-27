@@ -1,3 +1,9 @@
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ lib 구성(hiddenimports/datas/excludes/collect_*)을 바꾸면                 │
+# │ client/LIB_HANDOFF.md 의 변경 이력에 남길 것.                            │
+# │ 머지 충돌이 나면 코드보다 그 문서를 먼저 본다 (양쪽 의도를 합치는 기준). │
+# │ 특히 "빼면 안 되는 것"(LIB_HANDOFF.md §3)은 전부 실제로 깨졌던 항목이다. │
+# └──────────────────────────────────────────────────────────────────────────┘
 # PyInstaller spec — 사용: pyinstaller build_honey.spec
 # onedir + windowed(console 없음). PyInstaller 6.x 기준.
 # onedir 인 이유: onefile 은 실행마다 임시폴더로 전체 압축해제 → 첫 로딩이 느림.

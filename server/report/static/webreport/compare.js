@@ -76,6 +76,25 @@ function cmpNoteCell(key) {
   return `<td class="cmp-note-cell${v ? " has-note" : ""}" data-note-key="${esc(key)}"` +
     ` title="${esc(tip)}">${esc(v)}</td>`;
 }
+// 같은 키를 가진 셀 **전부**에 값을 반영한다. LOG비교 서브탭에는 같은 gl: 키 셀이 2개 있다
+// — 상단 요약표(추가/삭제/Limit 변경)와 그 아래 goodlog 전체표. 편집한 td 하나만 고치면
+// 다른 표가 옛 값을 계속 보여줘 "같은 항목인데 코멘트가 다르다"가 된다(2026-08-27 두 표가
+// 한 화면에 오면서 드러난 문제 — 종전엔 서로 다른 탭이라 안 보였다).
+// 데이터 자체는 DATA.compare_notes 가 서버 권위본이라 항상 맞다 — 갈리는 건 화면뿐이다.
+function syncCompareNoteCells(td, text) {
+  const key = td.dataset.noteKey;
+  const root = td.closest("#panel-issue-cmp") || document;
+  let cells;
+  try {
+    cells = root.querySelectorAll(`td.cmp-note-cell[data-note-key="${CSS.escape(key)}"]`);
+  } catch (e) {
+    cells = [td];   // CSS.escape 미지원 등 예외 시 최소한 편집한 셀은 맞춘다
+  }
+  cells.forEach(cell => {
+    cell.textContent = text;
+    cell.classList.toggle("has-note", !!text);
+  });
+}
 async function saveCompareNote(td, text, before) {
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/compare_notes`, {
@@ -87,11 +106,9 @@ async function saveCompareNote(td, text, before) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     DATA.compare_notes = j.compare_notes || {};   // 서버 권위본으로 갱신
-    td.textContent = text;
-    td.classList.toggle("has-note", !!text);
+    syncCompareNoteCells(td, text);
   } catch (err) {
-    td.textContent = before;                      // 실패 시 원복
-    td.classList.toggle("has-note", !!before);
+    syncCompareNoteCells(td, before);             // 실패 시 원복(같은 키 셀 전부)
     showToast("Comment 저장 실패: " + err.message);
   }
 }
@@ -467,9 +484,9 @@ function goodlogSectionHtml(gl) {
     `<div class="sheet-wrap gl-wrap"><table class="sheet-table compare-table goodlog-table">${head}${parts.join("")}</table></div>`;
 }
 
-// Log 비교 섹션만 부분 재렌더 (필터 토글) — 산포 비교의 renderCmpDistSection 과 같은 관례.
-// 접기·리사이즈·프록시 스크롤바는 섹션 안 요소에 직접 바인딩돼 있어 교체 후 다시 건다
-// ('전체 펼치기' 는 섹션 밖 툴바라 renderCompare 에서 1회만 바인딩 — 중복 방지).
+// Log 비교 섹션(goodlog 전체표)만 부분 재렌더 — 필터 토글 시 툴바·서브탭 바는 그대로 두고
+// 표만 갈아끼운다. 접기·리사이즈·프록시 스크롤바는 섹션 안 요소에 직접 바인딩돼 있어 교체
+// 후 다시 건다 ('전체 펼치기' 는 섹션 밖 툴바라 renderCompareIssueTab 에서 1회만 바인딩).
 function renderGoodlogSection(panel) {
   const sec = panel.querySelector("#cmp-log-section");
   if (!sec) return;
@@ -485,13 +502,17 @@ function renderGoodlogSection(panel) {
   glSyncExpandBtn(panel);
 }
 
-// '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — Log 서브탭이 활성이고 필터가 꺼진
+// '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — LOG비교 서브탭이 활성이고 필터가 꺼진
 // (=접힘 세그먼트가 존재하는) 동안에만 노출한다.
+// 버튼이 정적 마크업(report_view.html)이 된 뒤로는 goodlog 행 유무도 여기서 본다
+// (종전엔 renderCompare 가 rows 가 있을 때만 버튼을 만들었다).
 function glSyncExpandBtn(panel) {
   const btn = panel.querySelector(".gl-expand-all");
   if (!btn) return;
+  const cmp = cmpData();
+  const hasRows = !!(cmp && cmp.goodlog && (cmp.goodlog.rows || []).length);
   const logActive = !!panel.querySelector('.cmp-subpanel[data-cmppanel="log"].active');
-  btn.hidden = !logActive || glFilterOn();
+  btn.hidden = !hasRows || !logActive || glFilterOn();
 }
 
 // ── goodlog 표: 폭 동기화 / 프록시 가로 스크롤바 / 컬럼 드래그 리사이즈 ──────────
@@ -556,7 +577,7 @@ function bindGoodlogColResize(panel) {
   });
 }
 
-// goodlog 접기/펼치기 바인딩 — renderCompare / renderGoodlogSection 이 innerHTML 갱신 후 호출
+// goodlog 접기/펼치기 바인딩 — renderGoodlogSection 이 innerHTML 갱신 후 호출
 // (섹션 안 요소에 직접 바인딩이라 표를 다시 그릴 때마다 필요).
 function bindGoodlogFolding(panel) {
   const setLabel = (toggleRow, shown) => {
@@ -586,7 +607,7 @@ function bindGoodlogFolding(panel) {
 }
 
 // '전체 펼치기' 버튼은 섹션 밖(sticky 툴바)이라 표를 다시 그려도 살아 있다 —
-// renderCompare 에서 1회만 바인딩한다(bindGoodlogFolding 과 함께 걸면 리스너가 중복된다).
+// renderCompareIssueTab 에서 1회만 바인딩한다(bindGoodlogFolding 과 함께 걸면 리스너가 중복된다).
 function bindGoodlogExpandAll(panel) {
   const btn = panel.querySelector(".gl-expand-all");
   if (!btn) return;
@@ -603,136 +624,224 @@ function bindGoodlogExpandAll(panel) {
   });
 }
 
-// 서브탭 전환 — Compare 패널 안에서 Map/Log/산포 비교/동일성 하위 화면을 토글한다.
-// (Bin 비교는 서브탭 없이 Map 패널 하단에 함께 표시한다.)
-function bindCompareSubtabs(panel) {
-  const bar = panel.querySelector(".cmp-subtabs");
-  if (!bar) return;
-  bar.addEventListener("click", e => {
-    const btn = e.target.closest("[data-cmpsub]");
-    if (!btn) return;
-    const key = btn.dataset.cmpsub;
-    bar.querySelectorAll("[data-cmpsub]").forEach(b => b.classList.toggle("active", b === btn));
-    panel.querySelectorAll(".cmp-subpanel").forEach(p =>
-      p.classList.toggle("active", p.dataset.cmppanel === key));
-    // '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — Log 화면 + 필터 꺼짐일 때만 노출.
-    glSyncExpandBtn(panel);
-    // 숨김(0px) 상태에서 그려진 Plotly 맵은 보일 때 리사이즈해야 폭이 복구된다.
-    const active = panel.querySelector(`.cmp-subpanel[data-cmppanel="${key}"]`);
-    if (active && window.Plotly) {
-      active.querySelectorAll(".js-plotly-plot").forEach(d => { try { Plotly.Plots.resize(d); } catch (e) {} });
-    }
-    // 숨김 상태에선 scrollWidth 가 0 이라 보일 때 프록시 스크롤바 폭을 다시 실측.
-    if (key === "log") syncGoodlogHscroll(panel);
-  });
+
+// ── 서브패널 빌더 (구 Compare 탭 화면) ───────────────────────────────────────
+// 2026-08-27 최상위 Compare 탭이 Issue Table Compare 탭의 서브탭으로 흡수되면서, 종전
+// renderCompare 가 한 번에 조립하던 .compare-wrap 을 서브패널 단위 빌더로 쪼갰다.
+// **마크업·데이터는 종전과 동일하다** — 담기는 위치만 바뀐다.
+function cmpData() { return (DATA.web_report || {}).compare; }
+function cmpSubEl(panel, key) {
+  return panel.querySelector(`.cmp-subpanel[data-cmppanel="${key}"]`);
+}
+function cmpFillSub(panel, key, html) {
+  const el = cmpSubEl(panel, key);
+  if (el) el.innerHTML = html;
 }
 
-function renderCompare() {
-  const panel = document.getElementById("panel-compare");
-  const cmp = DATA.web_report && DATA.web_report.compare;
-  if (!cmp) {
-    // 계산 대기(2026-08-19)와 진짜 없음을 구분한다 — 둘 다 "데이터 없음"으로 보이면
-    // 잠시 뒤 채워질 것을 사용자가 오류로 읽는다. boot.js 폴링이 완료 시 다시 그린다.
-    if (DATA.web_report && DATA.web_report.compare_pending) {
-      emptyPanel(panel, window.__aiPendingFailed
-        ? "Compare 계산 미완료 — 새로고침하면 다시 시도합니다."
-        : "⏳ Compare 계산 중… 끝나면 자동으로 표시됩니다.");
-      return;
-    }
-    emptyPanel(panel, "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)");
-    return;
-  }
-  panel.classList.add("viz-root");
+// MAP비교 — 요약 칩 + 공통성 Map + (동일 좌표 Bin 비교 | Bin Yield 비교) 2단.
+// Bin 비교 2표는 종전처럼 서브탭 없이 이 패널 하단에 함께 둔다.
+function cmpMapPanelHtml(cmp) {
   const sources = cmp.sources || [];
   const groups = cmp.groups || {};
   const cm = cmp.common_map || {};
   const c = cm.counts || {};
   const mismatch = Math.max(0, (c.common_dies || 0) - (c.match || 0));
-  const eq = cmp.equivalence;
   const groupChips = (cmp.before_sources || []).length
     ? `<span class="cmp-chip">Before ${(cmp.before_sources || []).map(esc).join(" · ")}</span>` +
       `<span class="cmp-chip">After ${(cmp.after_sources || []).map(esc).join(" · ")}</span>`
     : "";
-
-  panel.innerHTML =
-    `<div class="compare-wrap">
-      <div class="compare-summary">
-        <span class="mk">Sources</span> ${sources.map(esc).join(" · ")}
-        ${groupChips}
-        <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
-        <span class="cmp-chip cmp-common">Bin 일치 ${c.match || 0}</span>
-        <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
-      </div>
-      <div class="cmp-toolbar">
-        <div class="cmp-subtabs distseg-group">
-          <button class="distseg active" data-cmpsub="map">Map 비교</button>
-          <button class="distseg" data-cmpsub="log">Log 비교</button>
-          <button class="distseg" data-cmpsub="ttime">Test Time 비교</button>
-          <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
-        </div>
-        ${(cmp.goodlog && (cmp.goodlog.rows || []).length)
-            ? `<button class="btn-sm gl-expand-all" type="button" hidden>전체 펼치기</button>` : ""}
-      </div>
-      <div class="cmp-subpanel active" data-cmppanel="map">
-        <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 2개↑ Fail=보라
-          <span class="gl-sub">(die 에 마우스를 올리면 source 별 Bin 이 보입니다)</span></h3>
-        <div class="wafer-card">
-          <div id="cmp-common-map" style="width:100%;height:520px;"></div>
-          <div id="cmp-common-legend" class="cmp-legend"></div>
-        </div>
-        <div class="cmp-bin-grid">
-          <section>
-            <h3 class="compare-h">동일 좌표 Bin 비교 (불일치 die)</h3>
-            ${compareBinMatrixHtml(cmp.bin_matrix) || '<div class="placeholder">Bin 비교 데이터 없음</div>'}
-          </section>
-          <section>
-            <h3 class="compare-h">Bin Yield 비교</h3>
-            ${compareBinTableHtml(cmp.bin_delta, cmpOrderedSources(cmp), groups)}
-          </section>
-        </div>
-      </div>
-      <div class="cmp-subpanel" data-cmppanel="log">
-        <div id="cmp-log-section"></div>
-      </div>
-      <div class="cmp-subpanel" data-cmppanel="ttime">
-        <h3 class="compare-h">Test Time 비교</h3>
-        <div class="placeholder">Test Time 데이터가 아직 없습니다.<br>
-          업로드 입력 계약(7-meta honeyform)에 시간 컬럼이 없고 STDF 는 서버가 파싱하지
-          않습니다 — 클라이언트가 Test Time 을 실어 보내기 시작하면 이 화면에 표시됩니다.</div>
-      </div>
-      <div class="cmp-subpanel" data-cmppanel="equiv">
-        <h3 class="compare-h">동일성 검증 (Before vs After · 그룹 전체 die 기준)</h3>
-        ${compareEquivHtml(eq)}
-      </div>
+  return `<div class="compare-summary">
+      <span class="mk">Sources</span> ${sources.map(esc).join(" · ")}
+      ${groupChips}
+      <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
+      <span class="cmp-chip cmp-common">Bin 일치 ${c.match || 0}</span>
+      <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
+    </div>
+    <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 2개↑ Fail=보라
+      <span class="gl-sub">(die 에 마우스를 올리면 source 별 Bin 이 보입니다)</span></h3>
+    <div class="wafer-card">
+      <div id="cmp-common-map" style="width:100%;height:520px;"></div>
+      <div id="cmp-common-legend" class="cmp-legend"></div>
+    </div>
+    <div class="cmp-bin-grid">
+      <section>
+        <h3 class="compare-h">동일 좌표 Bin 비교 (불일치 die)</h3>
+        ${compareBinMatrixHtml(cmp.bin_matrix) || '<div class="placeholder">Bin 비교 데이터 없음</div>'}
+      </section>
+      <section>
+        <h3 class="compare-h">Bin Yield 비교</h3>
+        ${compareBinTableHtml(cmp.bin_delta, cmpOrderedSources(cmp), groups)}
+      </section>
     </div>`;
+}
 
-  drawCompareCommonMap(cm, sources);
-  renderGoodlogSection(panel);
-  // 필터/페이지 토글 — wrapper 에 위임 1회 바인딩(innerHTML 교체에도 리스너 유지).
+// LOG비교 요약표에 올릴 행 = **변경 행만** (사용자 확정 2026-08-20).
+// 항목 추가(added) / 삭제(removed) / Limit·이름 변경(limitchg). Gap% 초과만인 행은
+// 제외한다 — 그건 "이슈"가 아니라 값 차이 관찰이라 아래 goodlog 전체표에서 본다.
+const CMPISS_LOG_TYPES = { added: "추가", removed: "삭제", limitchg: "Limit 변경" };
+
+function cmpIssLogRows(gl) {
+  const rows = (gl && gl.rows) || [];
+  const out = [];
+  rows.forEach(r => {
+    const t = goodlogRowType(r);
+    if (CMPISS_LOG_TYPES[t]) out.push({ r, t });
+  });
+  return out;
+}
+
+// 요약표 — goodlog 15컬럼 전부가 아니라 이슈 판단에 필요한 것만 추린 형태.
+// Comment 셀은 gl: 키라 바로 아래 goodlog 전체표와 같은 셀을 가리킨다(저장 시
+// syncCompareNoteCells 가 양쪽을 함께 갱신한다).
+// 2026-08-27 이전에는 Issue Table 뒤 형제(#cmpiss-log)로 붙어 있었다.
+function cmpIssLogTableHtml(gl) {
+  const title = `<h3 class="compare-h">Log — 항목 추가 / 삭제 / Limit 변경</h3>`;
+  if (!gl) return title + `<div class="placeholder">Log 비교 데이터 없음</div>`;
+  const items = cmpIssLogRows(gl);
+  const counts = { added: 0, removed: 0, limitchg: 0 };
+  items.forEach(({ t }) => { counts[t]++; });
+  const summary = `<div class="compare-summary">
+      <span class="cmp-chip gl-chip-add">추가 ${counts.added}</span>
+      <span class="cmp-chip gl-chip-del">삭제 ${counts.removed}</span>
+      <span class="cmp-chip gl-chip-lim">Limit 변경 ${counts.limitchg}</span>
+      <span class="gl-sub">Before ${esc(gl.before_source || "")} → After ${esc(gl.after_source || "")}
+        · 값 차이(Gap %)만 있는 항목은 아래 goodlog 표에서 봅니다</span>
+    </div>`;
+  if (!items.length) {
+    return title + summary +
+      `<div class="gl-identical">항목 추가·삭제·Limit 변경이 없습니다.</div>`;
+  }
+  const lim = v => (v === null || v === undefined) ? "" : _cmpNum(v);
+  const head = `<thead><tr>
+      <th>구분</th><th>Item</th>
+      <th class="num">Before LoLim</th><th class="num">Before HiLim</th>
+      <th class="num">After LoLim</th><th class="num">After HiLim</th>
+      <th>Unit</th><th>Comment</th></tr></thead>`;
+  const body = items.map(({ r, t }) => {
+    const name = r.after_item_name || r.before_item_name || "";
+    const unit = r.after_unit || r.before_unit || "";
+    // Limit 변경 행은 바뀐 쪽 셀을 빨갛게 — 어느 값이 달라졌는지 눈으로 짚게 한다
+    // (goodlog 전체표의 gl-mismatch 와 같은 규칙).
+    const mLo = (r.compare_lolimit === false) ? " gl-mismatch" : "";
+    const mHi = (r.compare_hilimit === false) ? " gl-mismatch" : "";
+    return `<tr class="gl-row gl-${t}">` +
+      `<td><span class="gl-ab-item gl-${t === "added" ? "add" : (t === "removed" ? "del" : "lim")}">` +
+        `${esc(CMPISS_LOG_TYPES[t])}</span></td>` +
+      `<td title="${esc(name)}">${esc(name)}</td>` +
+      `<td class="num${mLo}">${lim(r.before_lolimit)}</td>` +
+      `<td class="num${mHi}">${lim(r.before_hilimit)}</td>` +
+      `<td class="num${mLo}">${lim(r.after_lolimit)}</td>` +
+      `<td class="num${mHi}">${lim(r.after_hilimit)}</td>` +
+      `<td>${esc(unit)}</td>` +
+      cmpNoteCell(glNoteKey(r)) + `</tr>`;
+  }).join("");
+  return title + summary +
+    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">` +
+    `${head}<tbody>${body}</tbody></table></div>`;
+}
+
+// LOG비교 — 이슈 요약표(추가/삭제/Limit 변경) + goodlog 전체표.
+// 두 표가 같은 gl: 코멘트 키를 공유하므로 한 화면에 모아야 값이 갈리지 않는다
+// (저장 시 동기화는 syncCompareNoteCells).
+function cmpLogPanelHtml(cmp) {
+  return cmpIssLogTableHtml(cmp.goodlog) + `<div id="cmp-log-section"></div>`;
+}
+
+// 동일성검증.
+function cmpEquivPanelHtml(cmp) {
+  return `<h3 class="compare-h">동일성 검증 (Before vs After · 그룹 전체 die 기준)</h3>` +
+    compareEquivHtml(cmp.equivalence);
+}
+
+// goodlog 필터/페이지 토글 — 섹션 wrapper 에 위임(표 innerHTML 이 갈려도 리스너 유지).
+function bindCmpLogFilters(panel) {
   const logSec = panel.querySelector("#cmp-log-section");
-  if (logSec) logSec.addEventListener("click", e => {
+  if (!logSec || logSec.dataset.fbound === "1") return;
+  logSec.dataset.fbound = "1";
+  logSec.addEventListener("click", e => {
     if (e.target.closest(".gl-fbtn-diff")) glDiffOnly = !glDiffOnly;
     else if (e.target.closest(".gl-fbtn-gap")) glGapOnly = !glGapOnly;
     else return;
     renderGoodlogSection(panel);
   });
-  bindGoodlogExpandAll(panel);
-  bindCompareSubtabs(panel);
-  bindCompareNotes(panel);
+}
+
+// ── 서브탭 전환 (lazy) ──────────────────────────────────────────────────────
+// 하위 화면은 상위 탭과 같은 lazy 규칙을 따른다(Characteristic 과 동일 관례): 그 서브탭에
+// 처음 들어갈 때 그린다. 공통성 Map 은 Plotly newPlot + die 수천 개라 숨김 상태에서 미리
+// 그리면 첫 진입만 느려지고, 0폭 렌더 후 resize 복구도 scaleanchor 플롯에선 불안하다
+// (map-analysis 를 프리렌더 큐에서 뺀 이유와 같다 — edit_mode.schedulePrerender).
+// "ttime" 은 정적 placeholder(report_view.html)라 렌더러가 없다.
+const CMP_SUB_RENDERERS = {
+  "table": () => renderCompareIssueTable(),
+  "map": panel => {
+    cmpFillSub(panel, "map", cmpMapPanelHtml(cmpData()));
+    const cmp = cmpData();
+    drawCompareCommonMap(cmp.common_map || {}, cmp.sources || []);
+  },
+  "log": panel => {
+    cmpFillSub(panel, "log", cmpLogPanelHtml(cmpData()));
+    renderGoodlogSection(panel);
+    bindCmpLogFilters(panel);
+  },
+  "equiv": panel => cmpFillSub(panel, "equiv", cmpEquivPanelHtml(cmpData())),
+};
+let cmpSubActive = "table";
+const cmpSubDirty = {};
+
+function bindCompareSubtabs(panel) {
+  const bar = panel.querySelector(".cmp-subtabs");
+  if (!bar) return;
+  bar.addEventListener("click", e => {
+    const btn = e.target.closest("[data-cmpsub]");
+    if (btn) showCmpSub(btn.dataset.cmpsub);
+  });
+}
+
+function showCmpSub(key) {
+  const panel = document.getElementById("panel-issue-cmp");
+  if (!panel) return;
+  cmpSubActive = key;
+  panel.querySelectorAll("[data-cmpsub]").forEach(b =>
+    b.classList.toggle("active", b.dataset.cmpsub === key));
+  panel.querySelectorAll(".cmp-subpanel").forEach(p =>
+    p.classList.toggle("active", p.dataset.cmppanel === key));
+  if (CMP_SUB_RENDERERS[key] && cmpSubDirty[key]) {
+    cmpSubDirty[key] = false;
+    CMP_SUB_RENDERERS[key](panel);
+  }
+  // '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — LOG비교 + 필터 꺼짐일 때만 노출.
+  glSyncExpandBtn(panel);
+  // 숨김(0px) 상태에서 그려진 Plotly 맵은 보일 때 리사이즈해야 폭이 복구된다.
+  const active = cmpSubEl(panel, key);
+  if (active && window.Plotly) {
+    active.querySelectorAll(".js-plotly-plot").forEach(d => { try { Plotly.Plots.resize(d); } catch (e) {} });
+  }
+  // 숨김 상태에선 scrollWidth 가 0 이라 보일 때 프록시 스크롤바 폭을 다시 실측.
+  if (key === "log") syncGoodlogHscroll(panel);
+  // 이슈 표의 좌측 고정열 오프셋도 렌더 시점 실측값이다 — 숨김 상태에서 재렌더가 일어나면
+  // 전부 0 으로 굳으므로(yield_issue.syncIssueStickyOffsets 주석) 돌아올 때 다시 잰다.
+  // 표를 다시 그리지는 않는다.
+  if (key === "table") {
+    const t = document.getElementById(ISSUE_PANEL_CMP);
+    if (t) afterIssueRowsToggled(t);
+  }
   syncCompareToolbarH(panel);
 }
 
-// sticky 툴바 실제 높이 → 그 아래 붙는 프록시 가로 스크롤바의 top 오프셋(--cmp-toolbar-h).
+// sticky 툴바 실제 높이 → --cmp-toolbar-h. 이 값은 두 곳이 읽는다:
+//   ① goodlog 프록시 가로 스크롤바(.gl-hscroll)의 top 오프셋
+//   ② 이 패널의 .issue-toolbar / .issue-hscroll top (서브탭 바 아래로 밀어내기)
+// 서브탭 바가 두 줄로 접히면 44px 기본값이 어긋나므로 실측이 필요하다.
 function syncCompareToolbarH(panel) {
-  panel = panel || document.getElementById("panel-compare");
+  panel = panel || document.getElementById("panel-issue-cmp");
   if (!panel) return;
   const bar = panel.querySelector(".cmp-toolbar");
   if (bar && bar.offsetHeight) panel.style.setProperty("--cmp-toolbar-h", bar.offsetHeight + "px");
 }
 window.addEventListener("resize", () => {
-  const panel = document.getElementById("panel-compare");
+  const panel = document.getElementById("panel-issue-cmp");
   if (!panel) return;
   syncCompareToolbarH(panel);
   syncGoodlogHscroll(panel);
 });
-

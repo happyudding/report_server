@@ -153,6 +153,23 @@ def _password_ok(session, password):
     return (password or "").strip() == stored
 
 
+def _uploader_owner_label(session):
+    """거부 메시지에 실을 업로더 표기 '이름(ID)' — 없으면 "".
+
+    "권한이 없습니다" 만 보면 사용자는 **누구에게** 요청해야 할지 몰라 그대로 포기하거나
+    관리자에게 문의한다. 세션 상단바가 이미 같은 형식으로 그리는 값이라
+    (my_access.uploader_name), 거부 응답에도 같은 표기를 실어 다음 행동을 알려준다.
+    조회 실패로 가드가 깨지면 안 되므로 전부 best-effort."""
+    try:
+        u = normalize_uid((session or {}).get("uploaded_by") or "")
+        if not u:
+            return ""   # legacy(업로더 미기록) 세션 — 특정할 사람이 없다
+        name = report_db.get_display_name(u) or ""
+        return f"{name}({u})" if name else u
+    except Exception:
+        return ""
+
+
 def _uploader_guard(session):
     """세션 삭제·비공개·권한부여 가드 — PC 사용자(HoneyUser) == 업로더.
 
@@ -163,7 +180,10 @@ def _uploader_guard(session):
     if not uid:
         return jsonify({"error": "로그인한 사용자만 수정/삭제할 수 있습니다 (현재 읽기 전용)."}), 401
     if not _is_uploader(session, uid):
-        return jsonify({"error": "업로더만 수정/삭제할 수 있습니다."}), 403
+        who = _uploader_owner_label(session)
+        msg = (f"업로더 {who} 님만 수정/삭제할 수 있습니다."
+               if who else "업로더만 수정/삭제할 수 있습니다.")
+        return jsonify({"error": msg}), 403
     return None
 
 
@@ -182,7 +202,10 @@ def _editor_guard(session):
         return None
     _log.warning("editor guard reject: %s %s user=%r session=%s",
                  request.method, request.path, uid, sid)
-    return jsonify({"error": "편집 권한이 없습니다."}), 403
+    who = _uploader_owner_label(session)
+    msg = (f"편집 권한이 없습니다 — 업로더 {who} 님에게 권한을 요청하세요."
+           if who else "편집 권한이 없습니다.")
+    return jsonify({"error": msg}), 403
 
 
 def _can_view(session, uid=None):

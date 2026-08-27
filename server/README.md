@@ -318,7 +318,8 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |
 | `GET` | `/session/<sid>/full` | 공개 | 세션 전체 데이터 JSON (summary+objects+주석+추출텍스트). web_report 세션이 **콜드**면 빌드를 백그라운드에 걸고 `202 {"building":true,"stage","elapsed"}` 즉시 반환 — 프런트가 재시도 (warm 은 종전대로 200) |
 | `GET` | `/session/<sid>/my_access` | Honey | 현재 사용자의 이 세션 권한 |
-| `DELETE` | `/session/<sid>` | 업로더 | 세션 삭제 |
+| `DELETE` | `/session/<sid>` | 업로더 | 세션 삭제(휴지통 soft delete) |
+| `POST` | `/session/<sid>/restore` | 업로더 / 삭제한 본인 | 휴지통 세션 복원. 검색결과 화면의 **되돌리기 배너**가 부른다(목록 삭제 직후 + 세션 상세에서 삭제하고 `?trashed=<sid>` 로 넘어온 경우) — 관리자 패널의 복원과 같은 동작 |
 | `POST` | `/session/<sid>/important` | Honey | 개인 중요표시 토글 |
 | `POST` | `/session/<sid>/private` | 업로더 | 비공개 토글 |
 | `PATCH` | `/session/<sid>/meta` | 편집자 + Honey(또는 master) | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process, step}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체) — **예외: master(admin 로그인 4h)는 웹 브라우저에서도 수정 가능하며, 헤더가 없는 만큼 CSRF 를 요구한다**(둘 중 하나는 반드시 통과). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |

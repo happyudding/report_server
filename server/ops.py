@@ -130,6 +130,58 @@ def init_ops(app):
             body["inflight"] = inflight
         return jsonify(body), (200 if db_ok else 503)
 
+    @app.errorhandler(HTTPException)
+    def _http_error(e):
+        """abort(code, "...") 를 한국어 JSON/HTML 로 바꾼다 (2026-08-27).
+
+        여태 abort 는 werkzeug 기본 **영문 HTML** 로 나갔다. 프런트 fetch 는 전부
+        `j.error` 를 읽어 toast 를 띄우는 구조라 HTML 본문에는 그 키가 없어 화면이
+        조용히 비었고, 브라우저 내비게이션(비공개/삭제 세션 링크)은 영문 오류 벽을 봤다.
+        여기서 한 번 감싸면 라우트 ~225곳의 abort 를 손대지 않고 전부 살아난다.
+
+        - 이미 응답 객체를 든 abort(make_response(jsonify(...)))는 그대로 통과 —
+          CSRF 403 처럼 의도된 JSON 본문을 덮어쓰면 안 된다.
+        - description 에 한글이 있으면 그것이 사용자용 문구다(413 합계 초과 등) → 그대로.
+          영문이면 상태코드별 한국어로 갈고 원문은 detail 에 남긴다(신고 시 추적용).
+        - 5xx 만 진단 사건으로 남긴다 — 4xx 는 정상 흐름(404/403)이 대부분이라 소음이다.
+        """
+        if e.response is not None or (e.code or 500) < 400:
+            return e   # 커스텀 응답(JSON abort)·리다이렉트 계열은 손대지 않는다
+        code = e.code or 500
+        desc = str(e.description or "").strip()
+        ko = _KO_BY_STATUS.get(code) or _KO_BY_STATUS.get(code // 100 * 100) \
+            or _KO_BY_STATUS[500]
+        korean = bool(_HANGUL_RE.search(desc))
+        msg = desc if korean else ko
+        ctx = _request_context()
+        rid = ctx.get("request_id") or ""
+        if code >= 500:
+            rid = rid or diagnostics.new_id()
+            _log.error("http error %s [rid=%s] %s %s: %s", code, rid,
+                       ctx.get("method", "?"), ctx.get("endpoint", "?"), desc)
+            try:
+                diagnostics.emit("critical", "server", "http_error", event_id=rid,
+                                 http_status=code, error_type=f"HTTP{code}",
+                                 message=desc[:500], **ctx)
+            except Exception:
+                pass
+        else:
+            _log.warning("http error %s %s %s: %s", code,
+                         ctx.get("method", "?"), ctx.get("endpoint", "?"), desc)
+        # Accept 에 text/html 을 **명시**한 요청만 HTML — 브라우저 주소창 이동이 그렇다.
+        # fetch/XHR/Honey requests 는 */* 라 JSON 으로 간다(accept_html 은 */* 에도 True
+        # 라 쓸 수 없다).
+        if "text/html" in (request.headers.get("Accept") or ""):
+            resp = make_response(_error_html(code, msg, rid), code)
+            resp.headers["Content-Type"] = "text/html; charset=utf-8"
+            return resp
+        body = {"error": msg}
+        if rid:
+            body["error_id"] = rid
+        if desc and not korean:
+            body["detail"] = desc[:200]
+        return jsonify(body), code
+
     @app.errorhandler(Exception)
     def _unhandled_exception(e):
         if isinstance(e, HTTPException):
