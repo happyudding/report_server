@@ -374,7 +374,18 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      같은 세대에 보류돼 있던 Issue Table Compare 의 `Unit` 컬럼 payload 제거도 함께
 #      실었다(전역 bump 가 Compare 세션도 어차피 재빌드하므로 추가 비용 0).
 #      ⚠ 배포는 webreport-change 절차: 재기동 → **프리웜 스윕** → 벤치.
-REPORT_SCHEMA_VERSION = 42
+# v43: CPK 탭 **행 순서**를 item 이름 사전순 → **TEST SEQ(TSEQ) 순**으로 (2026-08-27 사용자
+#      요청). 대상은 sheets["CPK"] 와 sheets["CPK Total"] **둘의 행 순서뿐**이며 행의 값·
+#      키·개수는 전부 불변이다. 정렬 규칙은 distribution.tseq_sort_key 재사용(사본 금지 —
+#      이미 Distribution 갤러리가 쓰던 규칙이라 두 탭의 항목 순서가 비로소 일치한다).
+#      metrics 의 `stat_items` 자체는 **바꾸지 않았다** — Compare 의 pool 통계가 같은
+#      리스트를 쓰므로 거기서 바꾸면 Compare 행 순서까지 함께 변한다. 별도 `cpk_items`.
+#      cpk_rows 순서 의존처는 worst_cpk_by_subject 뿐인데 소비처(Issue Table CPK 섹션은
+#      자체 sort, distribution_index 는 값 조회)라 다른 탭은 영향 없다.
+#      값이 아니라 순서만 바뀌므로 옛 캐시가 조용히 남으면 "고쳤는데 그대로"가 되어
+#      bump 가 유일한 반영 수단이다.
+#      ⚠ 배포는 webreport-change 절차: 재기동 → **프리웜 스윕** → 벤치.
+REPORT_SCHEMA_VERSION = 43
 
 # Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
 # REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에

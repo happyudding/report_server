@@ -254,7 +254,13 @@ function cpkTotalDisplayRows() {
 function cpkMergeTotal(srcRows, totalRows) {
   if (!totalRows.length) return srcRows;
   const bySubject = new Map();
-  for (const r of totalRows) bySubject.set(String(r.subject), r);
+  // 삽입 순서 = totalRows 순서 = 서버가 낸 TEST SEQ 순. 아래 잔여분 재정렬의 기준이다.
+  const orderOf = new Map();
+  for (const r of totalRows) {
+    const s = String(r.subject);
+    if (!orderOf.has(s)) orderOf.set(s, orderOf.size);
+    bySubject.set(s, r);
+  }
   const out = [];
   let prev = null;
   for (const r of srcRows) {
@@ -267,10 +273,19 @@ function cpkMergeTotal(srcRows, totalRows) {
     out.push(r);
   }
   if (bySubject.size) {
-    // srcRows 에 아예 없던 subject — 뒤에 붙이고 subject 순으로 재정렬한다.
+    // srcRows 에 아예 없던 subject — 뒤에 붙이고 **TEST SEQ 순**(orderOf)으로 재정렬한다.
+    // 종전엔 subject localeCompare(이름순)라 이 분기에서만 순서가 갈렸다(2026-08-27).
+    // orderOf 에 없는 subject(TOTAL 이 없는 항목)는 뒤로 보내 이름순으로 안정 정렬한다.
     // sort 는 ES2019 부터 stable 이라 같은 subject 의 source 행 순서는 보존된다.
     out.push(...bySubject.values());
-    out.sort((a, b) => String(a.subject).localeCompare(String(b.subject))
+    // 미등재는 orderOf.size(=마지막 다음 자리)로 — Infinity 를 쓰면 둘 다 미등재일 때
+    // Infinity-Infinity = NaN 이 되어 sort 비교가 깨진다.
+    const rank = r => {
+      const o = orderOf.get(String(r.subject));
+      return o === undefined ? orderOf.size : o;
+    };
+    out.sort((a, b) => (rank(a) - rank(b))
+      || String(a.subject).localeCompare(String(b.subject))
       || (a.source === CPK_TOTAL_SOURCE ? -1 : b.source === CPK_TOTAL_SOURCE ? 1 : 0));
   }
   return out;
@@ -281,13 +296,13 @@ function cpkBodyRows(rows) {
   else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));    // 동일Limit 만 (all=필터 없음)
   const totals = cpkTotalDisplayRows();   // CPK 임계 필터 면제분
   if (cpkShowLowOnly) {
-    // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
+    // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 **서버가 내려준
+    // 순서(TEST SEQ 순)를 그대로 쓴다** — filter 는 순서를 보존하므로 재정렬하지 않는다.
+    // 종전에는 여기서 subject localeCompare 로 다시 정렬해 이름 사전순이 됐다(2026-08-27).
     // 이 분기는 종전대로 subject 반복 생략을 하지 않는다 — 임계 필터로 source 행이 듬성해져
     // 생략하면 오히려 읽기 어렵다.
     const low = rows
-      .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && cpkMatchThreshold(v); })
-      .slice()
-      .sort((a, b) => String(a.subject).localeCompare(String(b.subject)));
+      .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && cpkMatchThreshold(v); });
     return cpkMergeTotal(low, totals).map(r => ({ ...r, _key: cpkRowKey(r) }));
   }
   // subject 가 연속으로 반복되면(같은 item, source 별 행) 2번째 행부터 subject/limit/units 를 비움

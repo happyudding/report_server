@@ -13,7 +13,7 @@ from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.cpk import build_cpk_total_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
 from .tabs.compare_issue import build_compare_issue_rows
-from .tabs.distribution import build_distribution_index
+from .tabs.distribution import build_distribution_index, tseq_sort_key
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.temp_fail import build_temp_fail_rows
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
@@ -217,6 +217,14 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     # cpk 는 unit 이 Pass/Fail 이거나 측정 data 가 전무한 항목을 제외한다.
     excluded_items = passfail_or_empty_items(tables, counts=item_counts)
     stat_items = [i for i in all_items if i not in excluded_items]
+    # CPK 탭·CPK Total 의 **행 순서만** TEST SEQ(TSEQ) 순으로 낸다 (2026-08-27 요청).
+    # 종전에는 all_items 를 그대로 써 item 이름 사전순이라, 이미 TSEQ 순인 Distribution
+    # 갤러리와 같은 항목이 다른 순서로 보였다. 정렬 규칙은 distribution.tseq_sort_key 하나
+    # (사본 금지 — 규칙 13). stat_items **자체는 바꾸지 않는다**: Compare 의 pool 통계
+    # (build_compare_payload items)가 같은 리스트를 쓰므로 여기서 바꾸면 Compare 행 순서까지
+    # 함께 변한다. cpk_rows 순서에 의존하는 곳은 worst_cpk_by_subject 뿐인데, 소비처
+    # (Issue Table CPK 섹션·distribution_index)가 각자 재정렬/값조회라 영향이 없다.
+    cpk_items = sorted(stat_items, key=tseq_sort_key(tables))
     # distribution_index 는 Pass/Fail 항목을 하드 제외하지 않고 is_passfail 플래그만 붙여
     # 내려보낸다(프런트 "P/F 없애기" 토글이 필터). data 전무 항목만 제외한다.
     dist_excluded = empty_items(tables, counts=item_counts)
@@ -228,7 +236,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         totals = {src: info["total"] for src, info in basis_info.items()}
         yield_rows = build_yield_rows(yield_tables, fail_counts, totals=totals)
         # Temperature 면 CT/HT 만 "RT Bin1 die × RT limit" 기준으로 계산된다 (tabs/cpk.py).
-        cpk_rows = build_cpk_rows(tables, stat_items, temp_groups)
+        cpk_rows = build_cpk_rows(tables, cpk_items, temp_groups)
 
     # Temperature 모드: CT/HT 를 RT limit 으로 **전 항목** 재판정한 Temp 시트 행
     # (Issue Table Temp 탭 + Yield 탭 하단 섹션이 같은 객체를 쓴다 — 1회만 계산).
@@ -287,7 +295,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         # 리포트 콜드 빌드를 죽이면 CPK 탭이 아니라 세션이 통째로 안 열린다.
         try:
             with build_log.stage("tab:CPK Total"):
-                sheets_out["CPK Total"] = build_cpk_total_rows(tables, stat_items)
+                sheets_out["CPK Total"] = build_cpk_total_rows(tables, cpk_items)
         except Exception:
             _log.exception("CPK Total 계산 실패 — 리포트는 계속 만든다")
     with build_log.stage("dist_index"):
