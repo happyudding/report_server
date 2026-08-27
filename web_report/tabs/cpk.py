@@ -22,6 +22,16 @@ from .common import PASS_BIN, bin_types, json_safe, num, round_num
 # 이슈 판단 공용 임계값 — Issue Table(CPK 섹션)·Distribution(status 분류)이 공유한다.
 CPK_THRESHOLD = 1.33
 
+# 전 source 를 하나로 통합한 가상 source 의 이름. 프런트 cpk.js CPK_TOTAL_SOURCE 와
+# **짝으로 고쳐야 하는 이중 정의**다 (CLAUDE.md 규칙 15).
+TOTAL_SOURCE = "TOTAL"
+
+# TOTAL merge 를 한 번에 처리할 item 컬럼 수. 프레임을 통째로 concat 하면 대형 세션
+# (die 210k × source 7 × item 2000)에서 피크 RAM 이 3~6GB 로 뛰어 컴퓨트 워커가 OOM →
+# BrokenProcessPool → 동시 빌드가 전멸한다. 컬럼을 잘라 이어붙이면 피크가 ~390MB 로
+# 떨어지고 _stats_batch 의 총 C 루프 횟수는 같다(compare.py 가 정렬에서 같은 처방을 썼다).
+_TOTAL_COL_CHUNK = 256
+
 
 def worst_cpk_by_subject(cpk_rows) -> dict:
     """subject 별 모든 source 행 중 최저(worst-case) cpk (None 제외).
@@ -212,4 +222,69 @@ def build_cpk_rows(tables, all_items, temperature_groups=None):
                 **stats_bin1[item],
             })
     return rows
+
+
+def build_cpk_total_rows(tables, all_items):
+    """전 source 의 rawdata 를 **하나의 source 로 통합**한 항목별 1행 (source="TOTAL").
+
+    CPK 값 하나만 따로 내는 것이 아니다 — die 행을 세로로 이어붙여 가상의 단일 source 를
+    만들고 그 위에서 ``build_cpk_rows`` 와 **똑같은 계산**(_stats_batch)을 돌리므로,
+    반환 행은 source 별 행과 **같은 15개 키**를 채운다:
+    subject/source/units/lower_limit/upper_limit + n/min/median/max/average/stdev/cp/cpl/cpu/cpk.
+    가중평균 같은 합성이 아니라 실제 병합이라 ``median``·``min``·``max`` 처럼 합성이
+    불가능한 값도 정확하다(그래서 클라이언트가 만들어낼 수 없고 서버 계산이어야 한다).
+
+    모집단은 build_cpk_rows 와 같은 **Bin1(BIN==PASS_BIN)** 이다. limit·units 는 항목이
+    처음 등장한 source 것을 쓴다(``setdefault`` — compare._pool_tables 와 같은 규약).
+    source 마다 규격이 다르면 TOTAL 의 cp/cpk 는 그 대표 규격 기준임에 주의.
+
+    ``tables`` 가 1개 이하면 빈 리스트다 — TOTAL 이 그 source 와 같은 값이라 표에 중복
+    행만 늘린다. **Temperature 모드는 호출하지 않는다**(호출부 metrics.py 가 분기):
+    RT/CT/HT 는 조건이 다른 3집단이고 CT/HT 는 limit 도 RT 것으로 갈아끼워 계산되므로,
+    합치면 온도 스윙 폭이 통째로 σ 에 들어가 그럴듯한 오답이 된다.
+    """
+    if len(tables) < 2:
+        return []
+    # ① 소스별 Bin1 마스크와 메타를 1회씩만 준비한다. bin_types 는 테이블 lazy 캐시라
+    #    같은 빌드에서 build_cpk_rows 가 이미 채워 뒀으면 재스캔이 없다.
+    prepared = []
+    lolim, hilim, units = {}, {}, {}
+    for table in tables:
+        mask = [b == PASS_BIN for b in bin_types(table)]
+        prepared.append((table, set(table.item_columns), mask))
+        for dst, src in ((lolim, table.lolim), (hilim, table.hilim), (units, table.units)):
+            for k, v in src.items():
+                dst.setdefault(k, v)
+    # ② item 컬럼을 잘라가며 merge → 통계. 청크 이유는 _TOTAL_COL_CHUNK 주석 참조.
+    stats = {}
+    for i in range(0, len(all_items), _TOTAL_COL_CHUNK):
+        chunk = all_items[i:i + _TOTAL_COL_CHUNK]
+        parts = []
+        for table, item_set, mask in prepared:
+            present = [c for c in chunk if c in item_set]
+            if not present:
+                continue
+            frame = table.data.loc[mask, present]
+            # build_cpk_rows 와 같은 방어 — split_honeyform 이 numeric 을 보장하지만
+            # object 로 남은 컬럼이 있으면 동일하게 변환한다.
+            stale = [c for c in present if frame[c].dtype.kind not in "if"]
+            if stale:
+                frame = frame.copy()
+                for c in stale:
+                    frame[c] = pd.to_numeric(frame[c], errors="coerce")
+            parts.append(frame)
+        if not parts:
+            continue
+        # 컬럼이 다른 프레임끼리는 합집합 + NaN 이 되는데, _stats_batch 의 count() 가 NaN 을
+        # 세지 않으므로 "그 source 에만 있는 항목"의 n 이 저절로 맞는다.
+        merged = parts[0] if len(parts) == 1 else pd.concat(parts, ignore_index=True)
+        stats.update(_stats_batch(merged, lolim, hilim))
+    return [{
+        "subject": item,
+        "source": TOTAL_SOURCE,
+        "units": json_safe(units.get(item)) or "",
+        "lower_limit": round_num(lolim.get(item)),
+        "upper_limit": round_num(hilim.get(item)),
+        **stats[item],
+    } for item in all_items if item in stats]
 

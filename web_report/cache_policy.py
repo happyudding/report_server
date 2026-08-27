@@ -358,7 +358,18 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      ④ `LOW_SAMPLE_UNCERTAIN` 삭제 ⑤ `outlier_sigma` 4.5 → 2.5.
 #      Signature 컬럼·AI Comment 값이 광범위하게 바뀌고, features.py(방향별 꼬리 질량 신설)·
 #      signatures.py·status.py 코드 변경이라 .rules_rev 로는 무효화되지 않는다.
-REPORT_SCHEMA_VERSION = 41
+# v42: CPK 탭 **TOTAL 행** 신설 (2026-08-27 사용자 요청) — payload sheets 에
+#      `"CPK Total"`(전 source rawdata 를 하나로 통합한 항목별 1행, source="TOTAL",
+#      source 별 행과 같은 15개 컬럼)이 새로 생긴다. 옛 disk_cache payload 에는 이 키가
+#      아예 없어 프런트 폴백(`|| []`)으로는 "TOTAL 을 골라도 빈 표"가 되므로, 기존 세션에서
+#      기능이 동작하게 하는 수단이 bump 뿐이다. TOTAL 은 4개 모드에서 생성돼 모드 전용
+#      상수로는 대상 세션 대다수를 못 덮는다.
+#      **sheets["CPK"] 는 손대지 않았다** — Issue Table CPK 섹션·distribution_index.cpk·
+#      Excel·public API 의 값·목록은 전부 불변이다(규칙 13, tests/test_cpk_total.py 가 고정).
+#      같은 세대에 보류돼 있던 Issue Table Compare 의 `Unit` 컬럼 payload 제거도 함께
+#      실었다(전역 bump 가 Compare 세션도 어차피 재빌드하므로 추가 비용 0).
+#      ⚠ 배포는 webreport-change 절차: 재기동 → **프리웜 스윕** → 벤치.
+REPORT_SCHEMA_VERSION = 42
 
 # Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
 # REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에

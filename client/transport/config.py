@@ -57,7 +57,7 @@ SERVER_BASE_URL = (
     or "http://12.81.220.117:8080"
 )
 
-CURRENT_VERSION = "3.2.0"
+CURRENT_VERSION = "3.3.0"
 
 # 내장 브라우저(QtWebEngine=Chromium) 실행 플래그. 기본은 빈 값 = 아무것도 바꾸지 않는다.
 # GPU 드라이버가 Chromium 의 부분 화면 갱신을 제대로 처리하지 못하는 PC 에서는 마우스를

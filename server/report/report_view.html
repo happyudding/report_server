@@ -2241,7 +2241,9 @@ td.issue-sig-cell .sig-chip { max-width: 104px; overflow: hidden; text-overflow:
 #panel-yield .yield-by-step.ybs-scroll { max-height: 223px; }
 #panel-yield .yield-overview .yo-label,
 #panel-yield .yield-overview .yo-basis { font-size: 13.75px; }
-#panel-yield .yield-overview .yo-cap { font-size: 12.5px; }
+/* 상단 Box 설명문은 STEP 제목의 Merge 안내(.merge-note 11px)와 같은 크기로 (사용자 요청
+   2026-08-27) — 값이 아니라 보조 설명이라 표 확대 비율을 따라가지 않는다. */
+#panel-yield .yield-overview .yo-cap { font-size: 11px; }
 
 #panel-cpk .sheet-table,
 #panel-cpk .sheet-table th { font-size: 13.75px; }           /* 11 → 13.75 */

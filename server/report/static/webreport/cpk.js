@@ -29,8 +29,17 @@ let cpkAbnormalMode = "exclude";
 let cpkHideCodeUnit = false;  // 켜면 Unit(단위)이 CODE 인 항목(디지털 code 값) 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 // 표시할 source 집합 — **빈 Set = 전체 source**(선택 없음 = 필터 없음). 여러 개를 함께
-// 볼 수 있어야 하므로 단일 선택 드롭다운이 아니라 토글 칩 바(cpkSourceBarHtml)로 고른다.
+// 볼 수 있어야 해서 **다중 선택 드롭다운**(cpkSourceMenuHtml)으로 고른다 — 종전 토글 칩
+// 바는 source 가 많으면 툴바 아래 한 줄을 통째로 먹고 이름이 길면 표를 밀어냈다.
 let cpkSourceFilter = new Set();
+// 전 source rawdata 를 하나로 통합한 가상 source. 서버 tabs/cpk.py TOTAL_SOURCE 와
+// **짝으로 고쳐야 하는 이중 정의**다 (CLAUDE.md 규칙 15).
+const CPK_TOTAL_SOURCE = "TOTAL";
+// TOTAL 행 표시 여부 — cpkSourceFilter(Set) 와 **분리한다**. Set 에 특수값으로 넣으면
+// ① source 이름이 실제로 "TOTAL" 인 세션과 충돌하고 ② stale 정리(아래 renderCpk)가 매
+// 렌더마다 지워 드롭다운을 눌러도 즉시 꺼지며 ③ `.size` 를 "개별 필터 있음" 으로 쓰는
+// 3곳의 뜻이 흐려진다.
+let cpkShowTotal = false;
 let cpkPage = 1;              // 현재 페이지 (1-base)
 let cpkPanelBound = false;    // panel-cpk 페이저 클릭 위임 1회 바인딩 플래그
 let cpkTargetMode = false;    // "Limit 계산" 토글 — 켜지면 체크박스 열 + 목표 Cpk 역산 컨트롤 노출
@@ -110,6 +119,8 @@ function cpkIsAbnormal(r) {
 }
 
 function cpkFilterRows(rows) {
+  // ⚠ 여기 들어오는 rows 는 sheets["CPK"](source 별 행)뿐이다 — TOTAL 은 CPK 임계 필터를
+  // 면제받아야 해서 cpkBodyRows 안에서 뒤늦게 합쳐진다(cpkTotalDisplayRows/cpkMergeTotal).
   if (cpkHideCodeUnit)
     rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
   if (cpkSourceFilter.size) rows = rows.filter(r => cpkSourceFilter.has(String(r.source || "")));
@@ -124,18 +135,96 @@ function cpkSourceList(rows) {
   return [...new Set((rows || []).map(r => String(r.source || "")).filter(Boolean))];
 }
 
-// Source 다중 선택 바 — "전체" + source 별 토글 칩. 빈 Set = 전체이므로 "전체"는 곧
-// 선택 해제다. source 가 1개뿐이면 고를 것이 없어 바 자체를 감춘다.
-function cpkSourceBarHtml(list) {
-  if (list.length < 2) return "";
-  const all = `<button type="button" class="btn-sm${cpkSourceFilter.size ? "" : " active"}"` +
-    ` data-cpk-src-all="1" title="전체 source 표시 (개별 선택 모두 해제)">전체</button>`;
-  const chips = list.map(s =>
-    `<button type="button" class="btn-sm${cpkSourceFilter.has(s) ? " active" : ""}"` +
-    ` data-cpk-src="${esc(s)}" title="클릭해 선택/해제 — 여러 source 를 함께 볼 수 있다">${esc(s)}</button>`
-  ).join("");
-  return `<div class="cpk-src-bar"><span class="cpk-tool-label">Source</span>${all}${chips}</div>`;
+// CPK 시트(source 별 행) / CPK Total 시트(전 source 통합 행). TOTAL 은 payload 에 키가
+// 없을 수 있다(스키마 v42 이전 캐시) — 그 경우 빈 배열이라 드롭다운에서 항목 자체를 감춘다.
+function cpkAllRows() {
+  const sheets = webReportSheets();
+  return sheets ? (sheets["CPK"] || []) : [];
 }
+function cpkTotalRows() {
+  const sheets = webReportSheets();
+  return sheets ? (sheets["CPK Total"] || []) : [];
+}
+
+// Source 버튼 라벨 — 이 탭 관례대로 **현재 적용 중인 값**만 쓴다(누르면 바뀔 값이 아님).
+function cpkSrcBtnLabel() {
+  const parts = [];
+  if (cpkShowTotal) parts.push(CPK_TOTAL_SOURCE);
+  parts.push(...cpkSourceFilter);
+  if (!parts.length) return "전체";
+  if (parts.length <= 2) return parts.join(", ");
+  return `${parts[0]} 외 ${parts.length - 1}`;
+}
+
+// Source 다중 선택 메뉴 — "전체" + TOTAL + source 별 항목. 빈 Set = 전체이므로 "전체"는
+// 곧 선택 해제다. 룩은 .issue-menu 팝오버를 그대로 재사용한다(dist_composite/gap_chart 선례).
+// ⚠ data-issue-act / data-dc-act 를 쓰면 edit_mode.js / dist_composite.js 의 클릭 위임이
+// 오발한다 — 전용 네임스페이스 data-cpk-src 만 쓴다.
+function cpkSourceMenuHtml(list) {
+  const item = (val, label, checked, title) =>
+    `<button type="button" class="issue-menu-item${checked ? " checked" : ""}"` +
+    ` data-cpk-src="${esc(val)}" title="${esc(title)}">` +
+    `<span class="issue-menu-mark">${checked ? "✓" : ""}</span>` +
+    `<span class="issue-menu-label">${esc(label)}</span></button>`;
+  const sep = `<div class="issue-menu-sep"></div>`;
+  let html = item("__all__", "전체", !cpkSourceFilter.size && !cpkShowTotal,
+                  "개별 선택을 모두 해제한다 (TOTAL 포함)");
+  if (cpkTotalRows().length) {
+    html += sep + item(CPK_TOTAL_SOURCE, "TOTAL (전 source 통합)", cpkShowTotal,
+      "전 source 의 rawdata 를 하나로 합쳐 낸 통계 행. CPK 임계 필터가 적용되지 않아 " +
+      "선택하면 전 항목의 TOTAL 행이 보인다. 규격(Limit)은 항목이 처음 등장한 source 기준.");
+  }
+  return html + sep + list.map(s =>
+    item(s, s, cpkSourceFilter.has(s), "클릭해 선택/해제 — 여러 source 를 함께 볼 수 있다")
+  ).join("");
+}
+
+// 메뉴 열기/닫기 — 표 스크롤 컨테이너에 잘리지 않게 fixed 로 띄우되 **패널 안에** 붙인다
+// (body 직속이면 .content 클릭 위임이 못 잡고, sticky 툴바 z-index:92 안에 넣으면 그
+// 스태킹 컨텍스트에 갇힌다). yield_issue.js toggleIssueMenu 와 같은 처방.
+let _cpkMenuEl = null;
+let _cpkMenuAnchor = null;
+function cpkCloseMenu() {
+  if (!_cpkMenuEl) return;
+  if (_cpkMenuAnchor) _cpkMenuAnchor.setAttribute("aria-expanded", "false");
+  _cpkMenuEl.remove();
+  _cpkMenuEl = null; _cpkMenuAnchor = null;
+}
+function cpkToggleMenu(btn) {
+  if (_cpkMenuAnchor === btn) { cpkCloseMenu(); return; }   // 같은 버튼 재클릭 = 닫기
+  cpkCloseMenu();
+  const panel = document.getElementById("panel-cpk");
+  if (!panel) return;
+  const menu = document.createElement("div");
+  menu.className = "issue-menu cpk-menu";
+  menu.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()));
+  menu.style.position = "fixed";
+  menu.style.visibility = "hidden";   // 폭·높이 실측 전에는 깜빡임 방지로 숨긴다
+  panel.appendChild(menu);
+  const rect = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let top = rect.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - mw - 12)) + "px";
+  menu.style.top = top + "px";
+  menu.style.visibility = "";
+  btn.setAttribute("aria-expanded", "true");
+  _cpkMenuEl = menu; _cpkMenuAnchor = btn;
+}
+// 선택이 바뀌어도 메뉴는 열어 둔다(연속 다중 선택) — 체크 표시와 버튼 라벨만 갱신한다.
+function cpkRefreshMenu() {
+  if (_cpkMenuEl) _cpkMenuEl.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()));
+  const btn = document.getElementById("cpkSrcBtn");
+  if (btn) {
+    btn.innerHTML = esc(cpkSrcBtnLabel()) + " ▾";
+    btn.classList.toggle("active", !!(cpkSourceFilter.size || cpkShowTotal));
+  }
+}
+document.addEventListener("click", e => {
+  if (_cpkMenuEl && !e.target.closest(".cpk-menu") && !e.target.closest("#cpkSrcBtn"))
+    cpkCloseMenu();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") cpkCloseMenu(); });
 
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)

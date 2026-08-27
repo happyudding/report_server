@@ -10,6 +10,7 @@ import logging
 
 from . import build_log
 from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
+from .tabs.cpk import build_cpk_total_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
 from .tabs.compare_issue import build_compare_issue_rows
 from .tabs.distribution import build_distribution_index
@@ -270,6 +271,20 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             continue
         with build_log.stage("tab:" + spec.name):
             sheets_out[spec.name] = spec.builder(ctx)
+    # CPK TOTAL — 전 source rawdata 를 하나로 통합한 항목별 1행. CPK 탭이 드롭다운으로
+    # 같은 표에 섞어 그리므로 **TAB_REGISTRY 밖**이다(등록하면 빈 탭이 생긴다 —
+    # sheets["Issue Table Compare"] 와 같은 선례).
+    # ⚠ ctx.cpk_rows 에는 절대 넣지 않는다 — worst_cpk_by_subject 를 거쳐 Issue Table CPK
+    # 섹션 목록·distribution_index.cpk·Excel·public API 가 통째로 바뀐다(규칙 13).
+    sheets_out["CPK Total"] = []
+    if not temp_groups and len(tables) >= 2:
+        # 실패 격리 — TOTAL 은 **부가 기능**이다. merge 가 터져도(대형 세션 MemoryError 등)
+        # 리포트 콜드 빌드를 죽이면 CPK 탭이 아니라 세션이 통째로 안 열린다.
+        try:
+            with build_log.stage("tab:CPK Total"):
+                sheets_out["CPK Total"] = build_cpk_total_rows(tables, stat_items)
+        except Exception:
+            _log.exception("CPK Total 계산 실패 — 리포트는 계속 만든다")
     with build_log.stage("dist_index"):
         # temp_groups 를 넘기면 lower/upper_limit 이 그룹의 RT limit 이 된다 — 프런트가
         # 미니셀·갤러리 규격선을 이 인덱스에서 가져가므로(distSpecLimits) 첫 소스가
