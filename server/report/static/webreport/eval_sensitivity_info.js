@@ -11,7 +11,11 @@
 // (eval_analyzer/eval_engine/rules/sensitivity.yaml). 사본을 두면 사용자가 고른 "3단계" 와
 // 서버가 아는 "3단계" 가 갈린다.
 
-const ESENS_LEVEL_LABELS = ["1 rough", "2", "3 기본", "4", "5 tight"];
+// 눈금 6칸: 1~5 단계 + '사용자설정'. 마지막 칸은 값을 직접 입력했을 때만 도달하는
+// **표시 전용** 상태라 클릭으로 못 간다(Honey 설정 창 GaugeSlider 와 같은 규약).
+const ESENS_STOPS = ["1", "2", "3", "4", "5", "사용자설정"];
+const ESENS_CUSTOM = 0;
+const ESENS_TIPS = {1: "1 rough — 덜 발화", 3: "3 기본(현행)", 5: "5 tight — 더 발화"};
 
 let _esensCache = null;      // 이 세션의 적용 설정 (GET 응답)
 let _esensCatalog = null;    // 단계표 카탈로그 (서버 공용)
@@ -59,21 +63,28 @@ function esensCurrentValue(group, key) {
   return esensGroupValues(group, level, _esensDraft.manual)[key.key];
 }
 
-function esensGaugeHtml(group) {
-  const level = _esensDraft.groups[group.id] || 3;
-  const custom = (group.keys || []).some(k => typeof _esensDraft.manual[k.key] === "number");
-  const fixed = group.gauge_fixed;
-  const steps = ESENS_LEVEL_LABELS.map((label, i) => {
-    const on = (!custom && !fixed && level === i + 1) ? " on" : "";
-    const dis = fixed ? " disabled" : "";
-    return `<button class="esens-step${on}" data-group="${esc(group.id)}" `
-         + `data-level="${i + 1}"${dis} title="${esc(label)}">${i + 1}</button>`;
+// ○─○─○─○─○─○ 눈금 게이지. attr 은 그룹 게이지면 data-group, 전체면 data-all.
+function esensGaugeHtml(active, { group = "", fixed = false } = {}) {
+  const stops = ESENS_STOPS.map((label, i) => {
+    const level = i + 1;
+    const isCustom = (i === ESENS_STOPS.length - 1);
+    const on = (!fixed && (isCustom ? active === ESENS_CUSTOM : active === level));
+    const cls = "esens-stop" + (on ? " on" : "") + (isCustom ? " custom" : "")
+              + (fixed ? " off" : "");
+    // 사용자설정 칸에는 data-level 을 주지 않는다 — 클릭 핸들러가 그걸로 선택 가능 여부를 가른다.
+    const attr = (fixed || isCustom) ? ""
+      : (group ? ` data-group="${esc(group)}" data-level="${level}"`
+               : ` data-all="${level}"`);
+    const tip = isCustom ? "값을 직접 입력하면 이 상태가 됩니다"
+                         : (ESENS_TIPS[level] || `${level} 단계`);
+    return `<span class="${cls}"${attr} title="${esc(tip)}">`
+         + `<i class="esens-dot"></i><em>${esc(label)}</em></span>`;
   }).join("");
-  const note = fixed ? `<span class="esens-custom">게이지 고정 · 직접 입력만</span>`
-             : custom ? `<span class="esens-custom">사용자설정</span>` : "";
-  return `<span class="esens-gauge">${steps}</span>${note}`;
+  return `<span class="esens-gauge${fixed ? " off" : ""}">${stops}</span>`;
 }
 
+// threshold 는 **세로로** 쌓는다 — 키 이름이 길어(subpop_density_gap_strong 등) 가로로
+// 늘어놓으면 키 5개짜리 그룹(TAIL·BIMODALITY)에서 줄이 접힌다.
 function esensValuesHtml(group, editable) {
   return (group.keys || []).map(k => {
     const value = esensCurrentValue(group, k);
@@ -81,12 +92,18 @@ function esensValuesHtml(group, editable) {
     const input = editable
       ? `<input class="esens-val${changed}" type="number" step="any" `
         + `value="${esc(value)}" data-key="${esc(k.key)}" data-group="${esc(group.id)}">`
-      : `<span class="esens-val${changed}" style="display:inline-block;">${esc(value)}</span>`;
-    return `<div style="display:inline-block;margin:0 12px 4px 0;">`
-         + `<span class="esens-key" data-help="${esc(k.key)}">${esc(k.key)}</span> `
+      : `<span class="esens-val${changed}">${esc(value)}</span>`;
+    return `<div class="esens-kv">`
+         + `<span class="esens-key" data-help="${esc(k.key)}">${esc(k.key)}</span>`
          + input
-         + `<span class="iinfo-sub"> 기본 ${esc(k.default)}</span></div>`;
+         + `<span class="iinfo-sub">기본 ${esc(k.default)}</span></div>`;
   }).join("");
+}
+
+// 행 이름은 **SIGNATURE 영문 원문**이다 — 화면 어디서나(Issue Table Signature 컬럼·
+// /pe/eval 트레이스) 영문으로 나오는데 여기만 한글이면 같은 것인지 알기 어렵다.
+function esensGroupName(group) {
+  return (group.signatures || []).map(esc).join("<br>") || esc(group.id);
 }
 
 function esensRender() {
@@ -94,24 +111,27 @@ function esensRender() {
   const editable = !!data.can_edit && !!(_esensCatalog || {}).groups;
   const groups = (_esensCatalog || {}).groups || [];
 
-  const rows = groups.map(group => `
-    <tr>
-      <td><b>${esc(group.label_ko)}</b><br>
-          <span class="iinfo-sub">${esc((group.signatures || []).join(", "))}</span></td>
-      <td>${esensGaugeHtml(group)}</td>
+  const rows = groups.map(group => {
+    const level = _esensDraft.groups[group.id] || 3;
+    const custom = (group.keys || []).some(
+      k => typeof _esensDraft.manual[k.key] === "number");
+    const fixed = !!group.gauge_fixed;
+    return `<tr>
+      <td class="esens-name" title="${esc(group.label_ko || "")}">${esensGroupName(group)}</td>
+      <td>${esensGaugeHtml(custom ? ESENS_CUSTOM : level,
+                           { group: group.id, fixed })}</td>
       <td>${esensValuesHtml(group, editable)}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   document.getElementById("esensBody").innerHTML = groups.length ? `
-    <table class="iinfo-table">
-      <thead><tr><th>Signature</th><th style="width:1%;">민감도</th><th>Threshold</th></tr></thead>
+    <table class="iinfo-table esens-table">
+      <thead><tr><th>SIGNATURE</th><th style="width:1%;">민감도</th><th>Threshold</th></tr></thead>
       <tbody>
-        <tr class="iinfo-grouprow"><td colspan="3">
-          전체 &nbsp;${ESENS_LEVEL_LABELS.map((label, i) =>
-            `<button class="esens-step${_esensDraft.global === i + 1 ? " on" : ""}" `
-            + `data-all="${i + 1}" title="${esc(label)}">${i + 1}</button>`).join("")}
-          &nbsp;<span class="iinfo-sub">1 rough(덜 발화) ← 3 기본 → 5 tight(더 발화)</span>
-        </td></tr>
+        <tr class="iinfo-grouprow"><td>ALL</td>
+          <td>${esensGaugeHtml(_esensDraft.global)}</td>
+          <td><span class="iinfo-sub">1 rough(덜 발화) ← 3 기본 → 5 tight(더 발화)</span></td>
+        </tr>
         ${rows}
       </tbody>
     </table>
@@ -163,8 +183,9 @@ function esensBindHelp() {
 }
 
 function esensOnBodyClick(e) {
-  const step = e.target.closest(".esens-step");
-  if (!step || step.disabled) return;
+  const step = e.target.closest(".esens-stop");
+  // data-level/data-all 이 없는 칸 = 사용자설정 또는 고정 그룹 — 클릭으로 못 간다.
+  if (!step || (!step.dataset.all && !step.dataset.level)) return;
   if (step.dataset.all) {
     const level = Number(step.dataset.all);
     _esensDraft.global = level;

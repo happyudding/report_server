@@ -2462,21 +2462,47 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
 .iinfo-sub { font-size: 11px; color: #8a95a3; font-weight: 400; }
 
 /* ── AI Comment 민감도(게이지) 모달 — 표 골격은 .iinfo-* 재사용 ─────────────── */
-/* 게이지 셀은 단계 5개가 한 줄에 들어가야 한다(줄바꿈되면 어느 단계인지 못 읽는다). */
-.esens-gauge { display: inline-flex; gap: 2px; align-items: center; }
-.esens-step {
-  min-width: 26px; padding: 3px 0; border: 1px solid #d8dee6; background: #fff;
-  cursor: pointer; font-size: 11px; line-height: 1; border-radius: 5px; color: #556;
+/* ○─○─○─○─○─○ 눈금 게이지. 눈금 사이 선은 ::before 로 그려 마크업을 늘리지 않는다.
+   마지막 칸은 '사용자설정'(값 직접 입력 시 도달) — 클릭 대상이 아니라 커서도 기본이다. */
+.esens-gauge { display: inline-flex; align-items: flex-start; padding: 2px 0; }
+.esens-stop {
+  position: relative; display: inline-flex; flex-direction: column; align-items: center;
+  width: 50px; cursor: pointer; user-select: none;
 }
-.esens-step.on { background: #2f6fd0; border-color: #2f6fd0; color: #fff; font-weight: 700; }
-.esens-step:disabled { cursor: default; opacity: .5; }
-.esens-custom { font-size: 11px; color: #7a6a2a; margin-left: 6px; white-space: nowrap; }
+.esens-stop:last-child { width: 62px; cursor: default; }
+.esens-stop::before {                      /* 왼쪽 이웃과 잇는 선 */
+  content: ""; position: absolute; top: 6px; right: 50%; left: -50%; height: 2px;
+  background: #c3ccd8;
+}
+.esens-stop:first-child::before { display: none; }
+.esens-dot {
+  width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid #b6c0cc;
+  background: #fff; position: relative; z-index: 1;
+}
+.esens-stop em {
+  font-style: normal; font-size: 10px; color: #98a2b0; margin-top: 3px; white-space: nowrap;
+}
+.esens-stop.on .esens-dot { background: #2f6fd0; border-color: #2559a8; transform: scale(1.25); }
+.esens-stop.on em { color: #2559a8; font-weight: 700; }
+.esens-stop.custom.on .esens-dot { background: #b8860b; border-color: #8a6508; }
+.esens-stop.custom.on em { color: #8a6508; }
+.esens-gauge.off .esens-stop { cursor: default; }
+.esens-gauge.off .esens-dot { background: #f2f4f7; border-color: #d5dae1; }
+.esens-gauge.off .esens-stop::before { background: #e2e6ec; }
+.esens-gauge.off em { color: #c6ccd4; }
+/* threshold 는 세로로 쌓는다 — 키 이름이 길어 가로로 늘어놓으면 줄이 접힌다. */
+.esens-kv { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
 .esens-val {
-  width: 82px; padding: 3px 5px; border: 1px solid #d8dee6; border-radius: 5px;
+  width: 80px; padding: 2px 5px; border: 1px solid #d8dee6; border-radius: 5px;
   font-size: 12px; font-variant-numeric: tabular-nums; text-align: right;
 }
 .esens-val.changed { border-color: #2f6fd0; background: #f0f6ff; font-weight: 600; }
-.esens-key { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.esens-key {
+  font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+  width: 200px; flex: none; color: #445;
+}
+.esens-name { font-weight: 700; font-size: 11px; line-height: 1.5; vertical-align: top; }
+.esens-table td { vertical-align: top; padding: 4px 9px; }
 .esens-help {
   margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12px;
   background: #f4f7fb; border: 1px solid #dfe6ef; color: #445; min-height: 18px;
@@ -2661,12 +2687,19 @@ html[data-theme="dark"] .iinfo-table tbody tr:nth-child(even) td { background: #
 html[data-theme="dark"] .iinfo-grouprow td { background: #2b313b !important; color: #c7d2e0; }
 html[data-theme="dark"] .iinfo-note { background: #38301b; border-color: #6e5326; color: #e8c96a; }
 html[data-theme="dark"] .iinfo-table td.iinfo-none { color: #6b7280; }
-html[data-theme="dark"] .esens-step { background: #262a33; border-color: #3a3f4b; color: #b9c0cc; }
-html[data-theme="dark"] .esens-step.on { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+html[data-theme="dark"] .esens-dot { background: #262a33; border-color: #4a505c; }
+html[data-theme="dark"] .esens-stop::before { background: #3a3f4b; }
+html[data-theme="dark"] .esens-stop.on .esens-dot { background: #4d8ae0; border-color: #6ea6f0; }
+html[data-theme="dark"] .esens-stop.on em { color: #8fbcf5; }
+html[data-theme="dark"] .esens-stop.custom.on .esens-dot { background: #d8b85a; border-color: #efd48a; }
+html[data-theme="dark"] .esens-stop.custom.on em { color: #d8b85a; }
+html[data-theme="dark"] .esens-gauge.off .esens-dot { background: #22262e; border-color: #33373f; }
+html[data-theme="dark"] .esens-gauge.off .esens-stop::before { background: #2a2e37; }
+html[data-theme="dark"] .esens-stop em { color: #7b8492; }
+html[data-theme="dark"] .esens-key { color: #b9c0cc; }
 html[data-theme="dark"] .esens-val { background: #1b1e24; border-color: #3a3f4b; color: #d7dbe2; }
 html[data-theme="dark"] .esens-val.changed { border-color: #4d8ae0; background: #1d2a3d; }
 html[data-theme="dark"] .esens-help { background: #1f232b; border-color: #33373f; color: #b9c0cc; }
-html[data-theme="dark"] .esens-custom { color: #d8b85a; }
 html[data-theme="dark"] .rawdl-menu { background: #1b1e24; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 html[data-theme="dark"] .rawdl-menu-title { color: #8b93a1; }
 html[data-theme="dark"] .rawdl-item { color: #d5d9e0; }

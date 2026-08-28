@@ -101,10 +101,21 @@ _HARNESS = """
   const body = document.getElementById('esensBody');
   out.rows = body.querySelectorAll('tbody tr').length;
   out.inputs = body.querySelectorAll('input.esens-val').length;
-  out.fixed_disabled =
-    body.querySelectorAll('.esens-step[data-group="LOW_CPK"][disabled]').length;
+  // 고정 그룹(LOW_CPK)은 눈금에 data-level 이 없다 = 클릭 대상이 아니다.
+  out.fixed_clickable =
+    body.querySelectorAll('.esens-stop[data-group="LOW_CPK"][data-level]').length;
   out.gauge_on = body.querySelector(
-    '.esens-step[data-group="OUTLIER"][data-level="5"]').classList.contains('on');
+    '.esens-stop[data-group="OUTLIER"][data-level="5"]').classList.contains('on');
+  // 눈금은 6칸(1~5 + 사용자설정)이고 마지막 칸은 클릭으로 못 간다.
+  const outlierStops = body.querySelectorAll(
+    'tbody tr:nth-child(2) .esens-gauge .esens-stop');
+  out.stops = outlierStops.length;
+  out.custom_clickable = outlierStops.length
+    ? (outlierStops[outlierStops.length - 1].hasAttribute('data-level') ? 1 : 0) : -1;
+  out.custom_label = outlierStops.length
+    ? outlierStops[outlierStops.length - 1].textContent.trim() : '';
+  // 행 이름은 signature 영문 원문(한글 라벨 아님)
+  out.name_html = body.querySelector('tbody tr:nth-child(2) .esens-name').innerHTML;
   const keyEl = body.querySelector('[data-help="outlier_fail_mad_min"]');
   out.tooltip = keyEl ? String(keyEl.title || '') : '';
   out.save_shown = document.getElementById('esensSave').style.display !== 'none';
@@ -173,7 +184,7 @@ def test_static_wiring():
 def test_dark_theme_pairs():
     """(b) 신규 .esens-* 클래스마다 다크모드 짝이 있어야 한다(라이트에서만 보이는 UI 방지)."""
     html = _HTML.read_text(encoding="utf-8")
-    for cls in ("esens-step", "esens-val", "esens-help", "esens-custom"):
+    for cls in ("esens-dot", "esens-val", "esens-help", "esens-key"):
         assert f".{cls}" in html, f"{cls} 스타일 없음"
         assert re.search(r'html\[data-theme="dark"\][^\n]*\.' + cls, html), \
             f"{cls} 다크모드 짝 없음"
@@ -203,12 +214,18 @@ def test_build_spec(res):
 
 
 def test_render(res):
-    """(d) 렌더 — 전체 행 + 그룹 2행, 입력란, 고정 그룹 disabled, 선택 단계, 툴팁."""
-    assert res["rows"] == 3, f"전체행+그룹2 = 3행이어야 한다 (받은 값 {res['rows']})"
+    """(d) 렌더 — ALL 행 + 그룹 2행, 6칸 눈금, 고정 그룹/사용자설정 칸 클릭 불가, 툴팁."""
+    assert res["rows"] == 3, f"ALL행+그룹2 = 3행이어야 한다 (받은 값 {res['rows']})"
     assert res["inputs"] == 2, f"키 2개의 입력란 (받은 값 {res['inputs']})"
-    assert res["fixed_disabled"] == 5, \
-        f"gauge_fixed 그룹은 단계 5개가 전부 disabled (받은 값 {res['fixed_disabled']})"
+    assert res["stops"] == 6, f"눈금은 1~5 + 사용자설정 = 6칸 (받은 값 {res['stops']})"
+    assert res["custom_label"] == "사용자설정", res["custom_label"]
+    assert res["custom_clickable"] == 0, \
+        "'사용자설정' 칸은 클릭으로 갈 수 없어야 한다(값 직접 입력 시 도달하는 상태)"
+    assert res["fixed_clickable"] == 0, \
+        f"gauge_fixed 그룹 눈금은 클릭 대상이 아니어야 한다 (받은 값 {res['fixed_clickable']})"
     assert res["gauge_on"] is True, "선택 단계가 표시되지 않는다"
+    assert "OUTLIER" in res["name_html"], f"행 이름이 signature 영문이 아니다: {res['name_html']!r}"
+    assert "이상치" not in res["name_html"], f"한글 라벨이 행 이름에 남아 있다: {res['name_html']!r}"
     assert "무리 거리" in res["tooltip"], f"툴팁 설명 없음: {res['tooltip']!r}"
     assert res["save_shown"] is True, "편집 권한이 있으면 저장 버튼이 보여야 한다"
     print("  (d) 렌더 OK")

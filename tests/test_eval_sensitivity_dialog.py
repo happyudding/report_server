@@ -7,6 +7,8 @@
   · 게이지를 움직였는데 값 입력란이 안 따라오면, 사용자는 바뀐 줄 알고 저장하지만
     실제로는 옛 값이 실린다.
   · 직접 입력했는데 게이지 선택이 남아 있으면 어느 쪽이 적용됐는지 알 수 없다.
+  · '사용자설정' 칸이 클릭으로 선택되면 값 없이 그 상태가 되어 의미가 사라진다
+    (그 칸은 값을 직접 입력했을 때만 도달하는 **표시 전용** 상태다).
   · `resolve()` 가 게이지 3단계 키까지 실으면 **제품군 오버레이(/pe/eval)가 세션값에
     덮여 무력화**되고, 기본 세션의 캐시 키가 갈려 전 세션 콜드 재빌드가 된다.
 
@@ -29,7 +31,7 @@ os.environ["HONEY_CONFIG_DIR"] = tempfile.mkdtemp(prefix="honey_sens_test_")
 from PyQt6.QtWidgets import QApplication      # noqa: E402
 
 import eval_sensitivity                        # noqa: E402
-from honey_ui.dialogs import EvalSensitivityDialog   # noqa: E402
+from honey_ui.dialogs import EvalSensitivityDialog, GaugeSlider   # noqa: E402
 
 CATALOG = {
     "version": 1,
@@ -67,7 +69,7 @@ def test_initial_is_default():
     assert dlg._settings["global"] == 3
     assert _text(dlg, "OUTLIER", "outlier_fail_mad_min") == "4.0"
     assert _text(dlg, "LOW_CPK", "cpk_warn") == "1.33"
-    assert dlg._all_steps[2].isChecked(), "전체 게이지 3단계가 눌려 있어야 한다"
+    assert dlg._all_gauge.value() == 3, "전체 게이지가 3단계에 있어야 한다"
     print("  기본 상태 OK")
 
 
@@ -79,9 +81,10 @@ def test_group_gauge_updates_values_live():
     assert _text(dlg, "OUTLIER", "outlier_jump_ratio_min") == "0.282"
     # 다른 그룹은 그대로
     assert _text(dlg, "LOW_CPK", "cpk_warn") == "1.33"
-    assert dlg._rows["OUTLIER"]["steps"][4].isChecked()
+    assert dlg._rows["OUTLIER"]["gauge"].value() == 5
     # 그룹마다 단계가 달라졌으니 전체는 '사용자설정'(0)
     assert dlg._settings["global"] == 0
+    assert dlg._all_gauge.value() == GaugeSlider.CUSTOM
     print("  그룹 게이지 → 값 실시간 갱신 OK")
 
 
@@ -98,15 +101,58 @@ def test_all_gauge_syncs_every_group():
 
 
 def test_manual_input_switches_to_custom():
-    """값을 직접 고치면 그 줄이 '사용자설정'이 되고 게이지 선택이 풀린다."""
+    """값을 직접 고치면 그 줄의 게이지가 마지막 칸('사용자설정')으로 옮겨간다."""
     dlg = _dialog()
     edit = dlg._rows["OUTLIER"]["inputs"]["outlier_fail_mad_min"]
     edit.setText("2.5")
     dlg._on_value_edited("OUTLIER", "outlier_fail_mad_min")
     assert dlg._settings["manual"]["outlier_fail_mad_min"] == 2.5
-    assert dlg._rows["OUTLIER"]["mark"].text() == "사용자설정"
-    assert not any(b.isChecked() for b in dlg._rows["OUTLIER"]["steps"])
+    assert dlg._rows["OUTLIER"]["gauge"].value() == GaugeSlider.CUSTOM
+    # 같은 그룹의 다른 키는 게이지 값을 그대로 따른다(직접 입력한 키만 바뀐다).
+    assert _text(dlg, "OUTLIER", "outlier_jump_ratio_min") == "0.3"
     print("  직접 입력 → 사용자설정 전환 OK")
+
+
+def test_custom_stop_is_not_clickable():
+    """'사용자설정' 칸은 클릭으로 갈 수 없다 — 값을 직접 입력해야 도달하는 상태다."""
+    dlg = _dialog()
+    gauge = dlg._rows["OUTLIER"]["gauge"]
+    gauge.resize(360, 34)
+    seen = []
+    gauge.changed.connect(seen.append)
+
+    from PyQt6.QtCore import QPointF, Qt as _Qt
+    from PyQt6.QtGui import QMouseEvent
+
+    def click(index):
+        pos = QPointF(gauge._stop_x(index), 12)
+        gauge.mousePressEvent(QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress, pos, _Qt.MouseButton.LeftButton,
+            _Qt.MouseButton.LeftButton, _Qt.KeyboardModifier.NoModifier))
+
+    click(4)                       # 5단계 = 정상 선택
+    assert seen == [5], seen
+    click(5)                       # 사용자설정 칸 = 무시
+    assert seen == [5], f"사용자설정 칸이 클릭으로 선택됐다: {seen}"
+    print("  사용자설정 칸 클릭 불가 OK")
+
+
+def test_fixed_group_gauge_ignores_clicks():
+    """gauge_fixed 그룹은 클릭 자체가 먹지 않는다(직접 입력만)."""
+    dlg = _dialog()
+    gauge = dlg._rows["LOW_CPK"]["gauge"]
+    gauge.resize(360, 34)
+    seen = []
+    gauge.changed.connect(seen.append)
+
+    from PyQt6.QtCore import QPointF, Qt as _Qt
+    from PyQt6.QtGui import QMouseEvent
+    gauge.mousePressEvent(QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, QPointF(gauge._stop_x(0), 12),
+        _Qt.MouseButton.LeftButton, _Qt.MouseButton.LeftButton,
+        _Qt.KeyboardModifier.NoModifier))
+    assert seen == [], f"고정 그룹 게이지가 움직였다: {seen}"
+    print("  고정 그룹 클릭 무시 OK")
 
 
 def test_manual_equal_to_gauge_is_dropped():
@@ -122,9 +168,37 @@ def test_manual_equal_to_gauge_is_dropped():
 def test_fixed_group_gauge_disabled():
     """gauge_fixed 그룹(LOW_CPK)은 게이지가 비활성 — 직접 입력만 허용."""
     dlg = _dialog()
-    assert all(not b.isEnabled() for b in dlg._rows["LOW_CPK"]["steps"])
-    assert "직접 입력" in dlg._rows["LOW_CPK"]["mark"].text()
+    assert dlg._rows["LOW_CPK"]["gauge"]._enabled is False
+    assert "직접 입력" in dlg._rows["LOW_CPK"]["gauge"].toolTip()
     print("  고정 그룹 게이지 비활성 OK")
+
+
+def test_row_shows_signature_names():
+    """행 이름은 **SIGNATURE 영문 원문** — 한글 설명이 아니다(2026-08-28 사용자 지시)."""
+    dlg = _dialog()
+    labels = {}
+    for r in range(dlg._grid.rowCount()):
+        item = dlg._grid.itemAtPosition(r, 0)
+        if item is not None and item.widget() is not None:
+            labels[r] = item.widget().text()
+    joined = " ".join(labels.values())
+    assert "OUTLIER" in joined and "LOW_CPK" in joined, joined
+    assert "이상치" not in joined and "공정능력" not in joined, \
+        f"한글 라벨이 행 이름에 남아 있다: {joined}"
+    print("  행 이름 = signature 영문 OK")
+
+
+def test_thresholds_are_stacked_vertically():
+    """threshold 는 세로로 쌓인다 — 키 2개면 서로 다른 y 좌표에 놓인다."""
+    dlg = _dialog()
+    dlg.resize(760, 900)
+    dlg.show()
+    QApplication.processEvents()
+    ys = {k: e.mapTo(dlg, e.rect().topLeft()).y()
+          for k, e in dlg._rows["OUTLIER"]["inputs"].items()}
+    dlg.hide()
+    assert len(set(ys.values())) == 2, f"세로로 안 쌓였다: {ys}"
+    print("  threshold 세로 나열 OK")
 
 
 def test_tooltip_uses_server_help():
@@ -181,8 +255,12 @@ if __name__ == "__main__":
     test_group_gauge_updates_values_live()
     test_all_gauge_syncs_every_group()
     test_manual_input_switches_to_custom()
+    test_custom_stop_is_not_clickable()
+    test_fixed_group_gauge_ignores_clicks()
     test_manual_equal_to_gauge_is_dropped()
     test_fixed_group_gauge_disabled()
+    test_row_shows_signature_names()
+    test_thresholds_are_stacked_vertically()
     test_tooltip_uses_server_help()
     test_resolve_payload_rules()
     test_settings_roundtrip()

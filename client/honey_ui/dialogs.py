@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QStringListModel, pyqtSignal
+from PyQt6.QtCore import Qt, QPoint, QRect, QStringListModel, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QCompleter,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -304,16 +306,122 @@ class ColorEditorDialog(QDialog):
         self.accept()
 
 
+class GaugeSlider(QWidget):
+    """1~5 + 사용자설정 6단계 눈금 슬라이더 (○─○─○─○─○─○).
+
+    QSlider 를 쓰지 않는 이유: 마지막 칸이 숫자 단계가 아니라 **'사용자설정'** 이라
+    연속 값이 아니고, 그 칸은 사용자가 직접 고를 수 없는 *표시 전용* 상태다(값을 직접
+    입력해야 그리로 간다). 그래서 눈금 6개를 직접 그리고 클릭한 칸을 고른다.
+
+    value: 1~5 = 그 단계, 0 = 사용자설정(마지막 칸).
+    """
+
+    CUSTOM = 0
+    LEVELS = 5
+    STOPS = 6
+    _PAD = 26          # 좌우 여백 — 라벨이 눈금 밖으로 안 나가게
+    _RADIUS = 6
+
+    changed = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = eval_sensitivity.DEFAULT_LEVEL
+        self._enabled = True
+        self.setFixedHeight(32)
+        # 눈금 6개 + '사용자설정' 라벨이 겹치지 않는 최소 폭. 고정폭인 이유는 행마다
+        # 눈금 위치가 같아야 세로로 훑을 때 단계가 한눈에 비교되기 때문이다.
+        self.setFixedWidth(300)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def value(self):
+        return self._value
+
+    def setValue(self, value):
+        self._value = value if value in range(0, self.LEVELS + 1) else self.CUSTOM
+        self.update()
+
+    def setGaugeEnabled(self, on):
+        """게이지 고정 그룹(LOW_CPK)은 클릭을 막고 흐리게 그린다."""
+        self._enabled = bool(on)
+        self.setCursor(Qt.CursorShape.PointingHandCursor if on
+                       else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def _stop_x(self, index):
+        span = max(1, self.width() - 2 * self._PAD)
+        return self._PAD + span * index / (self.STOPS - 1)
+
+    def _index_of_value(self):
+        return self.STOPS - 1 if self._value == self.CUSTOM else self._value - 1
+
+    def mousePressEvent(self, event):
+        if not self._enabled:
+            return
+        x = event.position().x()
+        idx = min(range(self.STOPS), key=lambda i: abs(self._stop_x(i) - x))
+        # 마지막 칸(사용자설정)은 클릭으로 못 간다 — 값을 직접 입력해야 도달하는 상태다.
+        # 클릭을 무시하지 않고 안내하면 "왜 안 눌리지" 를 없앨 수 있지만, 창이 조용한 편이
+        # 나아 여기서는 그냥 무시한다(라벨이 회색이라 눌리지 않음이 보인다).
+        if idx >= self.LEVELS:
+            return
+        self._value = idx + 1
+        self.update()
+        self.changed.emit(self._value)
+
+    def paintEvent(self, _event):
+        from PyQt6.QtGui import QPainter, QPen, QBrush
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        y = 12
+        line = QColor("#c3ccd8") if self._enabled else QColor("#e2e6ec")
+        p.setPen(QPen(line, 2))
+        p.drawLine(int(self._stop_x(0)), y, int(self._stop_x(self.STOPS - 1)), y)
+
+        active = self._index_of_value()
+        for i in range(self.STOPS):
+            x = int(self._stop_x(i))
+            on = (i == active)
+            custom_stop = (i == self.STOPS - 1)
+            if not self._enabled:
+                fill, edge = QColor("#f2f4f7"), QColor("#d5dae1")
+            elif on and custom_stop:
+                fill, edge = QColor("#b8860b"), QColor("#8a6508")   # 사용자설정 = 다른 색
+            elif on:
+                fill, edge = QColor("#2f6fd0"), QColor("#2559a8")
+            else:
+                fill, edge = QColor("#ffffff"), QColor("#b6c0cc")
+            p.setPen(QPen(edge, 1.5))
+            p.setBrush(QBrush(fill))
+            r = self._RADIUS + (2 if on else 0)
+            p.drawEllipse(QPoint(x, y), r, r)
+
+            label = "사용자설정" if custom_stop else str(i + 1)
+            if self._enabled and on:
+                p.setPen(QPen(QColor("#8a6508") if custom_stop else QColor("#2559a8")))
+            else:
+                p.setPen(QPen(QColor("#98a2b0") if self._enabled else QColor("#c6ccd4")))
+            f = p.font()
+            f.setPointSize(8)
+            f.setBold(on)
+            p.setFont(f)
+            rect = QRect(x - 34, y + 9, 68, 14)
+            p.drawText(rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
+                       label)
+        p.end()
+
+
 class EvalSensitivityDialog(QDialog):
     """AI Comment 민감도 게이지 — signature 그룹별 rough(1)~tight(5) + 값 직접 입력.
 
-    한 그룹 = 한 줄이다: [이름] [1..5 게이지] [사용자설정] [threshold 키별 값 입력란].
-    그룹 8개가 한 화면에 다 보여야 하므로(사용자 지정) 접이식이 아니라 가로로 넓은 창이다.
+    한 그룹 = 한 행이다: [SIGNATURE 영문] [6단계 슬라이더] [threshold 를 **세로로** 나열].
+    그룹 8개가 한 화면에 다 보여야 하므로(사용자 지정) 접이식이 아니라 큰 창이고,
+    threshold 가 세로라 창은 가로보다 **세로로** 길다.
 
     상호작용 3가지:
       · 전체 게이지를 움직이면 전 그룹이 그 단계로 따라간다(직접 입력도 해제).
       · 그룹 게이지를 움직이면 그 줄의 값 입력란이 **즉시** 그 단계 값으로 바뀐다.
-      · 값을 직접 고치면 그 줄이 '사용자설정'으로 바뀐다(게이지 선택 해제).
+      · 값을 직접 고치면 그 줄이 '사용자설정' 칸으로 옮겨간다(게이지 선택 해제).
 
     ⚠ 단계표(레벨별 숫자)를 여기 복제하지 않는다 — 정본은 서버
     `eval_analyzer/eval_engine/rules/sensitivity.yaml` 이고 카탈로그로 받아온다.
@@ -321,17 +429,25 @@ class EvalSensitivityDialog(QDialog):
     """
 
     LEVELS = 5
+    NAME_WIDTH = 150          # SIGNATURE 영문 원문이 안 잘리는 폭
+    KEY_WIDTH = 196           # 가장 긴 키(subpop_density_gap_strong) 기준
     _catalog_ready = pyqtSignal(object, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI Comment 민감도")
+        # 폭은 (이름 150 + 게이지 300 + 키 196 + 값 76 + 기본값 힌트) 합이 들어가는 값이다 —
+        # 모자라면 가로 스크롤바가 생겨 값 입력란이 화면 밖으로 밀린다.
+        # 높이는 내용에 맞춰 `_fit_height()` 가 정한다(그룹 수·키 수는 카탈로그가 정하므로
+        # 고정값으로 두면 아래가 텅 비거나 잘린다).
+        self.resize(880, 640)
         self._settings = eval_sensitivity.load_settings()
         self._catalog = eval_sensitivity.load_cached_catalog()
         self._rows = {}          # group_id → {"steps": [...], "inputs": {key: QLineEdit}}
         self._loading = QLabel("서버에서 민감도 기준을 불러오는 중…")
 
         root = QVBoxLayout(self)
+        root.setSpacing(6)
         info = QLabel(
             "AI Comment 가 이슈를 얼마나 민감하게 잡을지 정합니다. "
             "1 rough(굵직한 것만) ← 3 기본 → 5 tight(꼼꼼히). "
@@ -341,21 +457,39 @@ class EvalSensitivityDialog(QDialog):
         root.addWidget(info)
 
         all_row = QHBoxLayout()
-        all_row.addWidget(QLabel("<b>전체</b>"))
-        self._all_steps = self._make_steps(lambda lv: self._on_all(lv))
-        for b in self._all_steps:
-            all_row.addWidget(b)
-        btn_reset = QPushButton("기본값(3단계)으로 초기화")
+        lbl_all = QLabel("ALL")
+        lbl_all.setFixedWidth(self.NAME_WIDTH)
+        lbl_all.setStyleSheet("font-weight:700;")
+        all_row.addWidget(lbl_all)
+        self._all_gauge = GaugeSlider()
+        self._all_gauge.changed.connect(self._on_all)
+        all_row.addWidget(self._all_gauge)
+        btn_reset = QPushButton("초기화")
+        btn_reset.setFixedWidth(70)
         btn_reset.clicked.connect(lambda: self._on_all(eval_sensitivity.DEFAULT_LEVEL))
-        all_row.addSpacing(12)
         all_row.addWidget(btn_reset)
         all_row.addStretch(1)
         root.addLayout(all_row)
 
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("color:#dfe3e9;")
+        root.addWidget(line)
+
+        # 그룹이 8개 + threshold 세로 나열이라 세로가 길다 — 화면보다 길어지면 스크롤한다.
         self._grid = QGridLayout()
-        self._grid.setHorizontalSpacing(10)
-        self._grid.setVerticalSpacing(6)
-        root.addLayout(self._grid)
+        self._grid.setHorizontalSpacing(12)
+        self._grid.setVerticalSpacing(2)
+        inner = QWidget()
+        inner.setLayout(self._grid)
+        self._scroll = QScrollArea()
+        self._scroll.setWidget(inner)
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # 가로 스크롤은 끄고 세로만 쓴다 — 가로로 밀리면 값 입력란이 화면 밖으로 나간다.
+        self._scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root.addWidget(self._scroll, 1)
         root.addWidget(self._loading)
 
         self._help = QLabel(" ")
@@ -401,18 +535,15 @@ class EvalSensitivityDialog(QDialog):
         self._build_rows()
 
     # ── 행 구성 ─────────────────────────────────────────────────────────────
-    def _make_steps(self, on_click):
-        """1~5 단계 버튼 5개. 체크형이라 현재 단계가 눌린 상태로 보인다."""
-        buttons = []
-        for level in range(1, self.LEVELS + 1):
-            b = QPushButton(str(level))
-            b.setCheckable(True)
-            b.setFixedWidth(30)
-            b.setToolTip({1: "1 rough — 덜 발화", 3: "3 기본(현행)",
-                          5: "5 tight — 더 발화"}.get(level, f"{level} 단계"))
-            b.clicked.connect(lambda _c, lv=level: on_click(lv))
-            buttons.append(b)
-        return buttons
+    def _signature_label(self, group) -> str:
+        """행 이름 = **SIGNATURE 영문 원문**. 한 그룹이 여러 룰이면 줄바꿈해 전부 보인다.
+
+        한글 설명을 빼는 이유(2026-08-28 사용자 지시): 화면 어디서나 signature 는 영문
+        원문으로 나오는데(Issue Table Signature 컬럼·`/pe/eval` 트레이스) 여기만 한글이면
+        같은 것을 가리키는지 알기 어렵다.
+        """
+        sigs = [str(s) for s in (group.get("signatures") or []) if s]
+        return "<br>".join(sigs) or str(group.get("id") or "")
 
     def _build_rows(self):
         while self._grid.count():
@@ -423,57 +554,83 @@ class EvalSensitivityDialog(QDialog):
         self._rows = {}
         for r, group in enumerate(self._catalog.get("groups") or []):
             gid = str(group.get("id") or "")
-            name = QLabel(f"<b>{group.get('label_ko') or gid}</b>")
-            name.setToolTip(", ".join(group.get("signatures") or []))
+            fixed = bool(group.get("gauge_fixed"))
+
+            name = QLabel(self._signature_label(group))
+            name.setFixedWidth(self.NAME_WIDTH)
+            name.setStyleSheet("font-weight:700; font-size:11px;")
+            name.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            name.setToolTip(str(group.get("label_ko") or gid))
             self._grid.addWidget(name, r, 0)
 
-            gauge = QHBoxLayout()
-            gauge.setSpacing(2)
-            steps = self._make_steps(lambda lv, g=gid: self._on_group(g, lv))
-            fixed = bool(group.get("gauge_fixed"))
-            for b in steps:
-                b.setEnabled(not fixed)
-                gauge.addWidget(b)
-            holder = QWidget()
-            holder.setLayout(gauge)
-            self._grid.addWidget(holder, r, 1)
+            gauge = GaugeSlider()
+            gauge.setGaugeEnabled(not fixed)
+            gauge.changed.connect(lambda lv, g=gid: self._on_group(g, lv))
+            gauge.setToolTip("게이지 고정 — 값 직접 입력만 가능합니다." if fixed
+                             else "1 rough(덜 발화) ← 3 기본 → 5 tight(더 발화)")
+            self._grid.addWidget(gauge, r, 1,
+                                 Qt.AlignmentFlag.AlignTop)
 
-            mark = QLabel("게이지 고정 · 직접 입력만" if fixed else "")
-            mark.setStyleSheet("color:#7a6a2a; font-size:11px;")
-            self._grid.addWidget(mark, r, 2)
-
-            values = QHBoxLayout()
-            values.setSpacing(10)
+            # threshold 는 **세로로** 쌓는다 — 키 이름이 길어(subpop_density_gap_strong 등)
+            # 가로로 늘어놓으면 창 밖으로 밀리고, 키가 5개인 그룹(TAIL·BIMODALITY)은 줄이 접힌다.
+            values = QVBoxLayout()
+            values.setSpacing(1)
+            values.setContentsMargins(0, 0, 0, 4)
             inputs = {}
             for entry in group.get("keys") or []:
                 key = str(entry.get("key") or "")
+                help_text = self._help_text(key)
+                one = QHBoxLayout()
+                one.setSpacing(6)
                 label = QLabel(key)
-                label.setStyleSheet("font-family:Consolas,monospace; font-size:11px;")
-                label.setToolTip(self._help_text(key))
+                label.setFixedWidth(self.KEY_WIDTH)
+                label.setStyleSheet("font-family:Consolas,monospace; font-size:10px;"
+                                    "color:#445;")
+                label.setToolTip(help_text)
                 edit = QLineEdit()
-                edit.setFixedWidth(78)
+                edit.setFixedWidth(76)
+                edit.setFixedHeight(20)
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight)
-                edit.setToolTip(self._help_text(key))
+                edit.setToolTip(help_text)
                 edit.editingFinished.connect(
                     lambda k=key, g=gid: self._on_value_edited(g, k))
-                # 클릭(포커스)하면 하단 설명 바에 그 기준의 뜻을 띄운다.
+                # 클릭(포커스)·마우스오버 시 하단 설명 바에 그 기준의 뜻을 띄운다.
                 edit.installEventFilter(self)
                 edit.setProperty("threshold_key", key)
+                label.installEventFilter(self)
+                label.setProperty("threshold_key", key)
                 inputs[key] = edit
-                values.addWidget(label)
-                values.addWidget(edit)
+                one.addWidget(label)
+                one.addWidget(edit)
                 default = entry.get("default")
-                if default is not None:
-                    hint = QLabel(f"기본 {default}")
-                    hint.setStyleSheet("color:#8a95a3; font-size:11px;")
-                    values.addWidget(hint)
-            values.addStretch(1)
+                hint = QLabel(f"기본 {default}" if default is not None else "")
+                hint.setStyleSheet("color:#8a95a3; font-size:10px;")
+                one.addWidget(hint)
+                one.addStretch(1)
+                values.addLayout(one)
             vholder = QWidget()
             vholder.setLayout(values)
-            self._grid.addWidget(vholder, r, 3)
+            self._grid.addWidget(vholder, r, 2)
 
-            self._rows[gid] = {"steps": steps, "inputs": inputs, "mark": mark,
-                               "fixed": fixed}
+            self._rows[gid] = {"gauge": gauge, "inputs": inputs, "fixed": fixed}
+        self._grid.setRowStretch(self._grid.rowCount(), 1)
+        self._fit_height()
+
+    def _fit_height(self):
+        """내용 높이에 창을 맞춘다 — 화면보다 크면 화면에 맞추고 스크롤한다.
+
+        고정 높이로 두면 그룹·키 개수가 바뀔 때(카탈로그가 정한다) 아래가 텅 비거나
+        잘린다. 실제로 첫 렌더에서 아래 1/3 이 빈 공간이었다.
+        """
+        inner = self._scroll.widget()
+        if inner is None:
+            return
+        inner.adjustSize()
+        need = inner.sizeHint().height() + 8
+        screen = self.screen() if hasattr(self, "screen") else None
+        cap = int(screen.availableGeometry().height() * 0.86) if screen else 900
+        chrome = self.height() - self._scroll.height()      # 안내문·ALL·설명바·버튼
+        self.resize(self.width(), min(cap, need + max(chrome, 0)))
         self._refresh()
 
     def _help_text(self, key) -> str:
@@ -563,16 +720,13 @@ class EvalSensitivityDialog(QDialog):
     def _refresh(self):
         """설정 → 화면. 게이지 이동이 값 입력란에 **실시간**으로 반영되는 지점이다."""
         manual = self._settings.get("manual") or {}
-        gl = self._settings.get("global", eval_sensitivity.DEFAULT_LEVEL)
-        for i, b in enumerate(self._all_steps, start=1):
-            b.setChecked(i == gl)
+        self._all_gauge.setValue(
+            self._settings.get("global", eval_sensitivity.DEFAULT_LEVEL))
         for gid, row in self._rows.items():
             level = self._settings["groups"].get(gid, eval_sensitivity.DEFAULT_LEVEL)
             has_manual = any(k in manual for k in row["inputs"])
-            for i, b in enumerate(row["steps"], start=1):
-                b.setChecked((not has_manual) and (not row["fixed"]) and i == level)
-            if not row["fixed"]:
-                row["mark"].setText("사용자설정" if has_manual else "")
+            # 직접 입력이 하나라도 있으면 그 행은 마지막 칸(사용자설정)에 선다.
+            row["gauge"].setValue(GaugeSlider.CUSTOM if has_manual else level)
             for key, edit in row["inputs"].items():
                 value = manual.get(key, self._gauge_value(gid, key))
                 edit.blockSignals(True)
