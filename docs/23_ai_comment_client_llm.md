@@ -1,4 +1,4 @@
-# 23. AI Comment [점검제안] — 클라이언트 LLM 대행 (구현 의뢰서)
+# 23. AI Comment [제안] — 클라이언트 LLM 대행 (구현 의뢰서)
 
 > **상태**: 미구현 (설계 승인 완료, 2026-08-27). 아래 "프롬프트" 절 전문을 담당자
 > (또는 담당자의 Claude Code 세션)에게 그대로 전달하면 된다.
@@ -10,14 +10,14 @@
 
 ## 왜 이 작업이 필요한가
 
-AI Comment 의 `[점검제안]` 문장을 Claude Enterprise 로 만들고 싶은데, **서버 PC 에는
+AI Comment 의 `[제안]` 문장을 Claude Enterprise 로 만들고 싶은데, **서버 PC 에는
 Enterprise 자격증명이 없다**. Claude Enterprise 좌석은 API 키를 발급하지 않으므로 서버
 `EVAL_LLM_*` 로는 연결할 수 없다. 반면 사용자 PC 는 사내 **LLM Gateway** 권한이 있다
 (`gateway-cli login` 으로 개인 토큰 취득).
 
 따라서 **서버가 프롬프트를 만들어 주고, 업로더 PC 의 Honey 가 Gateway 호출을 대행해
 문장을 서버에 push** 하는 구조를 택한다. LLM 접점이 `llm_client.complete()` 한 곳뿐이고
-`[점검제안]` 만 LLM 산출물이며 실패 시 `action_ko` 폴백이 이미 구조적으로 존재해서,
+`[제안]` 만 LLM 산출물이며 실패 시 `action_ko` 폴백이 이미 구조적으로 존재해서,
 이 분리가 안전하게 성립한다.
 
 ---
@@ -29,7 +29,7 @@ Enterprise 자격증명이 없다**. Claude Enterprise 좌석은 API 키를 발�
 
 ### 목표
 
-AI Comment 의 3섹션(`[현상]/[과거사례]/[점검제안]`) 중 LLM 이 만드는 `[점검제안]` 문장을,
+AI Comment 의 3섹션(`[현상]/[과거사례]/[제안]`) 중 LLM 이 만드는 `[제안]` 문장을,
 서버(LLM 자격증명 없음) 대신 **업로드 직후 업로더 PC 의 Honey 클라이언트**가 사내
 LLM Gateway(사용자별 `gateway-cli login` 토큰)로 생성해 서버에 push 하고, 서버가 코멘트에
 병합하게 하라. 실패 시엔 지금처럼 룰 폴백(`action_ko`) 문장이 그대로 나와야 한다.
@@ -43,7 +43,10 @@ LLM Gateway(사용자별 `gateway-cli login` 토큰)로 생성해 서버에 push
 - LLM 접점은 단 한 곳: `eval_analyzer/eval_engine/pipeline/recommend.py` `make_comment()`
   → `llm_client.complete()` (OpenAI 호환 chat completions, env `EVAL_LLM_*`, 현재 미설정=off).
   off/실패 시 `suggestion = action_ko`. 최종 문자열:
-  `f"[현상] {phenomenon}\n[과거사례] {past_case} \n [점검제안] {suggestion}"` — **바이트 단위 불변 유지**.
+  `f"[현상] {phenomenon}\n[과거사례] {past_case} \n [제안] {suggestion}"` — **바이트 단위 불변 유지**.
+  ⚠ 마지막 섹션 토큰은 2026-08-28 에 `[점검제안]` → `[제안]` 으로 바뀌었다. **캐시에 굳은 옛
+  코멘트는 계속 `[점검제안]` 을 실어 오므로**, 이 문자열을 파싱하는 코드는 반드시 둘 다
+  받아야 한다(프런트 `sheets.js` 가 그렇게 돼 있다).
 - 서버 캐시: `web_report/service.py` `_ai_comment_cached()` — RAM `cache.AI_COMMENT_CACHE` →
   디스크 `disk_cache.load_ai_comment(upload_root, cache_policy.ai_comment_key(session))`
   (`aicmt` json.gz) → 미스면 `ai_comment.safe_build_ex()`. 키에 session_id/edits_rev 는
@@ -95,7 +98,8 @@ LLM Gateway(사용자별 `gateway-cli login` 토큰)로 생성해 서버에 push
   - `build_ai_comments` 가 `include_prompts=True` 호출, 대표 case 기준
     `result["prompts"] = {item: {"prompt", "sha"}}` 추가. `_EMPTY_RESULT` 에 `"prompts": {}`.
   - 순수 헬퍼 3개: `sanitize_suggestion`(개행·제어문자·섹션 토큰 제거, 500자 상한) /
-    `patch_suggestion_text`(`re.sub(r"\[점검제안\]\s*.*$", ...)` — 마지막 섹션만 치환,
+    `patch_suggestion_text`(`re.sub(r"\[(?:점검제안|제안)\]\s*.*$", ...)` — 마지막 섹션만 치환,
+    옛/새 토큰 **둘 다** 받는다(캐시에 굳은 옛 코멘트 때문),
     `[MAJOR][이봉]` 접두·앞 2섹션 보존) / `apply_suggestions(result, stored)`(sha 일치
     item 만 `key.endswith("|"+item)` 행 전부 패치 — Yield fan-out 포함, **항상 새 dict
     반환** — 캐시 공유 객체 in-place 수정 금지).
@@ -200,7 +204,7 @@ LLM Gateway(사용자별 `gateway-cli login` 토큰)로 생성해 서버에 push
 5. 클라 시뮬레이션: 가짜 OpenAI-shape 로컬 http 서버 + 로컬 report_server 로 worker 함수를
    스레드 없이 동기 실행(폴링→호출→push).
 6. e2e: Phase 0 확인 → honey.env 설정 → **Options 에서 AI Model=claude 선택** → 실업로드 →
-   build_log ai 잡 완료 → 클라 push 로그 → 리포트 새로고침 시 `[점검제안]` 이 LLM 문장인지 →
+   build_log ai 잡 완료 → 클라 push 로그 → 리포트 새로고침 시 `[제안]` 이 LLM 문장인지 →
    `/pe/eval` 룰 저장 후 재조회로 생존/폴백 확인. 그리고 **AI Model=default 업로드가 종전과
    동일**한지 대조. 서버 반영은 terminate.bat → start.bat (`.claude/skills/server-restart`).
    aicmt v3 는 ai 옵션 세션 한정 재평가라 전역 프리웜 불필요.

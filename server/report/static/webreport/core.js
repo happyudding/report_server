@@ -96,6 +96,41 @@ function cachePutCapped(store, order, key, value, max, onEvict) {
   }
 }
 
+// ── 탭 검색어 매칭 (전 탭 공통) ───────────────────────────────────────────────
+// 탭 안의 흰 검색칸이 전부 이 두 함수를 쓴다. `%` 를 와일드카드로 지원한다:
+//   "BB%ABC" → 문자열 어딘가에 BB 가 나오고 **그 뒤 어딘가에** ABC 가 나오면 매칭
+//              (= *BB*ABC*, 사이에 무슨 문자가 몇 개 들어가든 무관).
+// `%` 가 없으면 종전 그대로 단순 부분일치라 기존 동작이 바뀌지 않는다.
+//
+// 정규식으로 만들지 않는 이유: 항목명에 . ( ) [ ] + * 가 흔해 이스케이프 실수 하나로
+// 조용히 오매칭이 나고, 조각 순차 indexOf 가 수천 행 필터에서 더 싸다.
+//
+// searchTerms(q) → 소문자 조각 배열(빈 조각 제거). 빈 검색어면 빈 배열 = "필터 없음".
+//   "%ABC"·"ABC%"·"A%%B" 처럼 빈 조각이 생기는 형태는 그 조각만 무시한다.
+// searchMatch(text, terms) → 조각들이 **순서대로** 나타나면 true.
+function searchTerms(q) {
+  return String(q == null ? "" : q).trim().toLowerCase()
+    .split("%").map(s => s.trim()).filter(Boolean);
+}
+function searchMatch(text, terms) {
+  if (!terms || !terms.length) return true;
+  const s = String(text == null ? "" : text).toLowerCase();
+  let from = 0;
+  for (const t of terms) {
+    const i = s.indexOf(t, from);
+    if (i < 0) return false;
+    from = i + t.length;
+  }
+  return true;
+}
+// 여러 필드 중 **하나라도** 통째로 매칭하면 true (CPK 의 subject|source 처럼).
+// ⚠ 필드를 이어붙여 한 문자열로 만들면 안 된다 — "A%B" 가 subject 의 A 와 source 의 B
+//    로 갈라져 매칭되어 사용자가 의도하지 않은 행이 남는다.
+function searchMatchAny(texts, terms) {
+  if (!terms || !terms.length) return true;
+  return (texts || []).some(t => searchMatch(t, terms));
+}
+
 // ── 콜드 202 자동 재시도 fetch (scatter / STDF 등) ────────────────────────────
 // 서버가 202({building:true})를 주면 데이터 준비(tables 웜업·pack 생성)가 백그라운드에서
 // 도는 중이다 — 백오프로 재시도해 준비되는 즉시 결과를 돌려준다. 202 외 응답은 기존

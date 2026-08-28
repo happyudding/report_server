@@ -126,10 +126,11 @@ function cpkFilterRows(rows) {
   if (cpkHideCodeUnit)
     rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
   if (cpkSourceFilter.size) rows = rows.filter(r => cpkSourceFilter.has(String(r.source || "")));
-  const term = cpkSearchTerm.trim().toLowerCase();
-  if (!term) return rows;
-  return rows.filter(r => String(r.subject || "").toLowerCase().includes(term)
-    || String(r.source || "").toLowerCase().includes(term));
+  const terms = searchTerms(cpkSearchTerm);
+  if (!terms.length) return rows;
+  // subject 와 source 를 **각각** 통째로 본다 — 이어붙이면 "A%B" 가 두 필드에 걸쳐
+  // 매칭돼 의도치 않은 행이 남는다(core.js searchMatchAny 주석).
+  return rows.filter(r => searchMatchAny([r.subject, r.source], terms));
 }
 
 // CPK 행에서 등장 순서대로 중복 제거한 source 목록 (선택 바 옵션용).
@@ -190,8 +191,9 @@ function cpkTotalUnavailableReason() {
 //   (가상 통합 source)을 같은 종류로 오인했다. 해제는 헤더의 **버튼**으로 옮겨 형태로
 //   구분되게 했다.
 function cpkSourceMenuHtml(list, q) {
-  const term = String(q || "").trim().toLowerCase();
-  const rows = (list || []).filter(s => !term || String(s).toLowerCase().includes(term));
+  const terms = searchTerms(q);
+  const term = terms.length ? String(q).trim() : "";
+  const rows = (list || []).filter(s => searchMatch(s, terms));
   const row = (val, badge, name, why, checked, title, off) =>
     (off
       ? `<div class="dist-sug-item cpk-sug-total is-off" title="${esc(title)}">` +
@@ -208,7 +210,7 @@ function cpkSourceMenuHtml(list, q) {
   // 구분은 왼쪽 배지와 옅은 배경뿐이다.
   const why = cpkTotalUnavailableReason();
   let totalHtml = "";
-  if (!term || CPK_TOTAL_SOURCE.toLowerCase().includes(term)) {
+  if (searchMatch(CPK_TOTAL_SOURCE, terms)) {
     if (cpkTotalRows().length)
       totalHtml = row(CPK_TOTAL_PICK, "통합", CPK_TOTAL_SOURCE, "전 source 통합 통계",
         cpkShowTotal,
@@ -286,9 +288,9 @@ function cpkTotalDisplayRows() {
     rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
   if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));
   else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));
-  const term = cpkSearchTerm.trim().toLowerCase();
-  if (term) rows = rows.filter(r => String(r.subject || "").toLowerCase().includes(term)
-    || CPK_TOTAL_SOURCE.toLowerCase().includes(term));
+  const terms = searchTerms(cpkSearchTerm);
+  if (terms.length)
+    rows = rows.filter(r => searchMatchAny([r.subject, CPK_TOTAL_SOURCE], terms));
   return rows;
 }
 

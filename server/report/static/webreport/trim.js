@@ -210,13 +210,19 @@ function trimItemChip(name, itemsMap, canEdit) {
   return `<span class="trim-chip" data-item="${esc(name)}"${draggable} title="${esc(name)}">${ovr}${esc(name)}${reset}</span>`;
 }
 
+// 그룹 1건이 검색어에 걸리는지 — 그룹명 **또는** 소속 항목명 하나가 통째로 매칭.
+// `%` 와일드카드는 core.js searchMatchAny 규약을 따른다(필드를 이어붙이지 않는다).
+// ① 매칭 카드 · ② 산포 · ③ 리포트 세 검색이 이 하나를 공유한다.
+function trimGroupMatches(g, terms) {
+  return searchMatchAny([g.id, ...(g.members || [])], terms);
+}
+
 // 카드 검색 필터 — 그룹명 또는 소속 항목명 부분일치 (대소문자 무시).
 function trimMatchFilteredGroups(p) {
-  const q = (trimState.matchSearch || "").trim().toLowerCase();
+  const terms = searchTerms(trimState.matchSearch);
   const groups = p.groups || [];
-  if (!q) return groups;
-  return groups.filter(g => String(g.id).toLowerCase().includes(q) ||
-    (g.members || []).some(m => String(m).toLowerCase().includes(q)));
+  if (!terms.length) return groups;
+  return groups.filter(g => trimGroupMatches(g, terms));
 }
 
 function renderTrimMatch(body, p) {
@@ -289,7 +295,9 @@ function renderTrimMatch(body, p) {
     const status = i.group ? (slotTxt ? `${i.group} · ${slotTxt}` : i.group)
       : (i.excluded ? "제외" : "미배정");
     const metaCls = i.group ? " assigned" : (i.excluded ? " excl" : "");
-    const key = `${i.name} ${i.group || ""} ${i.normalized || ""}`.toLowerCase();
+    // 검색 대상 3필드를 U+001F 로 **구분해** 담는다(공백 연결 금지) — 이어붙이면
+    // "A%B" 가 name 의 A 와 group 의 B 로 갈라져 매칭된다(core.js searchMatchAny 주석).
+    const key = [i.name, i.group || "", i.normalized || ""].join("\u001f").toLowerCase();
     return `<div class="trim-palette-item${i.group ? "" : " is-unassigned"}" data-name="${esc(key)}">
       ${trimItemChip(i.name, itemsMap, canEdit)}
       <span class="trim-palette-meta${metaCls}" title="${esc(status)}">${esc(status)}</span>
@@ -376,10 +384,13 @@ function renderTrimMatch(body, p) {
   // 검색 표시 + 카운트 — 카운트는 현재 모드(미배정 숨김 여부)에서 셀 수 있는 항목만 센다.
   // display 는 전 항목에 걸되, 숨김 모드의 미배정은 CSS 규칙이 인라인 "" 를 계속 이긴다.
   const applyPaletteFilter = () => {
-    const q = psearch ? psearch.value.trim().toLowerCase() : "";
+    const terms = psearch ? searchTerms(psearch.value) : [];
+    const q = terms.length ? psearch.value.trim() : "";
     let vis = 0, total = 0;
     body.querySelectorAll(".trim-palette-item").forEach(el => {
-      const match = !q || (el.dataset.name || "").includes(q);
+      // data-name 은 name/group/normalized 를 U+001F 로 구분해 담아 둔 것(위 참조).
+      // 필드별로 매칭해야 "A%B" 가 두 필드에 걸쳐 걸리지 않는다.
+      const match = searchMatchAny((el.dataset.name || "").split("\u001f"), terms);
       el.style.display = match ? "" : "none";
       if (trimState.showUnassigned || !el.classList.contains("is-unassigned")) {
         total++;
@@ -772,12 +783,11 @@ function trimPageWindow(page, pageCount) {
 }
 
 function trimScatterSuggestions(q, allGroups) {
-  const term = String(q || "").trim().toLowerCase();
-  if (!term) return [];
+  const terms = searchTerms(q);
+  if (!terms.length) return [];
   const out = [];
   for (const g of allGroups) {
-    if (String(g.id).toLowerCase().includes(term) ||
-        (g.members || []).some(m => String(m).toLowerCase().includes(term))) {
+    if (trimGroupMatches(g, terms)) {
       out.push(g);
       if (out.length >= 30) break;
     }
@@ -1026,9 +1036,8 @@ function trimApplyFilter(p) {
   else if (f === "noverify") out = out.filter(g => !g.flags.has_verify);
   else if (f === "cpk") out = out.filter(g => g.cpk_warn);
   else if (f === "shift") out = out.filter(g => g.shift && g.shift.is_shift);
-  const q = (trimState.search || "").trim().toLowerCase();
-  if (q) out = out.filter(g => g.id.toLowerCase().includes(q) ||
-    (g.members || []).some(m => m.toLowerCase().includes(q)));
+  const terms = searchTerms(trimState.search);
+  if (terms.length) out = out.filter(g => trimGroupMatches(g, terms));
   return out;
 }
 

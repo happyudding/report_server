@@ -133,7 +133,7 @@ def _source_only_comment(ev: dict) -> str:
                   f"{ev['dominant_phenomenon']}")
     return (f"[현상] {text.get('phenomenon_ko') or phenomenon}\n"
             f"[과거사례] {recommend._NO_PRECEDENT_TEXT}\n"
-            f"[점검제안] {text.get('action_ko') or _DEFAULT_ACTION}")
+            f"[제안] {text.get('action_ko') or _DEFAULT_ACTION}")
 
 
 def _persist_comment(ev: dict, engine_version) -> int:

@@ -24,7 +24,7 @@
 | `db_input/ai_extract.py` `extract_rows_from_text()` | ⬜ 비어 있음 | 검증(`validate_rows`)·CSV 변환·적재는 완성이라 **rows JSON 만 만들면 된다** |
 
 `complete()` 를 채운 곳은 **엔진의 유일한 LLM 출구**이고, 소비자는
-`pipeline/recommend.py` `make_comment()` 의 `[점검제안]` 섹션 하나뿐이다.
+`pipeline/recommend.py` `make_comment()` 의 `[제안]` 섹션 하나뿐이다.
 
 ---
 
@@ -60,7 +60,7 @@ EVAL_LLM_TIMEOUT=30
 
 ## 3. 켜면 무엇이 달라지나
 
-- **AI Comment 의 `[점검제안]` 문장**이 룰의 `action_ko` 문구 → LLM 합성으로 바뀐다.
+- **AI Comment 의 `[제안]` 문장**이 룰의 `action_ko` 문구 → LLM 합성으로 바뀐다.
   `[현상]`·`[과거사례]` 두 섹션은 **언제나 룰·선례에서** 만든다(변화 없음).
 - 실패하면 `make_comment` 가 예외를 잡아 **조용히 `action_ko` 로 폴백**한다. LLM 유무와 무관하게
   코멘트는 항상 나온다.
@@ -108,7 +108,7 @@ python tools/llm_check.py --ping     # 실제로 1회 호출해 왕복까지 확
 [OFF ] 엔진 AI Comment   (eval_engine/llm_client.complete → pipeline/recommend.make_comment)
         endpoint : (미설정)
         model    : (미설정)   timeout 30.0s   api_key 없음
-        꺼져 있으면 → 룰 기반 [점검제안] 문구로 폴백(코멘트는 항상 나온다)
+        꺼져 있으면 → 룰 기반 [제안] 문구로 폴백(코멘트는 항상 나온다)
 ```
 
 프로그램에서 상태를 읽으려면 report_server 쪽 `web_report/ai_comment.py` 의

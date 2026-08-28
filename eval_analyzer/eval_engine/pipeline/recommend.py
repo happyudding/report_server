@@ -55,7 +55,7 @@ def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
     return text or _NO_PHENOMENON_FALLBACK
 
 def _action_ko_for(verdict, case_ctx=None) -> str:
-    """[점검제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다."""
+    """[제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다."""
     by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
     return (by_id[primary].get("action_ko") if primary in by_id else None) or _NO_PHENOMENON_FALLBACK
@@ -81,7 +81,7 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
     """LLM 합성용 프롬프트 — 지시문 + case 요약 + 이미 만들어 둔 [현상]/[과거사례]/action_ko.
 
     지시문의 목적은 **환각 억제**다: 원인 단정 금지, 입력이나 선례에 없는 수치·제품명·설비를
-    지어내지 말 것, 섹션 제목 출력 금지(문장만) — LLM 출력이 [점검제안] 자리에만 들어가기
+    지어내지 말 것, 섹션 제목 출력 금지(문장만) — LLM 출력이 [제안] 자리에만 들어가기
     때문이다.
     ⚠ 지시문 8줄은 콤마 없는 암시적 문자열 연결로 한 덩어리다. 원본 의도일 수 있어 손대지
     않았다(VERIFY_CHECKLIST §2-3).
@@ -108,9 +108,9 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
 
 def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: list,
                  *, model_version: str | None = None) -> str:
-    """L5 진입점 — [현상]/[과거사례]/[점검제안] 3섹션 comment 문자열.
+    """L5 진입점 — [현상]/[과거사례]/[제안] 3섹션 comment 문자열.
 
-    앞 두 섹션은 항상 룰·선례에서 만든다. [점검제안]만 LLM 이 켜져 있을 때 자연어로
+    앞 두 섹션은 항상 룰·선례에서 만든다. [제안]만 LLM 이 켜져 있을 때 자연어로
     합성하고, **꺼져 있거나 호출이 실패하면 action_ko 로 조용히 폴백**한다 — LLM 유무와
     무관하게 코멘트는 항상 나와야 하므로 예외를 위로 던지지 않는다.
     """
@@ -126,7 +126,7 @@ def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: li
         except Exception:
             suggestion = action_ko
             
-    return f"[현상] {phenomenon}\n[과거사례] {past_case} \n [점검제안] {suggestion}"
+    return f"[현상] {phenomenon}\n[과거사례] {past_case} \n [제안] {suggestion}"
 
 
 

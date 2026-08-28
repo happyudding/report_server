@@ -227,7 +227,9 @@ function sheetSearchHtml(id, value, placeholder) {
 // 검색 대상 텍스트. Item 셀은 읽기 모드 Issue Table 이면 data-col="Item", 그 외(Yield·
 // 편집 모드)는 좌측 고정열 순서(step/bin/tno/item — sheets.js orderColumns)상 4번째다.
 // comment 셀은 편집 모드에서 원문(data-raw)이 링크로 치환돼 있어 원문을 우선 쓴다.
-function sheetRowMatches(tr, term) {
+// terms 는 core.js searchTerms() 결과(`%` 분해된 조각) — 한 행의 Item+comment 를 이어
+// 붙인 **한 문자열**에서 조각 순서를 본다(행 전체가 한 검색 대상이라 의도한 동작이다).
+function sheetRowMatches(tr, terms) {
   const itemCell = tr.querySelector('td[data-col="Item"]') || tr.children[3];
   let txt = itemCell ? itemCell.textContent : "";
   // 서식 토큰은 벗기고 본문만 검색 대상에 넣는다 — 안 그러면 "*r[" 같은 표시문자가
@@ -235,7 +237,7 @@ function sheetRowMatches(tr, term) {
   tr.querySelectorAll("td.st-comment").forEach(td => {
     txt += " " + stripCommentFormat(td.dataset.raw != null ? td.dataset.raw : td.textContent);
   });
-  return txt.toLowerCase().indexOf(term) >= 0;
+  return searchMatch(txt, terms);
 }
 
 function setSearchCount(id, shown, total, term) {
@@ -250,14 +252,15 @@ function applyIssueSearch(rawTerm, panel) {
   if (!panel) return;
   const ui = issueUi(panel);
   ui.search = String(rawTerm || "");
-  const term = ui.search.trim().toLowerCase();
+  const terms = searchTerms(ui.search);
+  const term = terms.length ? ui.search.trim() : "";
   panel.classList.toggle("issue-searching", !!term);
   let shown = 0, total = 0;
   panel.querySelectorAll(".sheet-table.kind-issue tbody tr").forEach(tr => {
     if (tr.classList.contains("issue-shead-top") || tr.classList.contains("issue-shead-bot")
         || tr.querySelector("td.sheet-subhead")) return;   // 구조 행 — 필터 대상 아님
     total++;
-    const keep = !term || sheetRowMatches(tr, term);
+    const keep = sheetRowMatches(tr, terms);
     tr.classList.toggle("row-search-hide", !keep);
     if (keep) shown++;
   });
@@ -296,12 +299,13 @@ function applyYieldSearch(rawTerm) {
   const panel = document.getElementById("panel-yield");
   if (!panel) return;
   yieldSearchTerm = String(rawTerm || "");
-  const term = yieldSearchTerm.trim().toLowerCase();
+  const terms = searchTerms(yieldSearchTerm);
+  const term = terms.length ? yieldSearchTerm.trim() : "";
   panel.classList.toggle("yield-searching", !!term);
   let shown = 0, total = 0;
   panel.querySelectorAll(".sheet-table.kind-yield tbody tr").forEach(tr => {
     total++;
-    const keep = !term || sheetRowMatches(tr, term);
+    const keep = sheetRowMatches(tr, terms);
     tr.classList.toggle("row-search-hide", !keep);
     if (keep) shown++;
   });

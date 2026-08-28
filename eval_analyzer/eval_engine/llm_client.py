@@ -4,7 +4,7 @@
 기본 shape 은 OpenAI 호환 chat completions(POST endpoint, messages). 다른 provider 면 여기만 교체.
 
 **이 파일이 엔진의 유일한 LLM 출구다.** 소비자는 pipeline/recommend.py:make_comment 의
-[점검제안] 섹션 하나뿐이고, 그쪽은 예외를 잡아 룰 기반 문구로 폴백하므로 여기서는
+[제안] 섹션 하나뿐이고, 그쪽은 예외를 잡아 룰 기반 문구로 폴백하므로 여기서는
 실패를 숨기지 말고 그대로 올린다(조용한 무응답보다 폴백 사실이 드러나는 편이 낫다).
 
 의존은 표준 라이브러리뿐이다(urllib). 운영 venv 가 Python 3.14 라 무거운 SDK 를 새로

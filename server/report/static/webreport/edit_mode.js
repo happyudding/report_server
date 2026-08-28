@@ -1023,6 +1023,9 @@ function mentionInsert(cell, item, trigger) {
 function showMention(cell, query, trigger) {
   trigger = trigger || "@";
   const dd = _mentionDD();
+  // ⚠ 여기는 탭 검색칸의 `%` 와일드카드(core.js searchMatch)를 **일부러 쓰지 않는다**
+  //    — 검색칸이 아니라 코멘트 본문을 치는 셀이라 "수율 50%@VDD" 처럼 % 가 리터럴로
+  //    등장한다. 와일드카드로 해석하면 후보가 조용히 어긋난다(2026-08-28 결정).
   const match = n => !query || n.toLowerCase().includes(query.toLowerCase());
   let cands, emptyMsg = "";
   if (trigger === "#") {
@@ -1468,10 +1471,10 @@ async function openEtcItemModal(scope) {
 function renderEtcItemList(filterText) {
   const host = document.getElementById("etcItemList");
   if (!host || !etcItemMeta) return;
-  const q = String(filterText || "").trim().toLowerCase();
+  const terms = searchTerms(filterText);
   const already = new Set(currentEtcItems(
     (document.getElementById("etcItemModal") || {}).dataset?.etcScope));
-  const items = (etcItemMeta.items || []).filter(it => !q || it.name.toLowerCase().includes(q));
+  const items = (etcItemMeta.items || []).filter(it => searchMatch(it.name, terms));
   host.innerHTML = items.length ? items.map(it => {
     const added = already.has(it.name);
     return `<button type="button" class="rawdata-item${added ? " selected" : ""}" ` +

@@ -267,25 +267,32 @@ def test_aic_past_expands_on_click():
     print("[정적] [과거사례] 펼침이 클릭 토글 OK")
 
 
-def test_aic_label_is_display_only():
-    """섹션 라벨 개명은 **화면 표기만**이어야 한다 — 파싱 키·서버 문자열은 불변.
+def test_aic_parses_old_and_new_section_tokens():
+    """서버가 내는 섹션 토큰을 바꿨으면 JS 는 **옛 토큰도 계속** 파싱해야 한다.
 
-    서버(eval_engine recommend.make_comment)가 내는 "[과거사례]"/"[점검제안]" 을 바꾸면 그
-    평문이 payload 에 굳어 있는 기존 캐시 세션과 새 세션이 갈리고, 해소하려면
-    REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. Excel·챗봇·eval export
-    도 같은 평문을 소비한다. 그래서 파싱은 원래 토큰으로 하고 표기만 AIC_SEC_LABEL 로 건다.
+    2026-08-28 서버 문자열이 "[점검제안]" → "[제안]" 으로 바뀌었다. 그 평문은 payload 에
+    그대로 굳어 디스크/응답 캐시에 남으므로, 바꾼 뒤에도 기존 세션은 계속 옛 토큰을 실어
+    온다. JS 가 새 토큰만 알면 그 세션들은 섹션 분리가 통째로 풀려 한 덩어리 평문이 된다
+    (에러가 아니라 "색이 사라짐"으로 보여 발견이 늦다). 캐시를 앞당겨 갈려고
+    REPORT_SCHEMA_VERSION 을 올리면 전 세션 콜드 리빌드가 되므로, 옛 키는 캐시가 자연히
+    빠질 때까지 남긴다. Excel·챗봇·eval export 도 같은 평문을 소비한다.
     """
     src = (_JS / "sheets.js").read_text(encoding="utf-8")
     assert '"과거사례": "aic-past"' in src, "파싱 키가 바뀌었습니다 (서버 문자열과 갈립니다)"
-    assert 'AIC_SECTIONS = ["현상", "과거사례", "점검제안"]' in src, \
-        "AIC_SECTIONS 는 서버가 내는 토큰 그대로여야 합니다"
+    for tok in ("현상", "과거사례", "점검제안", "제안"):
+        assert f'"{tok}"' in src, f"AIC_SECTIONS 에 {tok} 토큰이 없습니다"
     assert "AIC_SEC_LABEL" in src, "표시 라벨 매핑(AIC_SEC_LABEL)이 사라졌습니다"
-    # 서버 원문은 그대로인지 — 여기가 바뀌면 캐시 세션과 갈린다.
+    # 정규식 교대는 왼쪽 우선 — 옛 토큰이 신 토큰보다 앞에 와야 "[점검" 이 새지 않는다.
+    m = re.search(r"\[\(현상\|과거사례\|([^)]*)\)\\\]", src)
+    assert m, "섹션 정규식을 찾지 못했습니다"
+    assert m.group(1).index("점검제안") < m.group(1).index("제안"), \
+        "정규식에서 '점검제안' 이 '제안' 보다 뒤에 있으면 옛 코멘트에 '[점검' 이 본문으로 샙니다"
+    # 서버 원문은 새 토큰 — 옛 토큰은 캐시에만 남는다.
     rec = (_ROOT / "eval_analyzer" / "eval_engine" / "pipeline" / "recommend.py"
            ).read_text(encoding="utf-8")
-    assert "[과거사례]" in rec and "[점검제안]" in rec, \
-        "서버 생성 문자열이 바뀌었습니다 — 캐시된 세션의 AI Comment 가 파싱되지 않습니다"
-    print("[정적] 섹션 라벨은 화면 표기 전용, 서버 문자열·파싱 키 불변 OK")
+    assert "[과거사례]" in rec and "[제안]" in rec, \
+        "서버 생성 문자열이 예상과 다릅니다 — JS 파싱 키와 짝을 다시 맞추세요"
+    print("[정적] 섹션 토큰 옛/새 동시 파싱 OK")
 
 
 def test_aic_clamp_affordance_and_drag():

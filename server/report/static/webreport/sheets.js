@@ -243,14 +243,16 @@ function linkifyComment(txt) {
 // 해소하려면 REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. 같은 문자열을
 // Excel·챗봇·eval export 가 평문으로 소비하기도 한다. 여기서 파싱하면 옛/새 payload 가
 // 같은 화면을 낸다.
-const AIC_SECTIONS = ["현상", "과거사례", "점검제안"];
-const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "점검제안": "aic-act" };
-// 화면에 찍는 라벨만 짧게 바꾼다 — 파싱 키(AIC_SECTIONS)는 **서버 문자열 그대로** 둔다.
-// 서버(eval_engine recommend.make_comment)가 내는 "[과거사례]"/"[점검제안]" 을 바꾸면 그
-// 문자열이 payload 에 굳어 있는 기존 캐시 세션과 새 세션이 갈리고, 해소하려면
-// REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. Excel·챗봇·eval export 도
-// 같은 평문을 소비한다. 여기서 표기만 갈면 옛/새 payload 가 같은 화면을 낸다.
-const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "점검제안": "제안" };
+// ⚠ "점검제안"(옛) 과 "제안"(신, 2026-08-28 서버 변경)을 **둘 다** 파싱한다. 서버 문자열은
+// payload 에 그대로 굳어 디스크/응답 캐시에 남으므로, 바꾼 뒤에도 기존 캐시 세션은 계속
+// 옛 토큰을 실어 온다. 한쪽만 알면 그 세션들은 섹션 분리가 통째로 풀려 한 덩어리 평문이
+// 된다(에러가 아니라 "색이 사라짐"으로 보인다). 옛 키를 지우려면 캐시가 전부 갈린 뒤여야
+// 하는데, 그걸 앞당기려 REPORT_SCHEMA_VERSION 을 올리면 전 세션 콜드 리빌드가 된다.
+// Excel·챗봇·eval export 도 같은 평문을 소비한다.
+const AIC_SECTIONS = ["현상", "과거사례", "점검제안", "제안"];
+const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "점검제안": "aic-act", "제안": "aic-act" };
+// 화면에 찍는 라벨. 옛 "점검제안" 도 "제안" 으로 찍어 옛/새 세션이 같은 화면을 낸다.
+const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "점검제안": "제안", "제안": "제안" };
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 
 // 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
@@ -289,7 +291,9 @@ function renderAiComment(txt) {
   if (raw.indexOf("[현상]") < 0) return linkifyComment(raw);
   const split = aicSplitBadges(raw);
   const body = split.body;
-  const re = /\[(현상|과거사례|점검제안)\]/g;
+  // 점검제안(옛) 을 제안(신) 보다 먼저 둔다 — 교대는 왼쪽 우선이라 순서를 뒤집으면
+  // "[점검제안]" 의 뒷부분만 매칭돼 태그 앞에 "[점검" 이 본문으로 새어 나온다.
+  const re = /\[(현상|과거사례|점검제안|제안)\]/g;
   const parts = [];
   let last = 0, cur = null, m;
   while ((m = re.exec(body))) {

@@ -309,12 +309,12 @@ function renderStdfMap(panel) {
 // 매칭이 표시분을 넘으면 절단을 헤더로 명시한다(Distribution distRenderSuggest 미러) —
 // 조용히 자르면 뒤 항목이 "없는 것"처럼 보인다. 클릭 시 item 선택 → 재렌더.
 function stdfShowSuggest(search, suggest) {
-  const term = String(search.value || "").trim().toLowerCase();
+  const terms = searchTerms(search.value);
   const distIndex = (DATA.web_report && DATA.web_report.distribution_index) || [];
   const CAP = 100;
   const matched = [];
   for (const r of distIndex) {
-    if (!term || String(r.subject).toLowerCase().includes(term)) matched.push(r);
+    if (searchMatch(r.subject, terms)) matched.push(r);
   }
   if (!matched.length) { suggest.style.display = "none"; return; }
   const rows = matched.length > CAP ? matched.slice(0, CAP) : matched;

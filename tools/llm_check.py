@@ -41,7 +41,7 @@ def main():
 
     failed = False
 
-    # ── 1. 엔진 (AI Comment 의 [점검제안] 문장) ──────────────────────────────
+    # ── 1. 엔진 (AI Comment 의 [제안] 문장) ──────────────────────────────
     from web_report import ai_comment   # eval_engine 접근은 이 파일 경유 (불변규칙 #8)
     eng = ai_comment.llm_status(ping=args.ping)
     print(f"[{_mark(eng['enabled'])}] 엔진 AI Comment   "
@@ -57,7 +57,7 @@ def main():
         print(f"        오류     : {eng['error']}")
     if not eng["enabled"] or eng["error"]:
         failed = True
-    print("        꺼져 있으면 → 룰 기반 [점검제안] 문구로 폴백(코멘트는 항상 나온다)")
+    print("        꺼져 있으면 → 룰 기반 [제안] 문구로 폴백(코멘트는 항상 나온다)")
     print()
 
     # ── 2. 웹 챗봇 (질문 → 인텐트 분류) ─────────────────────────────────────

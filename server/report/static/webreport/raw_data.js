@@ -167,8 +167,8 @@ function updateRawEditBtn() {
 function renderRawItemList(filterText) {
   const host = document.getElementById("rawItemList");
   if (!host || !rawDataMeta) return;
-  const q = String(filterText || "").trim().toLowerCase();
-  const items = (rawDataMeta.items || []).filter(it => !q || it.name.toLowerCase().includes(q));
+  const terms = searchTerms(filterText);
+  const items = (rawDataMeta.items || []).filter(it => searchMatch(it.name, terms));
   host.innerHTML = items.length ? items.map(it => {
     const selected = rawDataSelected.has(it.name);
     const disabled = (!selected && rawDataSelected.size >= RAW_DATA_COLUMN_CAP) ? "disabled" : "";
@@ -184,8 +184,8 @@ function renderRawItemList(filterText) {
 
 function selectAllVisibleRawItems() {
   if (!rawDataMeta) return;
-  const q = (document.getElementById("rawItemSearch")?.value || "").trim().toLowerCase();
-  const items = (rawDataMeta.items || []).filter(it => !q || it.name.toLowerCase().includes(q));
+  const terms = searchTerms(document.getElementById("rawItemSearch")?.value);
+  const items = (rawDataMeta.items || []).filter(it => searchMatch(it.name, terms));
   for (const it of items) {
     if (rawDataSelected.size >= RAW_DATA_COLUMN_CAP) break;
     rawDataSelected.add(it.name);

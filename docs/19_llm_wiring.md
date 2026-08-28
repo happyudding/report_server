@@ -23,7 +23,7 @@ python tools/llm_check.py --ping     # 소비자별 상태 + 실제 왕복 확�
 
 > ⚠️ **서버에 자격증명이 없는 경우** (Claude Enterprise 좌석은 API 키를 발급하지 않는다):
 > 위 5줄로는 연결할 수 없다. 사용자 PC 의 사내 Gateway 권한을 빌려 **업로더 PC 의 Honey 가
-> `[점검제안]` 생성을 대행**하는 설계가 승인돼 있다(미구현) →
+> `[제안]` 생성을 대행**하는 설계가 승인돼 있다(미구현) →
 > [23_ai_comment_client_llm.md](23_ai_comment_client_llm.md).
 > 그 경로를 쓰는 동안 서버 `EVAL_LLM_*` 는 **미설정으로 유지**한다(켜면 이중 생성).
 
@@ -33,7 +33,7 @@ python tools/llm_check.py --ping     # 소비자별 상태 + 실제 왕복 확�
 
 | # | 무엇에 쓰나 | 진입 | 출구(endpoint) | 꺼져 있을 때 |
 |---|---|---|---|---|
-| ① | **AI Comment 의 [점검제안] 문장** — 이슈 코멘트 3섹션 중 마지막 | [pipeline/recommend.py](../eval_analyzer/eval_engine/pipeline/recommend.py) `make_comment` | [eval_engine/llm_client.py](../eval_analyzer/eval_engine/llm_client.py) `complete()` | 룰의 `action_ko` 문구로 폴백 |
+| ① | **AI Comment 의 [제안] 문장** — 이슈 코멘트 3섹션 중 마지막 | [pipeline/recommend.py](../eval_analyzer/eval_engine/pipeline/recommend.py) `make_comment` | [eval_engine/llm_client.py](../eval_analyzer/eval_engine/llm_client.py) `complete()` | 룰의 `action_ko` 문구로 폴백 |
 | ② | **웹 챗봇 질문 해석** — 자연어 → 어느 조회로 보낼지 | [chatbot/planner.py](../server/chatbot/planner.py) `plan()` | 같은 파일 `_call_llm()` | 정규식·키워드 규칙 분류 |
 
 **둘 다 LLM 없이 완전히 동작한다.** ①은 코멘트가 항상 나오고, ②는 골든셋 22/22 를 규칙만으로

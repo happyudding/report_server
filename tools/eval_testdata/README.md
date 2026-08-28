@@ -3,10 +3,14 @@
 `make_eval_testdata.py` 는 **web_report 세션으로 바로 올릴 수 있는** 합성 데이터 한 벌을
 만든다. 목적은 하나 — "이 룰이 이 세기에서 뜨는가"를 **정답을 아는 상태로** 확인하는 것.
 
-> **Compare 모드 검증은 다른 스크립트다** — [make_compare_testdata.py](make_compare_testdata.py)
-> (before/after 쌍, 2026-08-20). 검출 정본이 eval_engine signature 룰이 아니라
-> `web_report/tabs/compare.py _dist_focus`(임계 4개)라 축이 완전히 다르다. 레벨도 L1~L5
-> 사다리가 아니라 **L1(미검출)/L2(검출)/L3(강검출)** 3단이다. 아래 §Compare 참조.
+> **Compare 모드용은 별도 스크립트 2개다** — 검출 정본이 eval_engine signature 룰이 아니라
+> `web_report/tabs/compare.py _dist_focus`(임계 4개)라 축이 완전히 다르다.
+> - [make_compare_testdata.py](make_compare_testdata.py) (v1, 2026-08-20) — **현행 임계가
+>   기대대로 도는가** 회귀 검증. 레벨 **L1(미검출)/L2(검출)/L3(강검출)** 3단 → §6
+> - [make_compare_shape_testdata.py](make_compare_shape_testdata.py) (v2, 2026-08-28) —
+>   **임계 자체를 다시 잡기 위한** 데이터. 현행 지표의 미검출(모양만 다른 경우)과
+>   과검출(개선인데 잡히는 경우)을 동시에 드러낸다. 레벨 **L1~L4 = 눈으로 본 차이 크기**
+>   (임계 초과 정도가 아니다) → §7
 
 ```
 # ① 7-meta CSV 1장 (직접 업로드용) — 파일이 있으면 _v2·_v3 … 로 자동 증가
@@ -529,3 +533,98 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_compare_testdata.py
 공통 항목 190 · 검출 100 · 신규 5 · 삭제 5 · limit 변경 3
 L1 50건 전부 미검출 / L2·L3 100건 전부 검출 / 대조군 37 미검출
 ```
+
+
+---
+
+## 7. Compare 산포 **모양** 데이터 (`make_compare_shape_testdata.py`, v2 / 2026-08-28)
+
+```
+server\.venv\Scripts\python.exe tools\eval_testdata\make_compare_shape_testdata.py
+```
+
+**§6(v1) 과 목적이 정반대다.** v1 은 "현행 임계가 기대대로 도는가"를 보는 회귀 검증용이라
+검출되도록 만든 데이터다. v2 는 그 **임계 자체를 다시 잡기 위한** 데이터로, 현행 두 지표
+(Cpk% · Δσ%)가
+
+- ① 눈으로 보면 명백히 다른데 **못 잡는** 경우 (미검출)
+- ② 눈으로 보면 차이가 없거나 오히려 좋아졌는데 **잡는** 경우 (과검출)
+
+를 동시에 드러낸다.
+
+### 레벨의 의미가 다르다
+
+v1 의 L1/L2/L3 은 "임계 초과 정도"였지만, v2 의 **L1~L4 는 "눈으로 본 차이의 크기"** 다:
+
+| 레벨 | 의미 |
+|---|---|
+| L1 | 차이 거의 없음 |
+| L2 | 자세히 보면 다름 |
+| L3 | 확실히 다름 |
+| L4 | 누가 봐도 완전히 다름 |
+
+**현행 검출 여부와 레벨은 독립**이며, 그 어긋남이 곧 결론이다:
+
+```
+blind_spot  = level>=3 인데 미검출  -> 새 지표가 잡아야 할 목록
+over_detect = level<=2 인데 검출    -> 현행 임계가 과하게 무는 목록
+```
+
+### 산출물 4개 (`data/`)
+
+| 파일 | 내용 |
+|---|---|
+| `compare_shape_v2_before.csv` | 7-meta honeyform (Before) — 1008 die × 202 item |
+| `compare_shape_v2_after.csv` | 7-meta honeyform (After) |
+| `compare_shape_v2_answer.csv` | 정답표 — item·유형·레벨·before/after 모양·이산 격자 |
+| `compare_shape_v2_verify.csv` | **서버 코드 실측** — 현행 2지표 + 미판정 지표(KS D·IQR%·median shift) + `blind_spot`/`over_detect` |
+
+### 미검출을 만드는 원리
+
+현행 두 지표는 **모멘트 2개(μ, σ)만** 본다. 그래서 μ·σ 를 before/after 동일하게 고정한 채
+**모양만** 바꾸면 Cpk% ≈ 100%, Δσ% ≈ 0% 인데 분포는 전혀 다른 항목이 만들어진다.
+`_rescale` 이 표본 모멘트를 목표값으로 정확히 되돌려 이 고정을 보장한다 — 난수 노이즈로
+σ 가 몇 % 흔들리면 미검출 케이스가 우연히 검출돼 버린다.
+
+유형 33종: 쌍봉·비대칭 쌍봉·삼봉 / 꼬리(한쪽·양쪽·방향 반전) / 균등·고원(U 자) /
+왜곡(우·좌·방향 반전) / 이탈 무리 · 스파이크 · 절단 / **이산 5종**(격자 굵어짐, 이산→연속,
+이산 쌍봉, 계단 이동, 한 계단 편중) / 겹침·분리 / σ 증감 / 서로 다른 비정규 조합.
+
+### 과검출을 만드는 원리
+
+`compare._dist_focus` 의 구조적 약점 6가지를 각각 겨눈다:
+
+| 케이스 | 겨누는 약점 |
+|---|---|
+| `FP_LOWCPK_NOCHANGE` | ② 경로(한쪽 Cpk<1.33)에 **유의성 게이트가 없다** — before/after 가 같아도 원래 Cpk 가 낮으면 무조건 검출 |
+| `FP_LOWCPK_IMPROVED` | 나빴다가 좋아졌는데 아직 1.33 밑이면 여전히 검출 (개선을 이슈로 봄) |
+| `FP_SD_IMPROVED` | \|Δσ%\| 가 **절대값**이라 산포가 줄어도(=개선) 검출 |
+| `FP_TINY_SIGMA` | σ 가 아주 작으면 절대 변화는 무의미한데 **비율만** 커서 검출 |
+| `FP_DISCRETE_JITTER` | 이산 계단이 σ 보다 굵어 경계 die 이동만으로 σ 비율이 흔들림 |
+| `FP_OUTLIER_FEW` | die 약 2% 의 이탈만으로 σ 급등 (분포 본체는 동일) |
+
+> `FP_TINY_SIGMA` 의 σ 를 더 줄이면 **오히려 검출되지 않는다** — Cpk 가 100 을 넘어
+> `_dist_focus` ① "여유 과대"로 제외되기 때문이다. 현행 코드에 이미 있는 방어책이라,
+> 그게 안 먹는 대역(Cpk<100)에 둬야 진짜 과검출 사례가 된다.
+
+### 첫 실행 결과 (2026-08-28, seed 20260828)
+
+```
+item 202 · 유형 33
+미검출(L3~L4 인데 못 잡음): 62 개  — 모양이 다른 21개 유형 전부
+과검출(L1~L2 인데 잡음)   : 39 개  — FP_* 6종 + SD_UP/DISC_LEVELSHIFT 경계
+```
+
+가장 선명한 미검출 예 — **Cpk% 정확히 100.0, Δσ% 0.000001 인데 KS D 0.26**:
+
+```
+item                       level  cpk_ratio_pct  stdev_delta_pct   ks_d  focus
+SHAPE_BIMODAL_01_L4            4          100.0        -0.000001 0.2577      0
+SHAPE_TRIMODAL_01_L4           4          100.0        -0.000000 0.1665      0
+```
+
+### 두 가지 제약 (v1 과 동일 — 어기면 데이터가 무의미해진다)
+
+1. **모집단은 Bin1(양품) die 뿐**(`compare._bin1_frame`). 규격 밖 값을 만들면 그 die 가
+   통계에서 빠져 "만든 분포"와 "보이는 분포"가 달라진다 → 전 값 spec 클립, 전 die Bin1.
+2. **XPOS/YPOS 는 항상 양수** (CLAUDE.md 규칙 #9).

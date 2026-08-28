@@ -852,14 +852,15 @@ function distApplySegment(rows) {
 // cap: 반환 상한(기본 30 — 드롭다운 표시용). 0 을 주면 전량 반환 — '전체 선택'이
 // 표시된 30개가 아니라 실제 일치 항목 전부를 담게 하기 위함.
 function distSuggestions(q, cap) {
-  // 단일어 부분일치(대소문자 무시). 세그먼트(cpk<1.33 등)에 걸리지 않게 전체 항목에서 검색해
-  // 어떤 항목이든 체크박스로 고를 수 있게 한다.
-  const term = String(q || "").trim().toLowerCase();
-  if (!term) return [];
+  // 부분일치(대소문자 무시) + `%` 와일드카드(core.js searchTerms/searchMatch).
+  // 세그먼트(cpk<1.33 등)에 걸리지 않게 전체 항목에서 검색해 어떤 항목이든 체크박스로
+  // 고를 수 있게 한다.
+  const terms = searchTerms(q);
+  if (!terms.length) return [];
   const lim = (cap === undefined) ? 30 : cap;
   const out = [];
   for (const r of distIndex) {
-    if (String(r.subject).toLowerCase().includes(term)) {
+    if (searchMatch(r.subject, terms)) {
       out.push(r);
       if (lim && out.length >= lim) break;
     }
