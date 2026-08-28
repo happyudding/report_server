@@ -38,8 +38,8 @@ signatures:
     when_metric: { fail_mad_min: ">=outlier_fail_mad_min",
                    fail_body_jump_ratio: ">=outlier_jump_ratio_min" }
     status_hint: MAJOR
-    phenomenon_ko : "일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다."
-    action_ko: "outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+    phenomenon_ko : "일부 die 가 정상 분포와 떨어진 곳에서 Fail 했습니다."
+    action_ko: "Contact Check, Retest 재현성 확인"
     evidence: ["fail_mad_min {fail_mad_min}",
                "fail_body_jump_ratio {fail_body_jump_ratio}",
                "fail_pass_gap_sigma {fail_pass_gap_sigma}",
@@ -76,16 +76,16 @@ signatures:
     # 반경 비율로는 "한 줄" 을 표현할 수 없어 줄의 양끝으로 판정한다.
     when_metric: { e1_fail_share: ">=region_fail_share_min", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
-    phenomenon_ko : "wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다."
-    action_ko: "최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+    phenomenon_ko : "E1(최외곽) Zone 불량이 집중 되어 있습니다."
+    action_ko: "공정 및 Lot 성 Wafer성 확인 필요"
     evidence: ["e1_fail_share {e1_fail_share}", "e1_fail_ratio {e1_fail_ratio}", "fail_count {fail_count}"]
 
   - id: EDGE_FAIL
     # edge 영역은 **E1 을 제외한** 바깥 밴드다(features._spatial_features).
     when_metric: { edge_fail_share: ">=region_fail_share_min", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
-    phenomenon_ko : "wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다."
-    action_ko: "wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+    phenomenon_ko : "EDGE 불량이 집중 되어 있습니다."
+    action_ko: "공정 및 Lot 성, Wafer성 확인 필요"
     evidence: ["edge_fail_share {edge_fail_share}", "edge_fail_ratio {edge_fail_ratio}", "fail_count {fail_count}"]
 
   - id: GROSS_FAIL
@@ -107,8 +107,8 @@ signatures:
     # 특수분기 — when_metric/evidence 는 실평가에 안 쓰인다(features.modality_v2 로 판정).
     when_metric: { bimodality_score: ">bimodality_warn" }
     status_hint: MAJOR
-    phenomenon_ko : "분포가 분리되는 양상입니다."
-    action_ko: "분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+    phenomenon_ko : "분포가 2가지 이상 분리 되었습니다."
+    action_ko: "측정 조건 확인 및 Device Abnormal 동작 의심"
     evidence: ["bimodality_score {bimodality_score}", "density_gap {density_gap}"]
 
   - id: BIDIR_TAIL
@@ -135,8 +135,8 @@ signatures:
     # 위 직접 경로와 겹쳐도 무해하다 — 대체가 먼저 돌고, 같은 id 는 한 번만 들어간다.
     replaces: [USL_TAIL, LSL_TAIL]
     status_hint: MAJOR
-    phenomenon_ko : "분포가 양쪽(USL·LSL) 방향으로 함께 늘어져 있습니다."
-    action_ko: "양방향 꼬리 과대(분포가 양쪽으로 늘어짐) — 한쪽 방향 조치로 해결되지 않음, 분포 폭·센터링을 함께 재검토"
+    phenomenon_ko : "분포가 양쪽(USL, LSL) 방향으로 늘어져있습니다."
+    action_ko: "측정 조건 확인 및 안정화 필요. Tail 시료 진성 유무 확인 필요"
     evidence: ["tail_extent_high {tail_extent_high}", "tail_extent_low {tail_extent_low}",
                "tail_mass_3s_low {tail_mass_3s_low}", "tail_mass_3s_high {tail_mass_3s_high}"]
 
@@ -163,8 +163,8 @@ signatures:
       pass_limit_hit_ratio: ">=func_fail_pass_fix_min"
       fail_count: ">0"
     status_hint: MAJOR
-    phenomenon_ko : "기능(functional) 판정 item 에서 fail 이 발생했습니다."
-    action_ko: "기능성 fail (고정값 판정 item) — 측정 산포가 아닌 기능 동작 문제, 해당 test block 의 동작조건·패턴 확인"
+    phenomenon_ko : "Function TEST Item 에서 Fail 발생했습니다."
+    action_ko: "Pattern 확인 및 Margin Test 진행"
     evidence: ["pass_limit_hit_ratio {pass_limit_hit_ratio}", "fail_count {fail_count}",
                "limit_is_point {limit_is_point}"]
 
@@ -182,23 +182,23 @@ signatures:
     suppressed_by: [MEAN_SHIFT, OUTLIER, BIMODALITY]
     status_hint: MAJOR
     issue_category: CPK
-    phenomenon_ko : "공정능력지수(Cpk)가 기준(1.33) 미달입니다."
-    action_ko: "공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+    phenomenon_ko : "CPK 1.33 이하로 Spec Margin 부족합니다."
+    action_ko: "산포 개선 및 개발팀 협의 Spec Margin 확보 필요"
     evidence: ["cpk {cpk}"]
 
   - id: MEAN_SHIFT
     when_metric: { center_bias: "abs>mean_shift_warn" }
     status_hint: MINOR
-    phenomenon_ko : "분포 중심이 한쪽 spec으로 치우쳐 있습니다."
-    action_ko: "분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+    phenomenon_ko : "산포 Mean 값이 한쪽 Spec 으로 치우쳐 있습니다."
+    action_ko: "Offset, Centering 및 조건별 평균 shift 확인 필요"
     evidence: ["center_bias {center_bias}", "nearest {nearest_spec_side}"]
 
   - id: CENTER_FAIL
     # fail_count 가드가 없고 edge 임계 키를 빌려 쓰던 것을 share 전환과 함께 정비했다.
     when_metric: { center_fail_share: ">=region_fail_share_min", fail_count: ">spatial_fail_count_min" }
     status_hint: MAJOR
-    phenomenon_ko : "wafer 중심부에 불량이 집중되어 있습니다."
-    action_ko: "wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+    phenomenon_ko : "Wafer Center Zone 에 불량이 집중되어 있습니다."
+    action_ko: "공정 Uniformity 및 Wafer 성 Lot 성 확인 필요."
     evidence: ["center_fail_share {center_fail_share}", "center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
 
   # CODE(이산) 항목 전용 — 2026-08-13 활성화. 이산값은 "울퉁불퉁한 것" 자체가 정상이라
@@ -208,8 +208,8 @@ signatures:
     # code_edge_hit 는 value_type=CODE 인 item 에만 계산(그 외 None → applies=False) — CODE 전용 룰
     when_metric: { code_edge_hit: ">code_edge_hit_warn" }
     status_hint: MAJOR
-    phenomenon_ko : "CODE 값이 min/max 레일에 포화되어 있습니다."
-    action_ko: "CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+    phenomenon_ko : "CODE 값이 min/max Limit 에 포화 되어 있습니다."
+    action_ko: "Algorithm 및 Margin 점검, Charic 확인 필요"
     # 상·하단을 갈라 보여 준다 — 조치가 다르다(하단=trim 하한 부족, 상단=상한 부족).
     evidence: ["code_edge_hit {code_edge_hit}", "rail_low_ratio {rail_low_ratio}",
                "rail_high_ratio {rail_high_ratio}"]
@@ -254,8 +254,8 @@ signatures:
     # 목록에는 남기고 primary 만 양보한다.
     suppressed_by: [OUTLIER]
     status_hint: MINOR
-    phenomenon_ko : "분포의 USL(상한) 쪽 꼬리가 두껍게 나타납니다."
-    action_ko: "상한(USL) 쪽 꼬리가 두꺼움(상방 간헐 spike) — 위로 튀는 산발 이상치 원인(contact/노이즈) 관찰"
+    phenomenon_ko : "산포 USL 쪽 Tail 이 두껍게 나타 납니다."
+    action_ko: "환경성(Contact) 및 측정 Method 점검 필요"
     evidence: ["tail_mass_3s_high {tail_mass_3s_high}", "tail_extent_high {tail_extent_high}",
                "kurtosis {kurtosis}", "tail_side_share_high {tail_side_share_high}"]
 
@@ -267,8 +267,8 @@ signatures:
       tail_side_share_low: ">=tail_side_share_min"
     suppressed_by: [OUTLIER]
     status_hint: MINOR
-    phenomenon_ko : "분포의 LSL(하한) 쪽 꼬리가 두껍게 나타납니다."
-    action_ko: "하한(LSL) 쪽 꼬리가 두꺼움(하방 간헐 처짐) — 아래로 처지는 산발 이상치 원인(contact/노이즈) 관찰"
+    phenomenon_ko : "산포 LSL 쪽 Tail 이 두껍게 나타 납니다."
+    action_ko: "환경성(Contact) 및 측정 Method 점검 필요"
     evidence: ["tail_mass_3s_low {tail_mass_3s_low}", "tail_extent_low {tail_extent_low}",
                "kurtosis {kurtosis}", "tail_side_share_low {tail_side_share_low}"]
 
@@ -285,8 +285,8 @@ signatures:
     # 말하는 것이라 "CENTER 만 보이게" 해 달라는 요구였다. 조치도 CENTER 쪽이 분명하다.
     hidden_by: [CENTER_FAIL]
     status_hint: MAJOR
-    phenomenon_ko : "불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다."
-    action_ko: "국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
+    phenomenon_ko : "불량이 Wafer 특정 Area 에 모여 있습니다."
+    action_ko: "scratch/particle 등 공정성 여부 확인 필요"
     evidence: ["fail_spread_norm {fail_spread_norm}", "fail_count {fail_count}"]
 
 
@@ -305,8 +305,8 @@ signatures:
                    fail_count: ">spatial_fail_count_min",
                    fail_spread_norm: ">spot_fail_spread_max"}
     status_hint: MAJOR
-    phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
-    action_ko: "wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+    phenomenon_ko : "Wafer 반경 방향으로 Ring 모양 Fail 발생"
+    action_ko: "공정 확인 및 Wafer 성 Lot 성 확인 필요"
     evidence: ["ring_fail_share {ring_fail_share}", "ring_fail_ratio {ring_fail_ratio}",
                "fail_spread_norm {fail_spread_norm}", "fail_count {fail_count}"]
 
@@ -325,8 +325,8 @@ signatures:
   #   커버율이 가짜로 100% 가 된다(docs/13 §6-3). 사람이 고르는 UNKNOWN 라벨과도 별개다.
   - id: UNKNOWN
     status_hint: MONITOR
-    phenomenon_ko : "fail 이 있으나 기존 룰로 설명되지 않는 상태입니다."
-    action_ko: "기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+    phenomenon_ko : "Fail 발생하였으나 기존 Rule 조건 Pass"
+    action_ko: "Signature 발화 조건 확인, 새 불량 유형으로 검토필요"
 
 # 보류(구현 시 추가): gradient(radial/x/y — 좌표 스케일 정규화 선행),
 #   TRIM_INEFFECTIVE/RETEST_RECOVERY(family — 이력 기반, 단일 case snapshot 밖)

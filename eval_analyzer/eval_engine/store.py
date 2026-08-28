@@ -4,6 +4,7 @@ DDL 은 docs/DB_SCHEMA.md 와 1:1. raw(per-DUT) 저장 안 함. JSON 컬럼 없�
 """
 import difflib
 import hashlib
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -13,6 +14,12 @@ import yaml
 from . import config
 
 SCHEMA_VERSION = 10  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+
+# 선례 이름 비교에서 떼어낼 공통 토큰(소문자 — item_canonical 이 이미 소문자다).
+# 측정 단계(init/code/trim/p1/p2)·전원 도메인(pwr1/pwr2)·test number(t + 숫자) 표기라
+# 어느 item 에나 붙어 변별력이 없다. → strip_common_tokens 참조.
+_STRIP_TOKENS = {"init", "code", "trim", "p1", "p2", "pwr1", "pwr2"}
+_TNUM_RE = re.compile(r"t\d+")  # T000 / T001 / T1 …
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -744,6 +751,32 @@ def upsert_engine_version_registry(engine_version, thresholds_ref=None, threshol
                         signatures_hash, taxonomy_ref, taxonomy_hash, _now()))
 
 
+def strip_common_tokens(item_canonical: str) -> str:
+    """선례 이름 비교 전에 **변별력 없는 공통 토큰**을 떼어낸다(비교 전용, 저장값 불변).
+
+    `INIT_` `CODE_` `TRIM_` `P1_` `P2_` `PWR1_` `PWR2_` `T000_`(T+숫자) 류는 측정 단계·
+    전원 도메인·test number 표기라 **어느 item 에나 붙는다**. 이것들이 남아 있으면
+    difflib 겹침 비율이 실제 측정 대상과 무관하게 부풀어(예: `TRIM_VREF` vs `TRIM_IDD` 가
+    공통 `trim_` 만으로 점수를 얻는다) 임계값을 내릴수록 엉뚱한 선례가 먼저 붙는다.
+    토큰을 떼면 남는 부분이 곧 "무엇을 쟀나" 라서, 같은 컷에서도 매칭이 더 정확해진다.
+
+    위치 무관하게 전부 제거한다(2026-08-28 사용자 결정) — 접두어로만 오는 게 아니라
+    `VREF_TRIM_P1` 처럼 뒤·중간에도 붙기 때문이다.
+    ⚠ 전부 제거하면 빈 문자열이 되는 이름(`TRIM_P1` 등)이 있다. 그때는 **원본을 그대로
+    돌려준다** — 빈 문자열끼리는 difflib 유사도가 1.0(완전일치)이라, 서로 무관한 item 들이
+    한 덩어리로 묶여 버린다.
+    """
+    parts = [p for p in (item_canonical or "").split("_") if p]
+    kept = [p for p in parts if p not in _STRIP_TOKENS and not _TNUM_RE.fullmatch(p)]
+    return "_".join(kept) if kept else (item_canonical or "")
+
+
+def name_similarity(a: str, b: str) -> float:
+    """선례 매칭용 item 이름 유사도 — 공통 토큰 제거 후 difflib 겹침 비율."""
+    return difflib.SequenceMatcher(None, strip_common_tokens(a),
+                                   strip_common_tokens(b)).ratio()
+
+
 def search_precedents(value_type, item_canonical, family_product=None,
                       limit=None, exclude_case_id=None, exclude_session_id=None,
                       exclude_analysis_key=None, fired_signatures=None, conn=None) -> list:
@@ -799,7 +832,7 @@ def search_precedents(value_type, item_canonical, family_product=None,
     for r in rows:
         if exclude_case_id is not None and r["case_id"] == exclude_case_id:
             continue
-        sim = difflib.SequenceMatcher(None, item_canonical, r["item_canonical"] or "").ratio()
+        sim = name_similarity(item_canonical, r["item_canonical"] or "")
         if sim < config.PRECEDENT_NAME_SIMILARITY:
             continue
         r["similarity"] = sim

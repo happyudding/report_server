@@ -12,7 +12,7 @@
 ```
 흐름: 1·2·3(기계 입력/계산) → 4(기계 판정) → 5(사람 정답). **4 는 5 와 같은 모양** → 예측 vs 정답 →
 calibration 피드백. 노하우는 전부 (3)에 쌓인다. [3↔4] 변환기 = thresholds.yaml + signatures.yaml + bin_taxonomy.
-★룰 인덱스 = `item_class`(category_major + value_type + bin), 선례 = (bin + value_type + item명 퍼지≥70%).
+★룰 인덱스 = `item_class`(category_major + value_type + bin), 선례 = (bin + value_type + item명 퍼지≥50%(공통토큰 제거 후)).
 
 ---
 
@@ -86,4 +86,4 @@ spec margin: spec_margin_low/high((mean−limit)/stdev), nearest_spec_side(LOW/H
 - action(retest/condition_change/spec_release/dev_feedback/trim_adjust/scrap/monitor).
 - condition(예 "UVLO_TEST_EN=H") / result(recovered_normal/confirmed_defective/improved/pending) / resolved_by/at/note.
 - ※ 엔지니어는 규칙이 아니라 판정 라벨+결과만 입력. 규칙은 누적에서 calibration/mining 으로 채굴.
-  선례 = (bin + value_type + item명 퍼지≥70%)로 과거 outcome 회수 → 코멘트 근거.
+  선례 = (bin + value_type + item명 퍼지≥50%(공통토큰 제거 후))로 과거 outcome 회수 → 코멘트 근거.

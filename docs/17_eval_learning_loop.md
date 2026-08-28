@@ -40,7 +40,7 @@
 >
 > ### bin 제거 — case 는 item 당 1개 (2026-08-19, 사용자 결정으로 **구현 완료**)
 >
-> **결정**: eval 엔진의 동일성 기준은 **value_type + item 명(유사도 70% 이상)** 이다.
+> **결정**: eval 엔진의 동일성 기준은 **value_type + item 명(공통토큰 제거 후 유사도 50% 이상)** 이다.
 > bin 은 학습 식별 키(case_id·item_class)에서 뺀다. **버리는 것이 아니라** `fail_case.bin`
 > 컬럼에 **대표 bin(최다 fail, 동률은 작은 bin)** 으로 보존하고 bin_taxonomy(severity_bias —
 > bin18 같은 특이케이스)도 그 값으로 계속 적용한다.

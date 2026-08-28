@@ -165,7 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_fail_case_item ON fail_case(item_id);            
 - **왜**: bin 은 serial(die)의 binning 관례이지 item 의 속성이 아니고, 제품군·담당 ENGR 에
   따라 달라진다. 실측상 `(소스, FAILTNO)` 당 distinct BIN 이 **100% 1개**(= item 이 이미
   bin 을 결정하므로 식별 정보 0)인데, 키에 넣으면 같은 현상의 코멘트·라벨·선례가 쪼개진다.
-  동일성 기준은 **value_type + item 명(유사도 70%)** — 선례검색이 이미 쓰던 축이다.
+  동일성 기준은 **value_type + item 명(공통토큰 제거 후 유사도 50%)** — 선례검색이 이미 쓰던 축이다.
 - **버리는 건 아니다**: `fail_case.bin` 에 **대표 bin**(최다 fail, 동률은 작은 bin)을 남겨
   `bin_taxonomy`(severity_bias) 조회와 화면 표시에 계속 쓴다. UNIQUE 자연키 컬럼 구성도 그대로다
   (bin 이 NULL 이면 SQLite 가 서로 distinct 로 보므로 실질 멱등성은 PK(case_id)가 지킨다).
@@ -336,10 +336,10 @@ CREATE TABLE IF NOT EXISTS engine_version_registry (
 > 버전 *내용*은 rules/ 의 yaml 파일로 보관(DB 엔 경로+해시만). 같은 engine_version 으로
 > 재현 시 해당 yaml 을 읽는다. JSON blob 을 DB 에 넣지 않는다.
 
-## 9. 선례(precedent) 검색 — [req1] (unit + item명 퍼지≥70%)
+## 9. 선례(precedent) 검색 — [req1] (unit + item명 퍼지≥50%, 공통토큰 제거 후)
 저장 테이블은 안 만들고(보류: materialize), **검색 함수**로 구현. 키:
 - 동일 `value_type`(=unit계열)
-- `item_canonical` 알파벳 유사도 ≥ 0.70 (예: `difflib.SequenceMatcher(None,a,b).ratio()` 또는 Levenshtein ratio)
+- `item_canonical` 알파벳 유사도 ≥ 0.50 (공통토큰 INIT/CODE/TRIM/P1/P2/PWR1/PWR2/T숫자 제거 후) (예: `difflib.SequenceMatcher(None,a,b).ratio()` 또는 Levenshtein ratio)
 - (보조 필터) `family_product`, `signature`
 - **`bin` 은 매칭 조건에서 제외**(더 폭넓게 참고 — 커밋 4166cb1). fail bin 이 달라도 같은 item/unit 이면 선례로 본다.
 
@@ -359,7 +359,7 @@ LEFT JOIN case_outcome co ON co.case_id = fc.case_id
      AND (co.label_id IS NULL OR co.label_id = l.label_id)  -- outcome 은 자기 label 과만 짝
 WHERE im.value_type = :value_type
   AND (:family_product IS NULL OR pm.family_product = :family_product);   -- bin 조건 없음
--- → 파이썬 후처리: item_canonical 유사도 ≥0.70 행만 채택,
+-- → 파이썬 후처리: item_canonical 유사도 ≥0.50 행만(공통토큰 제거 후) 채택,
 --   case_id 당 1행(최신 label_id 대표행 — label×outcome 곱 제거),
 --   정렬 = (human_comment 있는 선례 우선, 발화 signature 겹침, 유사도 내림차순).
 --   DB 파일 없으면 [].

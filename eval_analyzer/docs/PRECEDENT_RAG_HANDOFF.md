@@ -61,14 +61,21 @@ def _rag_search(case_ctx: dict, sig_result: dict) -> list: ...
 - **본문(임베딩 대상)**: `item_master.item_canonical` (+ `value_type`, `bin` 컨텍스트), `fail_case`
 - **메타(반환 payload 구성)**: `label.human_comment` → `human_comment`,
   `case_outcome.action / result` → `action / result`, `case_signature(role='primary').signature`
-- 스코프: 동일 `value_type` + (있으면) 동일 `family_product`, item 유사도 ≥0.70,
+- 스코프: 동일 `value_type` + (있으면) 동일 `family_product`, item 유사도 ≥0.50(공통토큰 제거 후),
   `case_id != 현재`. `bin` 은 매칭 조건 아님.
 - 상세 grain·조인은 [DB_SCHEMA.md](DB_SCHEMA.md) §9 참조.
 
 ## 6. 참고 구현 (동형 SQL)
 `eval_engine/store.py` 의 `search_precedents()` 가 동일 계약의 SQL 버전:
 - `value_type`(+ `family_product`) 로 후보 좁힘 → item 이름 퍼지유사도
-  `≥ EVAL_PRECEDENT_SIM`(기본 0.70) 후처리 → 유사도순 전체 반환.
+  `≥ EVAL_PRECEDENT_SIM`(기본 0.50, 공통토큰 제거 후) 후처리 → 유사도순 전체 반환.
+  - ⚠ 유사도를 재기 **전에** `store.strip_common_tokens()` 로 변별력 없는 공통 토큰
+    (`init` `code` `trim` `p1` `p2` `pwr1` `pwr2` `t<숫자>`, 밑줄 구분·위치 무관)을 뗀다.
+    측정 단계·전원 도메인·test number 표기라 어느 item 에나 붙어 겹침 비율만 부풀린다
+    (`TRIM_VREF` vs `TRIM_IDD` 가 공통 `trim_` 으로 점수를 얻던 문제). 전부 떼면 빈
+    문자열이 되는 이름(`TRIM_P1`)은 **원본을 그대로 쓴다** — 빈 문자열끼리는 유사도가
+    1.0 이라 무관한 item 이 한 덩어리로 묶인다.
+    RAG 로 대체할 때 임베딩 입력에도 같은 정규화를 적용해야 회수 범위가 같아진다.
 - RAG 는 이 "관련 선례 top-k" 를 **임베딩 유사도**로 대체하는 것뿐. 반환 dict 모양은 동일하게 맞춰라.
 
 ## 7. 검증 체크리스트

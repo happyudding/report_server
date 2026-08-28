@@ -28,7 +28,9 @@ EVAL_LLM_API_KEY = os.environ.get("EVAL_LLM_API_KEY", "")
 EVAL_LLM_TIMEOUT = float(os.environ.get("EVAL_LLM_TIMEOUT", "30"))
 
 # 선례(precedent) 매칭 — [req1] (bin + value_type + item명 퍼지)
-PRECEDENT_NAME_SIMILARITY = float(os.environ.get("EVAL_PRECEDENT_SIM", "0.70"))
+# 비교 전에 공통 토큰(INIT/CODE/TRIM/P1/P2/PWR1/PWR2/T숫자)을 떼므로(store.strip_common_tokens)
+# 이 컷은 **남은 실측 대상 이름끼리의** 겹침 비율이다 — 토큰을 달고 재던 시절의 0.70 과 같은 자가 아니다.
+PRECEDENT_NAME_SIMILARITY = float(os.environ.get("EVAL_PRECEDENT_SIM", "0.50"))
 # 코멘트에 실제 사용할 선례 상한(sql 백엔드) — 무제한 반환은 데이터 누적 시 코멘트/비용 폭주
 EVAL_PRECEDENT_TOPK = int(os.environ.get("EVAL_PRECEDENT_TOPK", "5"))
 

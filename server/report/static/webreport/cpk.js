@@ -148,85 +148,131 @@ function cpkTotalRows() {
   return sheets ? (sheets["CPK Total"] || []) : [];
 }
 
-// Source 버튼 라벨 — 이 탭 관례대로 **현재 적용 중인 값**만 쓴다(누르면 바뀔 값이 아님).
-function cpkSrcBtnLabel() {
+// 드롭다운에서 TOTAL 을 가리키는 **선택자 전용 sentinel**. 화면 라벨은 CPK_TOTAL_SOURCE
+// ("TOTAL")를 그대로 쓰고 data-cpk-src 값만 이걸로 가른다 — 실제 source 이름이 "TOTAL" 인
+// 세션에서 그 source 체크박스와 속성값이 겹치면 하나를 켤 때 둘 다 켜진 것처럼 보이고
+// change 핸들러가 어느 쪽인지 구분하지 못한다. cpkShowTotal 상태 분리(위)는 Set 오염만
+// 막을 뿐 DOM 속성 충돌은 못 막는다.
+const CPK_TOTAL_PICK = "__total__";
+
+// Source 입력칸 placeholder — 이 탭 관례대로 **현재 적용 중인 값**만 쓴다.
+// 선택이 없으면 "무엇을 하는 칸인지"를, 있으면 무엇이 켜져 있는지를 보여준다.
+// (입력칸 value 는 검색어 전용이라 선택 상태를 담지 않는다.)
+function cpkSrcPlaceholder() {
   const parts = [];
   if (cpkShowTotal) parts.push(CPK_TOTAL_SOURCE);
   parts.push(...cpkSourceFilter);
-  if (!parts.length) return "전체";
+  if (!parts.length) return "전체 source (클릭해 선택)";
   if (parts.length <= 2) return parts.join(", ");
   return `${parts[0]} 외 ${parts.length - 1}`;
 }
 
-// Source 다중 선택 메뉴 — "전체" + TOTAL + source 별 항목. 빈 Set = 전체이므로 "전체"는
-// 곧 선택 해제다. 룩은 .issue-menu 팝오버를 그대로 재사용한다(dist_composite/gap_chart 선례).
-// ⚠ data-issue-act / data-dc-act 를 쓰면 edit_mode.js / dist_composite.js 의 클릭 위임이
-// 오발한다 — 전용 네임스페이스 data-cpk-src 만 쓴다.
-function cpkSourceMenuHtml(list) {
-  const item = (val, label, checked, title) =>
-    `<button type="button" class="issue-menu-item${checked ? " checked" : ""}"` +
-    ` data-cpk-src="${esc(val)}" title="${esc(title)}">` +
-    `<span class="issue-menu-mark">${checked ? "✓" : ""}</span>` +
-    `<span class="issue-menu-label">${esc(label)}</span></button>`;
-  const sep = `<div class="issue-menu-sep"></div>`;
-  let html = item("__all__", "전체", !cpkSourceFilter.size && !cpkShowTotal,
-                  "개별 선택을 모두 해제한다 (TOTAL 포함)");
-  if (cpkTotalRows().length) {
-    html += sep + item(CPK_TOTAL_SOURCE, "TOTAL (전 source 통합)", cpkShowTotal,
-      "전 source 의 rawdata 를 하나로 합쳐 낸 통계 행. CPK 임계 필터가 적용되지 않아 " +
-      "선택하면 전 항목의 TOTAL 행이 보인다. 규격(Limit)은 항목이 처음 등장한 source 기준.");
-  }
-  return html + sep + list.map(s =>
-    item(s, s, cpkSourceFilter.has(s), "클릭해 선택/해제 — 여러 source 를 함께 볼 수 있다")
-  ).join("");
+// TOTAL 을 못 쓰는 사유 — 못 쓰면 그 문자열, 쓸 수 있으면 "". 빈 문자열이면 항목을 감춘다.
+// **Temperature 만** 사유를 보여준다: 서버가 **영구히** 안 만드는 유일한 경우라
+// (metrics.py `if not temp_groups and len(tables) >= 2`) 그냥 감추면 "왜 없지?" 가
+// 반복된다(2026-08-27 실제 문의). source 1개·구버전 캐시는 재빌드로 해소되는 일시적
+// 상태라 종전대로 감춘다.
+function cpkTotalUnavailableReason() {
+  if (cpkTotalRows().length) return "";
+  if (typeof tempIsMode === "function" && tempIsMode())
+    return "Temperature 는 미지원 — 온도별 평균차가 산포로 들어가 cpk 가 실제보다 나쁘게 나옵니다";
+  return "";
 }
 
-// 메뉴 열기/닫기 — 표 스크롤 컨테이너에 잘리지 않게 fixed 로 띄우되 **패널 안에** 붙인다
-// (body 직속이면 .content 클릭 위임이 못 잡고, sticky 툴바 z-index:92 안에 넣으면 그
-// 스태킹 컨텍스트에 갇힌다). yield_issue.js toggleIssueMenu 와 같은 처방.
-let _cpkMenuEl = null;
-let _cpkMenuAnchor = null;
-function cpkCloseMenu() {
-  if (!_cpkMenuEl) return;
-  if (_cpkMenuAnchor) _cpkMenuAnchor.setAttribute("aria-expanded", "false");
-  _cpkMenuEl.remove();
-  _cpkMenuEl = null; _cpkMenuAnchor = null;
+// Source 다중 선택 드롭다운 목록 — Distribution 검색(.dist-suggest)과 **같은 클래스**를
+// 재사용한다(trim.js 선례). 종전 .issue-menu 팝오버는 회색 버튼 + fixed 배치라 툴바의
+// 흰 입력칸들과 룩이 갈렸다(2026-08-27 사용자 요청).
+// ⚠ data-subject 를 쓰면 item_detail.js 의 #panel-distribution change 위임이 읽는 속성과
+//   겹친다 — 전용 네임스페이스 data-cpk-src 만 쓴다.
+// ⚠ 빈 검색어에도 **전체 목록을 연다**(Distribution 은 닫는다) — source 는 2~21개라
+//   타이핑을 요구할 이유가 없고, 사용자는 "클릭해 고르는 칸"을 원했다.
+// ⚠ 종전의 체크형 "전체" 항목은 없앴다 — 사용자가 '전체'(선택 해제 동작)와 'TOTAL'
+//   (가상 통합 source)을 같은 종류로 오인했다. 해제는 헤더의 **버튼**으로 옮겨 형태로
+//   구분되게 했다.
+function cpkSourceMenuHtml(list, q) {
+  const term = String(q || "").trim().toLowerCase();
+  const rows = (list || []).filter(s => !term || String(s).toLowerCase().includes(term));
+  const row = (val, badge, name, why, checked, title, off) =>
+    (off
+      ? `<div class="dist-sug-item cpk-sug-total is-off" title="${esc(title)}">` +
+        `<input type="checkbox" class="dist-sug-chk" disabled>`
+      : `<label class="dist-sug-item${badge ? " cpk-sug-total" : ""}" title="${esc(title)}">` +
+        `<input type="checkbox" class="dist-sug-chk" data-cpk-src="${esc(val)}"` +
+        `${checked ? " checked" : ""}>`) +
+    `<span class="sug-tno${badge ? " cpk-sug-badge" : ""}">${esc(badge || "")}</span>` +
+    `<span class="sug-name">${esc(name)}</span>` +
+    (why ? `<span class="cpk-sug-why">${esc(why)}</span>` : "") +
+    (off ? `</div>` : `</label>`);
+
+  // TOTAL — source 행과 **같은 체크박스 마크업**으로 나란히 둔다(사용자 요청).
+  // 구분은 왼쪽 배지와 옅은 배경뿐이다.
+  const why = cpkTotalUnavailableReason();
+  let totalHtml = "";
+  if (!term || CPK_TOTAL_SOURCE.toLowerCase().includes(term)) {
+    if (cpkTotalRows().length)
+      totalHtml = row(CPK_TOTAL_PICK, "통합", CPK_TOTAL_SOURCE, "전 source 통합 통계",
+        cpkShowTotal,
+        "전 source 의 rawdata 를 하나로 합쳐 낸 통계 행. CPK 임계 필터가 적용되지 않아 " +
+        "선택하면 전 항목의 TOTAL 행이 보인다. 규격(Limit)은 항목이 처음 등장한 source 기준.",
+        false);
+    else if (why)
+      totalHtml = row("", "통합", CPK_TOTAL_SOURCE, why, false, why, true);
+  }
+
+  // 헤더 — 개수 + "전체 해제". 해제는 체크박스가 아니라 **버튼**이다(위 ⚠ 참조).
+  const nSel = cpkSourceFilter.size + (cpkShowTotal ? 1 : 0);
+  const head = `<div class="dist-sug-head">` +
+    `<span class="dist-sug-cnt">source <b>${rows.length}</b>개` +
+    (nSel ? ` · 선택 <b>${nSel}</b>개`
+          : ` <span class="dist-sug-more">(선택 없음 = 전 source 표시)</span>`) +
+    `</span>` +
+    (nSel ? `<button type="button" class="btn-sm" data-cpk-src-clear="1">전체 해제</button>` : "") +
+    `</div>`;
+
+  const body = rows.map(s =>
+    row(s, "", s, "", cpkSourceFilter.has(s),
+        "체크해 선택/해제 — 여러 source 를 함께 볼 수 있다", false)).join("");
+  return head + totalHtml +
+    (body || (term ? `<div class="dist-sug-item cpk-sug-none">일치하는 source 없음</div>` : ""));
 }
-function cpkToggleMenu(btn) {
-  if (_cpkMenuAnchor === btn) { cpkCloseMenu(); return; }   // 같은 버튼 재클릭 = 닫기
-  cpkCloseMenu();
-  const panel = document.getElementById("panel-cpk");
-  if (!panel) return;
-  const menu = document.createElement("div");
-  menu.className = "issue-menu cpk-menu";
-  menu.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()));
-  menu.style.position = "fixed";
-  menu.style.visibility = "hidden";   // 폭·높이 실측 전에는 깜빡임 방지로 숨긴다
-  panel.appendChild(menu);
-  const rect = btn.getBoundingClientRect();
-  const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  let top = rect.bottom + 4;
-  if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
-  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - mw - 12)) + "px";
-  menu.style.top = top + "px";
-  menu.style.visibility = "";
-  btn.setAttribute("aria-expanded", "true");
-  _cpkMenuEl = menu; _cpkMenuAnchor = btn;
+
+// 드롭다운 열기/닫기 — 컨테이너는 툴바 HTML 에 처음부터 있고 display 만 토글한다
+// (Distribution #distSuggest 와 같은 구조). 종전 팝오버의 createElement + fixed 좌표
+// 실측은 사라졌다 — .dist-suggest 의 position:absolute 가 위치를 맡는다.
+function cpkOpenSrcBox() {
+  const box = document.getElementById("cpkSrcSuggest");
+  if (!box) return;
+  const inp = document.getElementById("cpkSrcSearch");
+  box.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()), inp ? inp.value : "");
+  box.style.display = "block";
+  if (inp) inp.setAttribute("aria-expanded", "true");
 }
-// 선택이 바뀌어도 메뉴는 열어 둔다(연속 다중 선택) — 체크 표시와 버튼 라벨만 갱신한다.
+function cpkCloseSrcBox() {
+  const box = document.getElementById("cpkSrcSuggest");
+  const inp = document.getElementById("cpkSrcSearch");
+  if (box) box.style.display = "none";
+  if (inp) inp.setAttribute("aria-expanded", "false");
+}
+// 선택이 바뀌어도 드롭다운은 열어 둔다(연속 다중 선택) — 목록의 체크 상태와 입력칸
+// placeholder 만 갱신한다. 입력칸(#cpkSrcSearch)과 목록(#cpkSrcSuggest)이 별개 엘리먼트라
+// 목록만 다시 그려도 검색어·포커스가 유지된다(Distribution 의 restoreDistSearch 불필요).
 function cpkRefreshMenu() {
-  if (_cpkMenuEl) _cpkMenuEl.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()));
-  const btn = document.getElementById("cpkSrcBtn");
-  if (btn) {
-    btn.innerHTML = esc(cpkSrcBtnLabel()) + " ▾";
-    btn.classList.toggle("active", !!(cpkSourceFilter.size || cpkShowTotal));
+  const inp = document.getElementById("cpkSrcSearch");
+  const box = document.getElementById("cpkSrcSuggest");
+  if (box && box.style.display !== "none")
+    box.innerHTML = cpkSourceMenuHtml(cpkSourceList(cpkAllRows()), inp ? inp.value : "");
+  if (inp) {
+    inp.placeholder = cpkSrcPlaceholder();
+    inp.classList.toggle("has-sel", !!(cpkSourceFilter.size || cpkShowTotal));
   }
 }
+// 드롭다운은 Source 칸 영역 밖을 클릭하면 닫는다. 조건을 .dist-search-wrap 이 아니라
+// 전용 .cpk-src-wrap 으로 좁힌다 — Distribution/Trim 이 같은 클래스를 쓴다.
 document.addEventListener("click", e => {
-  if (_cpkMenuEl && !e.target.closest(".cpk-menu") && !e.target.closest("#cpkSrcBtn"))
-    cpkCloseMenu();
+  if (e.target.closest && e.target.closest(".cpk-src-wrap")) return;
+  cpkCloseSrcBox();
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") cpkCloseMenu(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") cpkCloseSrcBox(); });
 
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
@@ -433,9 +479,8 @@ function renderCpk() {
   const sheets = webReportSheets();
   const rows = sheets ? (sheets["CPK"] || []) : [];
   if (!rows.length) { emptyPanel(panel, "CPK 데이터 없음"); return; }
-  // 패널을 통째로 다시 그리므로 열려 있던 Source 메뉴는 DOM 에서 사라진다 — 상태를 정리해
-  // 고아 참조를 남기지 않는다.
-  cpkCloseMenu();
+  // (Source 드롭다운은 툴바 innerHTML 안에 있어 패널 재렌더로 함께 사라진다 — 종전
+  //  팝오버처럼 모듈 전역에 남는 고아 참조가 없어 정리 호출이 필요 없다.)
 
   const targetBar = cpkTargetMode
     ? `<div class="cpk-target-bar">목표 Cpk ` +
@@ -474,13 +519,19 @@ function renderCpk() {
     `${cpkLowBtnLabel()}</button></span>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">동일Limit 구분</span>` +
     `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 동일Limit 필터(클릭하면 순환): '동일Limit 제외'(기본)=해당 항목을 뺀 나머지 → 'ALL'=전체 표시 → '동일Limit only'=해당 항목만. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
-    // Source 다중 선택 드롭다운 — source 가 1개뿐이고 TOTAL 도 없으면 고를 것이 없어 감춘다.
-    ((sourceList.length >= 2 || cpkTotalRows().length)
+    // Source 다중 선택 — Distribution 검색칸과 **같은 흰 입력칸 + 드롭다운**(사용자 요청).
+    // 고를 것이 없으면(source 1개 + TOTAL 없음 + 안내할 사유도 없음) 통째로 감춘다.
+    // ⚠ data-no-dirty 필수 — 없으면 검색만 해도 edit_mode 가 미저장 변경으로 보고
+    //   이탈 경고를 띄운다.
+    ((sourceList.length >= 2 || cpkTotalRows().length || cpkTotalUnavailableReason())
       ? `<span class="cpk-tool-group"><span class="cpk-tool-label">Source</span>` +
-        `<button type="button" id="cpkSrcBtn" class="btn-sm${cpkSourceFilter.size || cpkShowTotal ? " active" : ""}"` +
-        ` aria-haspopup="true" aria-expanded="false"` +
-        ` title="표시할 source 를 고른다 (여러 개 동시 선택 가능 · TOTAL = 전 source 통합 통계)">` +
-        `${esc(cpkSrcBtnLabel())} ▾</button></span>`
+        `<span class="dist-search-wrap cpk-src-wrap" data-no-dirty>` +
+        `<input type="text" id="cpkSrcSearch" class="dist-search cpk-src-search` +
+        `${cpkSourceFilter.size || cpkShowTotal ? " has-sel" : ""}" autocomplete="off"` +
+        ` role="combobox" aria-expanded="false" placeholder="${esc(cpkSrcPlaceholder())}"` +
+        ` title="클릭하면 source 목록이 열린다 (체크로 여러 개 동시 선택 · TOTAL = 전 source 통합 통계). 타이핑하면 목록이 걸러진다.">` +
+        `<div id="cpkSrcSuggest" class="dist-suggest cpk-src-suggest" style="display:none"></div>` +
+        `</span></span>`
       : "") +
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button>` +
@@ -584,19 +635,14 @@ function renderCpk() {
   // panel-cpk 는 재렌더돼도 요소 자체는 유지되므로 페이저 클릭·체크박스 위임은 1회만 바인딩한다.
   if (!cpkPanelBound) {
     panel.addEventListener("click", (e) => {
-      // Source 드롭다운 열기/닫기.
-      const srcBtn = e.target.closest("#cpkSrcBtn");
-      if (srcBtn) { cpkToggleMenu(srcBtn); return; }
-      // 메뉴 항목: 개별 토글(다중 선택) / TOTAL 토글 / "전체"=선택 전부 해제.
-      // ⚠ renderCpk()(패널 전체 재렌더)를 부르면 메뉴 DOM 이 날아가 연속 다중 선택이
-      // 불가능해진다 — 표와 메뉴/버튼만 부분 갱신한다.
-      const sb = e.target.closest("[data-cpk-src]");
-      if (sb) {
-        const v = sb.dataset.cpkSrc;
-        if (v === "__all__") { cpkSourceFilter.clear(); cpkShowTotal = false; }
-        else if (v === CPK_TOTAL_SOURCE) cpkShowTotal = !cpkShowTotal;
-        else if (cpkSourceFilter.has(v)) cpkSourceFilter.delete(v);
-        else cpkSourceFilter.add(v);
+      // Source 드롭다운 열기 — 빈 검색어에도 전체 목록을 낸다.
+      if (e.target.closest("#cpkSrcSearch")) { cpkOpenSrcBox(); return; }
+      // "전체 해제" — 개별 선택 + TOTAL 을 모두 끈다. 체크박스가 아니라 **버튼**이라
+      // 목록의 선택지들과 형태로 구분된다("전체"는 대상이 아니라 동작이다).
+      // ⚠ renderCpk()(패널 전체 재렌더) 금지 — 드롭다운 DOM·검색어·포커스가 날아간다.
+      if (e.target.closest("[data-cpk-src-clear]")) {
+        cpkSourceFilter.clear();
+        cpkShowTotal = false;
         cpkPage = 1;
         renderCpkTable();
         cpkRefreshMenu();
@@ -607,8 +653,33 @@ function renderCpk() {
       cpkPage = parseInt(pb.dataset.cpkPage, 10) || 1;
       renderCpkTable();
     });
+    // Source 검색 — 타이핑하면 목록을 걸러 다시 연다. 위임인 이유는 이 입력칸이 조건부
+    // 렌더(고를 것이 없으면 없음)라 getElementById 직접 바인딩이 매번 성립하지 않아서다.
+    // debounce 없음 — 최대 22항목이라 250ms 를 기다리면 오히려 답답하다(Distribution 의
+    // debounce 는 distIndex 수백~수천 항목 전량 스캔 때문이다).
+    panel.addEventListener("input", (e) => {
+      if (e.target.id !== "cpkSrcSearch") return;
+      cpkOpenSrcBox();
+    });
     panel.addEventListener("change", (e) => {
       const t = e.target;
+      // Source 체크박스(다중 선택). TOTAL 은 cpkSourceFilter(Set) 가 아니라 cpkShowTotal
+      // 별도 플래그이고, DOM 값도 sentinel 이라 실제 source 이름 "TOTAL" 과 안 겹친다.
+      // ⚠ click 이 아니라 change 다 — <label> 안 체크박스는 click 이 label+input 두 번
+      //   발화해 토글이 상쇄된다. t.checked 를 쓰는 것이 !flag 토글보다 안전하다(DOM 이 진실).
+      // ⚠ renderCpk()(패널 전체 재렌더) 금지 — 드롭다운 DOM 이 날아가 연속 다중 선택이
+      //   불가능해진다. 표와 목록만 부분 갱신한다.
+      const sb = t.closest("[data-cpk-src]");
+      if (sb) {
+        const v = sb.dataset.cpkSrc;
+        if (v === CPK_TOTAL_PICK) cpkShowTotal = sb.checked;
+        else if (sb.checked) cpkSourceFilter.add(v);
+        else cpkSourceFilter.delete(v);
+        cpkPage = 1;
+        renderCpkTable();
+        cpkRefreshMenu();
+        return;
+      }
       if (t.id === "cpkSelAll") {
         const sheets = webReportSheets();
         const keys = cpkDisplayRows(sheets ? (sheets["CPK"] || []) : []).map(r => r._key);

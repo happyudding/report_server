@@ -1,7 +1,7 @@
 """store CRUD + search_precedents 단독 테스트 (모두 tmp DB)."""
 import pytest
 
-from eval_engine import store
+from eval_engine import config, store
 from eval_engine.pipeline import features as features_module
 from eval_engine.pipeline._rules import outcome_label, validate_outcome
 
@@ -70,15 +70,39 @@ def test_search_precedents_matches_similar_name(fresh_db):
     assert len(res) >= 1
     assert res[0]["action"] == "retest"
     assert res[0]["result"] == "recovered_normal"
-    assert res[0]["similarity"] >= 0.70
+    assert res[0]["similarity"] >= config.PRECEDENT_NAME_SIMILARITY
 
 
 def test_search_precedents_excludes_dissimilar_name(fresh_db):
     with store.get_conn() as conn:
         _seed_precedent(conn, item_raw="VREF_TRIM", item_canon="vref_trim")
-    # 전혀 다른 이름 → 유사도 < 0.70 → 제외
+    # 전혀 다른 이름 → 유사도 < 임계값 → 제외
     res = store.search_precedents("V", "iddq_leakage_current_xyz")
     assert res == []
+
+
+def test_strip_common_tokens():
+    """선례 비교 전 공통 토큰 제거 — 변별력 없는 단계·전원·test number 표기를 뗀다.
+
+    이게 깨지면 임계값은 그대로인데 매칭 대상이 조용히 달라진다(선례가 안 붙거나
+    엉뚱한 게 붙는다). 토큰 목록을 고칠 때 기대값도 함께 고칠 것.
+    """
+    s = store.strip_common_tokens
+    assert s("init_code_trim_vref_p1") == "vref"      # 위치 무관 전부 제거
+    assert s("p1_pwr1_idd_standby") == "idd_standby"
+    assert s("t001_vout_trim") == "vout"              # t+숫자 = test number
+    assert s("vref_trim") == s("vref_code") == "vref"  # 단계만 다른 같은 측정
+    # 전부 제거되면 원본 유지 — 빈 문자열끼리 유사도 1.0 이라 무관한 item 이 뭉친다
+    assert s("trim_p1") == "trim_p1"
+
+
+def test_name_similarity_ignores_common_tokens():
+    """공통 토큰이 유사도를 부풀리지 않는지 — 컷(0.5)을 기준으로 판정이 갈려야 한다."""
+    cut = config.PRECEDENT_NAME_SIMILARITY
+    # 공통 토큰만 겹치고 실측 대상이 다른 쌍 → 떨어져야 한다
+    assert store.name_similarity("trim_vref", "trim_idd") < cut
+    # 단계 표기만 다른 같은 측정 → 붙어야 한다
+    assert store.name_similarity("t001_vout_trim", "t002_vout_code") >= cut
 
 
 def test_search_precedents_excludes_self(fresh_db):

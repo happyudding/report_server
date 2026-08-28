@@ -120,14 +120,25 @@ def test_memo_sig_includes_total():
 
 
 def test_menu_click_does_not_full_rerender():
-    """메뉴 항목 핸들러가 renderCpk() 를 부르면 메뉴가 사라져 다중 선택이 불가능하다."""
+    """Source 선택 핸들러가 renderCpk() 를 부르면 드롭다운이 사라져 다중 선택이 불가능하다.
+
+    선택은 **change** 이벤트로 처리한다 (2026-08-27 체크박스 드롭다운 전환) — <label> 안
+    체크박스는 click 이 label+input 두 번 발화해 토글이 상쇄된다. 아래 두 핸들러
+    (체크박스 선택 / "전체 해제" 버튼) 모두 부분 갱신이어야 한다.
+    """
     src = (_JS / "cpk.js").read_text(encoding="utf-8")
-    start = src.index('const sb = e.target.closest("[data-cpk-src]");')
-    body = src[start:src.index('const pb = e.target.closest("[data-cpk-page]");')]
-    assert "renderCpk()" not in body, (
-        "Source 메뉴 핸들러가 패널을 통째로 다시 그립니다 — 메뉴 DOM 이 날아가 "
-        "연속 다중 선택이 불가능해집니다. renderCpkTable()+cpkRefreshMenu() 를 쓰세요.")
-    assert "renderCpkTable()" in body and "cpkRefreshMenu()" in body, body[:200]
+    # ① 체크박스 선택 (change 위임)
+    start = src.index('const sb = t.closest("[data-cpk-src]");')
+    body = src[start:src.index('if (t.id === "cpkSelAll")')]
+    # ② "전체 해제" 버튼 (click 위임)
+    cstart = src.index('if (e.target.closest("[data-cpk-src-clear]"))')
+    cbody = src[cstart:src.index('const pb = e.target.closest("[data-cpk-page]");')]
+    for name, blk in (("체크박스 선택", body), ("전체 해제", cbody)):
+        assert "renderCpk()" not in blk, (
+            f"Source {name} 핸들러가 패널을 통째로 다시 그립니다 — 드롭다운 DOM 과 "
+            "검색어·포커스가 날아가 연속 다중 선택이 불가능해집니다. "
+            "renderCpkTable()+cpkRefreshMenu() 를 쓰세요.")
+        assert "renderCpkTable()" in blk and "cpkRefreshMenu()" in blk, blk[:200]
 
 
 def test_excel_export_untouched():
@@ -193,20 +204,59 @@ def test_total_is_first_row_of_subject():
 
 
 def test_menu_hides_total_when_absent():
-    """(f) TOTAL 행이 없는 세션(구 캐시·Temperature)엔 메뉴에 TOTAL 항목이 없다."""
+    """(f) TOTAL 행이 없는 세션(구 캐시·단일 source)엔 목록에 고를 수 있는 TOTAL 이 없다.
+
+    TOTAL 선택자 값은 sentinel(CPK_TOTAL_PICK)이다 — 실제 source 이름 "TOTAL" 과 겹치면
+    안 되기 때문 (test_total_pick_uses_sentinel 참조).
+    """
     harness = f"""<pre id="res"></pre><script>
     {_stub(total=False)}
     const off = cpkSourceMenuHtml(["S1", "S2"]);
     {_stub(total=True)}
     const on = cpkSourceMenuHtml(["S1", "S2"]);
-    document.getElementById("res").textContent = JSON.stringify({{off: off, on: on}});
+    document.getElementById("res").textContent = JSON.stringify(
+      {{off: off, on: on, pick: CPK_TOTAL_PICK}});
     </script>"""
     res = json.loads(run_probe(harness, "cpk_total_menu", extra_js=("cpk.js",)))
-    assert 'data-cpk-src="TOTAL"' not in res["off"], (
-        "TOTAL 행이 없는데 메뉴에 TOTAL 항목이 떴습니다 — 눌러도 빈 표가 됩니다")
-    assert 'data-cpk-src="TOTAL"' in res["on"], "TOTAL 행이 있는데 메뉴에 안 뜹니다"
+    pick = f'data-cpk-src="{res["pick"]}"'
+    assert pick not in res["off"], (
+        "TOTAL 행이 없는데 목록에 고를 수 있는 TOTAL 이 떴습니다 — 눌러도 빈 표가 됩니다")
+    assert pick in res["on"], "TOTAL 행이 있는데 목록에 안 뜹니다"
     for html in (res["off"], res["on"]):
-        assert 'data-cpk-src="S1"' in html and 'data-cpk-src="__all__"' in html, html
+        # 종전의 체크형 "전체" 항목(__all__)은 헤더의 "전체 해제" **버튼**으로 바뀌었다 —
+        # 사용자가 '전체'(동작)와 'TOTAL'(대상)을 같은 종류로 오인한 것이 이유다.
+        assert 'data-cpk-src="S1"' in html, html
+        assert '__all__' not in html, "체크형 '전체' 항목이 되살아났습니다"
+    # 선택이 있을 때만 해제 버튼이 뜬다 — 위 두 케이스는 선택이 없어 없는 것이 정상.
+    sel = f"""<pre id="res"></pre><script>
+    {_stub(total=True)}
+    cpkSourceFilter = new Set(["S1"]);
+    document.getElementById("res").textContent = cpkSourceMenuHtml(["S1", "S2"]);
+    </script>"""
+    html = run_probe(sel, "cpk_total_menu_sel", extra_js=("cpk.js",))
+    assert "data-cpk-src-clear" in html, "선택이 있는데 '전체 해제' 버튼이 없습니다"
+
+
+def test_total_pick_uses_sentinel():
+    """TOTAL 선택자 값이 실제 source 이름 "TOTAL" 과 겹치면 안 된다.
+
+    겹치면 source 이름이 진짜 "TOTAL" 인 세션에서 한쪽을 켤 때 둘 다 켜진 것처럼 보이고
+    change 핸들러가 어느 쪽인지 구분하지 못한다. 그 세션에서만 나타나 눈으로는 못 잡는다.
+    """
+    harness = f"""<pre id="res"></pre><script>
+    {_stub(total=True)}
+    const html = cpkSourceMenuHtml(["TOTAL", "WF1"]);
+    // data-cpk-src 값을 전부 뽑아 중복이 있는지 본다.
+    const vals = [...html.matchAll(/data-cpk-src="([^"]*)"/g)].map(m => m[1]);
+    document.getElementById("res").textContent = JSON.stringify(
+      {{vals: vals, pick: CPK_TOTAL_PICK, label: CPK_TOTAL_SOURCE}});
+    </script>"""
+    res = json.loads(run_probe(harness, "cpk_total_sentinel", extra_js=("cpk.js",)))
+    assert res["pick"] != res["label"], (
+        "TOTAL 선택자 값이 화면 라벨과 같습니다 — 실제 source 이름 'TOTAL' 과 충돌합니다")
+    assert len(res["vals"]) == len(set(res["vals"])), (
+        f"data-cpk-src 값이 중복됩니다: {res['vals']}")
+    assert res["pick"] in res["vals"] and "TOTAL" in res["vals"], res["vals"]
 
 
 def test_memo_invalidates_on_total_toggle():
@@ -225,13 +275,46 @@ def test_memo_invalidates_on_total_toggle():
         "cpkDisplayRows sig 에 cpkShowTotal 이 빠졌습니다")
 
 
+def test_source_ui_uses_dist_search_look():
+    """Source 는 Distribution 검색칸(흰 입력칸+드롭다운) 룩이다 (2026-08-27 사용자 요청).
+
+    회색 .btn-sm + .issue-menu 팝오버로 되돌아가는 것을 막는다.
+    """
+    src = (_JS / "cpk.js").read_text(encoding="utf-8")
+    for token in ("dist-search-wrap", "dist-suggest", "cpk-src-wrap"):
+        assert token in src, f"cpk.js 에 {token} 이 없습니다 — Source 룩이 되돌아갔습니다"
+    # 주석(이력 설명)에는 옛 클래스명이 남아 있어도 된다 — **클래스로 쓰는지**만 본다.
+    code = "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("//"))
+    for token in ('"issue-menu', "issue-menu-item", "issue-menu-mark", "issue-menu-sep"):
+        assert token not in code, (
+            f"cpk.js 가 {token} 을 씁니다 — Source 는 흰 입력칸+드롭다운입니다")
+
+
+def test_source_input_is_no_dirty():
+    """검색 입력칸에 data-no-dirty 가 없으면 검색만 해도 이탈 경고가 뜬다 (규칙 12)."""
+    src = (_JS / "cpk.js").read_text(encoding="utf-8")
+    for anchor in ('id="cpkSrcSearch"', 'id="cpkSearchInput"'):
+        i = src.index(anchor)
+        # 같은 태그(또는 그 래퍼)에 data-no-dirty 가 붙어 있어야 한다.
+        assert "data-no-dirty" in src[max(0, i - 400):i + 200], (
+            f"{anchor} 주변에 data-no-dirty 가 없습니다 — 검색이 미저장 변경으로 잡힙니다")
+
+
+def test_no_dead_cpk_menu_css():
+    """팝오버가 사라졌으므로 .cpk-menu CSS 도 남기지 않는다 (칩 바 제거 선례)."""
+    html = (_ROOT / "server" / "report" / "report_view.html").read_text(encoding="utf-8")
+    assert ".cpk-menu" not in html, "report_view.html 에 죽은 .cpk-menu CSS 가 남아 있습니다"
+
+
 def main() -> int:
     static = [test_no_es_module, test_menu_uses_own_namespace, test_chip_bar_removed,
               test_total_is_separate_flag, test_memo_sig_includes_total,
-              test_menu_click_does_not_full_rerender, test_excel_export_untouched]
+              test_menu_click_does_not_full_rerender, test_excel_export_untouched,
+              test_source_ui_uses_dist_search_look, test_source_input_is_no_dirty,
+              test_no_dead_cpk_menu_css]
     browser = [test_default_has_no_total, test_total_exempt_from_threshold,
                test_total_is_first_row_of_subject, test_menu_hides_total_when_absent,
-               test_memo_invalidates_on_total_toggle]
+               test_total_pick_uses_sentinel, test_memo_invalidates_on_total_toggle]
     failed = 0
     print("[정적 검사]")
     for fn in static:

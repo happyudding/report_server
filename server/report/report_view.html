@@ -2003,7 +2003,8 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
   border-color: #4a90e2; background: #e3ebfa; color: #2f6bd0;
   box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
 }
-.cpk-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+/* 컨트롤이 늘어 좁은 화면에서 밀린다 — 줄바꿈을 허용한다(2026-08-27). */
+.cpk-toolbar { display: flex; flex-wrap: wrap; gap: 8px; row-gap: 6px; align-items: center; margin-bottom: 8px; }
 .cpk-toolbar input {
   padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px;
   font-size: 12px; min-width: 220px;
@@ -2020,9 +2021,28 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
 .cpk-tool-group { display: inline-flex; align-items: center; gap: 5px; }
 .cpk-tool-group .btn-sm { margin-top: 0; }
 .cpk-tool-label { font-size: 11.5px; color: #667085; white-space: nowrap; }
-/* CPK Source 다중 선택 메뉴 — 룩·다크테마는 .issue-menu 를 그대로 쓰고(cpk.js 가 두 클래스를
-   함께 붙인다) 여기서는 목록이 길어질 때(source 20개+)의 높이 상한만 더한다. */
-.cpk-menu { max-height: 60vh; overflow-y: auto; }
+/* CPK Source 다중 선택 — 룩·다크테마는 Distribution 검색칸(.dist-search/.dist-suggest/
+   .dist-sug-*)을 그대로 쓰고(cpk.js 가 두 클래스를 함께 붙인다) 여기서는 ① .cpk-toolbar
+   input 의 min-width:220px 를 이기는 폭과 ② 목록 높이 상한만 더한다. 공용 .dist-* 규칙은
+   Distribution·Trim·STDF Map·dist_composite 4곳이 쓰므로 손대지 않는다
+   (.trim-cardsearch .dist-search / .stdf-toolbar input.dist-search 와 같은 선례). */
+.cpk-toolbar input.cpk-src-search {
+  min-width: 0; width: 180px; padding: 5px 8px; font-size: 12px; cursor: pointer;
+}
+/* 선택이 있으면 placeholder 가 곧 현재 값이라 눈에 띄게 한다(입력칸 value 는 검색어 전용). */
+.cpk-toolbar input.cpk-src-search.has-sel { border-color: #4a90e2; }
+.cpk-toolbar input.cpk-src-search.has-sel::placeholder { color: #2f6bd0; font-weight: 600; }
+.cpk-src-suggest { max-height: 60vh; }
+/* TOTAL 행 — source 행과 **같은 체크박스**로 나란히 두되(사용자 요청 2026-08-27) 배지와
+   옅은 배경으로 "가상 source" 임을 드러낸다. 배지는 .sug-tno 자리(min-width:34px)를 써서
+   source 행(빈 .sug-tno)과 체크박스↔이름 간격이 자동으로 맞는다. */
+.cpk-sug-total { background: #f6f9ff; border-bottom: 1px solid #e4e7ec; }
+.cpk-sug-badge { color: #2f6bd0; font-weight: 700; font-size: 11px; }
+.cpk-sug-why { color: #98a2b3; font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+/* 서버가 TOTAL 을 못 만드는 세션(Temperature) — 사유를 보여주되 고를 수는 없다. */
+.cpk-sug-total.is-off { opacity: .55; cursor: default; }
+.cpk-sug-total.is-off .sug-name { color: #667085; }
+.cpk-sug-none { color: #98a2b3; justify-content: center; }
 .cpk-target-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #555; }
 .cpk-target-bar input[type="number"] {
   width: 74px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px;
@@ -2884,6 +2904,14 @@ html[data-theme="dark"] .dist-sug-item .sug-name { color: #d7dbe2; }
 html[data-theme="dark"] .dist-sug-head { background: #1e2128; border-bottom-color: #2f3540; color: #8b94a3; }
 html[data-theme="dark"] .dist-sug-cnt b { color: #d7dbe2; }
 html[data-theme="dark"] .dist-count { color: #8b94a3; }
+/* CPK Source 드롭다운 — 입력칸·목록·행은 위 .dist-* 다크 규칙이 그대로 적용된다
+   (cpk.js 가 같은 클래스를 함께 붙인다). CPK 전용 배지·사유 문구만 여기서 맞춘다. */
+html[data-theme="dark"] .cpk-sug-total { background: #232833; border-bottom-color: #2f3540; }
+html[data-theme="dark"] .cpk-sug-badge { color: #7fb3ef; }
+html[data-theme="dark"] .cpk-sug-why { color: #8b94a3; }
+html[data-theme="dark"] .cpk-sug-total.is-off .sug-name { color: #8b94a3; }
+html[data-theme="dark"] .cpk-toolbar input.cpk-src-search.has-sel { border-color: #4a90e2; }
+html[data-theme="dark"] .cpk-toolbar input.cpk-src-search.has-sel::placeholder { color: #7fb3ef; }
 /* Distribution composite — 툴바 버튼·모달·상세 (카드 본체는 아래 .distg-card 규칙 공용) */
 html[data-theme="dark"] .dist-toolbar > .dist-analyze-btn {
   background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
