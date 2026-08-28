@@ -182,6 +182,54 @@ def default_thresholds() -> dict:
     return dict(doc.get("default") or {})
 
 
+def sensitivity_catalog() -> dict:
+    """민감도 게이지 단계표(rules/sensitivity.yaml) + 각 키의 기본값.
+
+    반환 {"version": n, "groups": [{"id","label_ko","signatures","gauge_fixed",
+          "keys":[{"key","levels":[L1..L5],"default"}]}], "allowed_keys":[...]}.
+
+    Honey 클라(설정 창)와 세션 조회 모달이 이 목록을 그대로 그린다 — 단계표를 클라에
+    복제하지 않는 이유는, 값이 갈리면 사용자가 고른 "3단계" 와 서버가 아는 "3단계" 가
+    달라지기 때문이다. `allowed_keys` 는 직접 수정 허용 목록(발화 조건 키)이기도 하다.
+
+    파일이 없거나 깨지면 빈 카탈로그를 준다 — 게이지 UI 만 비활성이 되고 평가는 종전대로
+    돈다(민감도는 부가 기능이라 없다고 리포트가 죽으면 안 된다).
+    """
+    _eval_path()
+    from eval_engine import config
+    from eval_engine.pipeline._rules import load_yaml
+    try:
+        doc = load_yaml(str(config.SENSITIVITY_FILE)) or {}
+    except (OSError, ValueError, ImportError):
+        logger.warning("sensitivity.yaml 을 읽지 못함 — 민감도 게이지 비활성", exc_info=True)
+        return {"version": 0, "groups": [], "allowed_keys": []}
+    defaults = default_thresholds()
+    groups, allowed = [], []
+    for gid, group in (doc.get("groups") or {}).items():
+        keys = []
+        for key, levels in (group.get("keys") or {}).items():
+            if not isinstance(levels, (list, tuple)) or len(levels) != 5:
+                continue
+            keys.append({"key": str(key), "levels": [_num(v) for v in levels],
+                         "default": defaults.get(str(key))})
+            allowed.append(str(key))
+        if not keys:
+            continue
+        groups.append({"id": str(gid), "label_ko": str(group.get("label_ko") or gid),
+                       "signatures": [str(s) for s in (group.get("signatures") or [])],
+                       "gauge_fixed": bool(group.get("gauge_fixed")),
+                       "keys": keys})
+    return {"version": int(doc.get("version") or 1), "groups": groups,
+            "allowed_keys": sorted(set(allowed))}
+
+
+def _num(value):
+    """yaml 숫자 정규화 — 정수는 int 로 유지(count 형 임계값이 소수로 새지 않게)."""
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
 def thresholds_doc() -> dict:
     """thresholds.yaml 전체 (default/product_type/calibration/item_class)."""
     _eval_path()

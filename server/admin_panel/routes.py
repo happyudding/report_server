@@ -563,14 +563,13 @@ def api_runtime():
 
 # ── 통계 ─────────────────────────────────────────────────────────────────────
 
-@admin_panel_bp.get("/api/stats/daily")
-def api_stats_daily():
-    return jsonify(stats.daily_counts(request.args.get("days", 30)))
-
-
 @admin_panel_bp.get("/api/stats/users")
 def api_stats_users():
-    out = stats.user_ranking(request.args.get("days", 30))
+    """사용자별 기여 순위 — /pe/report '내 정보' 와 같은 기준(업로드·코멘트·편집 참여).
+
+    감사로그 기반 옛 집계(stats.user_ranking)는 같은 사람의 숫자가 '내 정보' 화면과
+    달라 혼동을 낳아 2026-08-28 이 라우트에서 떼어냈다. 함수는 남아 있다."""
+    out = stats.contribution_ranking(request.args.get("days", 30))
     users_admin.attach_names(out.get("rows"), "who")
     return jsonify(out)
 

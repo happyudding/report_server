@@ -126,25 +126,46 @@ pre.logbox {
 .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .chart-legend .key { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-#chartTip, .m-tip {
+.m-tip {
   position: absolute; pointer-events: none; display: none; z-index: 5;
   background: var(--surface-1); border: 1px solid var(--grid); border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0,0,0,.35); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
 }
-#chartTip .t-date, .m-tip .t-date { font-weight: 600; margin-bottom: 4px; }
-#chartTip .t-row, .m-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
-#chartTip .sw, .m-tip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
+.m-tip .t-date { font-weight: 600; margin-bottom: 4px; }
+.m-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+.m-tip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 /* 접속 추이 카드 — 그래프 여러 개를 한 카드에 쌓으므로 소제목으로 구분한다 */
 .trend-h { font-size: 13px; font-weight: 600; color: var(--ink-1); margin: 16px 0 6px; }
 .trend-h:first-of-type { margin-top: 4px; }
 .trend-h .hint { font-weight: 400; }
+/* 접속 추이 2x2 — 세로로 5개를 쌓으면 스크롤 없이는 비교가 안 된다. 4개는 격자로 나란히
+   놓고, 요일×시간 히트맵만 24칸 가로가 필요해 격자 밖 전폭에 남긴다.
+   좁은 화면에서는 1열로 접힌다(격자가 겹치면 축 글씨가 뭉갠다). */
+.trend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; }
+@media (max-width: 1100px) { .trend-grid { grid-template-columns: 1fr; } }
+
+/* 런타임 상태 한 줄 — 타일 10장이 화면 한 판을 먹어 정작 아래 표(진행 중 빌드·느린 경로)가
+   안 보였다. 항목은 그대로 두고 [라벨 값] 쌍만 가로로 흘린다. 좁으면 다음 줄로 접힌다.
+   값이 경고 상태면 .rs-item.warn 으로 그 조각만 물들여 한 줄 안에서도 눈에 띄게 한다. */
+.runtime-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 0;
+                 font-size: 12px; color: var(--ink-2); line-height: 1.7; }
+.runtime-strip .rs-item { display: inline-flex; align-items: baseline; gap: 5px;
+                          padding: 0 12px; border-right: 1px solid var(--grid); white-space: nowrap; }
+.runtime-strip .rs-item:first-child { padding-left: 0; }
+.runtime-strip .rs-item:last-child { border-right: 0; }
+.runtime-strip .rs-lbl { color: var(--ink-3); }
+.runtime-strip .rs-val { color: var(--ink-1); font-weight: 600;
+                         font-variant-numeric: tabular-nums; }
+.runtime-strip .rs-sub { color: var(--ink-3); font-size: 11px; }
+.runtime-strip .rs-item.warn .rs-val { color: var(--st-warn); }
+.runtime-strip .rs-item.crit .rs-val { color: var(--st-crit); }
+.runtime-strip .rs-item.clickable { cursor: pointer; }
+.runtime-strip .rs-item.clickable:hover .rs-val { text-decoration: underline; }
 
 /* 클릭 가능한 현황 타일 — 관련 상세 탭으로 이동 */
 .tile.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
 .tile.clickable:hover { border-color: var(--accent); background: #262a32; }
 .tile .go { font-size: 11px; color: var(--accent); margin-top: 6px; }
-.log-link { cursor: pointer; color: var(--accent); }
 .warn-chip { display: inline-block; border-radius: 12px; padding: 4px 12px; font-size: 12px;
              font-weight: 600; margin: 3px 6px 3px 0; }
 .warn-chip.warn { background: #3a3012; color: #fbbf24; }
@@ -221,8 +242,6 @@ body { position: relative; }
           title="사내에 공개한 REST API(/pe/api/v1)를 누가 얼마나 호출하는지 — 서버에 부담이 되는지 확인">public API</button>
   <button class="tab" data-panel="pStorage"
           title="로컬 디스크 사용량을 범주별·세션별로 보고 용량 큰 세션을 정리">스토리지</button>
-  <button class="tab" data-panel="pStats"
-          title="날짜별 업로드·수정·삭제 추이와 최근 활동 20건 (사용자별 집계는 사용자 탭)">통계</button>
   <button class="tab" data-panel="pSessions"
           title="업로드된 세션의 중요표시·PIN·삭제/복구 관리">세션</button>
   <button class="tab" data-panel="pUsers"
@@ -254,8 +273,9 @@ body { position: relative; }
   </div>
   <div style="height:16px"></div>
   <div class="card">
-    <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 열람/빌드 · 스케줄러 (서버 재시작 시 초기화)</span></h2>
-    <div class="tiles" id="runtimeTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
+    <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 열람/빌드 · 스케줄러 (서버 재시작 시 초기화) ·
+      항목에 마우스를 올리면 자세한 수치가 보입니다</span></h2>
+    <div class="runtime-strip" id="runtimeTiles"><span class="rs-item"><span class="rs-lbl">로딩 중…</span></span></div>
     <div class="table-wrap" style="margin-top:12px"><table>
       <thead><tr><th>진행 중 콜드 빌드</th><th>유발 원인</th><th>워커 현재 위치</th>
         <th>대기 중인 사용자</th><th class="num">경과 / 예상</th><th>조치</th></tr></thead>
@@ -271,33 +291,9 @@ body { position: relative; }
       <tbody id="slowRouteBody"><tr class="empty-row"><td colspan="4">-</td></tr></tbody>
     </table></div>
   </div>
-  <div style="height:16px"></div>
-  <div class="card">
-    <h2>리소스 시계열 <span class="hint">10초 샘플 · 24시간 보관 · 이 탭이 보일 때만 10초 갱신 (서버 재시작 시 초기화)</span>
-      <select id="metricsWindow" class="sel" style="float:right" title="그래프에 표시할 기간">
-        <option value="300">최근 5분</option>
-        <option value="3600" selected>최근 1시간</option>
-        <option value="86400">최근 24시간</option>
-      </select></h2>
-    <div class="chart-box">
-      <div class="chart-legend">
-        <span class="key"><span class="sw" style="background:var(--accent)"></span>CPU 평균</span>
-        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>CPU 최대(구간 피크)</span>
-      </div>
-      <svg id="cpuChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
-      <div class="chart-legend" style="margin-top:10px">
-        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM 사용 (다른 서비스 포함)</span>
-        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>report_server 합계 (부모+워커)</span>
-        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>부모 프로세스 RSS</span>
-      </div>
-      <svg id="ramChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
-      <div class="chart-legend" style="margin-top:10px">
-        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>동시 처리 요청 (구간 피크)</span>
-      </div>
-      <svg id="inflightChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
-      <div id="mChartTip" class="m-tip"></div>
-    </div>
-  </div>
+  <!-- 리소스 시계열 그래프는 2026-08-28 삭제 — 재기동마다 초기화되는 in-memory 라
+       정작 필요할 때 비어 있었고, 파일 기반 같은 그래프가 '이력' 탭에 있다.
+       위 피크 타일(metricsTiles)은 현재값이라 남긴다. -->
   <div style="height:16px"></div>
   <div class="card" id="wdDetailCard">
     <h2>Watchdog 상세 <span class="hint">매 5분 점검 기록 — 재기동 원인을 여기서 확인 (자동 갱신 없음)</span>
@@ -636,40 +632,8 @@ body { position: relative; }
 </div>
 
 <!-- Eval DB 탭은 /pe/eval (eval_panel) 로 이관 (2026-08-03) -->
-<!-- ═══ 통계 ═══ -->
-<div id="pStats" class="panel">
-  <div class="card">
-    <h2>일별 사용량 <span class="hint">날짜별 업로드·수정·삭제 건수 · 막대에 마우스를 올리면 정확한 수치가 보입니다</span>
-      <select id="statsDays" class="sel" style="float:right" title="집계 기간 선택">
-        <option value="7">최근 7일</option>
-        <option value="30" selected>최근 30일</option>
-        <option value="90">최근 90일</option>
-      </select>
-    </h2>
-    <div class="chart-legend">
-      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>업로드</span>
-      <span class="key"><span class="sw" style="background:var(--s-edit)"></span>수정</span>
-      <span class="key"><span class="sw" style="background:var(--s-delete)"></span>삭제</span>
-    </div>
-    <div class="chart-box">
-      <svg id="dailyChart" width="100%" height="240" viewBox="0 0 900 240" preserveAspectRatio="none"></svg>
-      <div id="chartTip"></div>
-    </div>
-    <details class="tblview"><summary>표로 보기</summary>
-      <div class="table-wrap"><table id="dailyTable"></table></div>
-    </details>
-  </div>
-  <div class="card">
-    <h2>최근 활동 <span class="hint">가장 최근 사용 기록 20건 (감사로그)</span>
-      <span class="hint" style="float:right">사용자별 집계·실시간 접속자는
-        <b class="who-link" id="goUsersTab" style="cursor:pointer;color:var(--accent)">사용자 탭</b> 으로 옮겼습니다</span></h2>
-    <div class="table-wrap"><table>
-      <thead><tr><th>시각</th><th>작업</th><th>type</th><th>product</th><th>lot_id</th>
-        <th>파일/대상</th><th>사용자(PC)</th><th>IP</th></tr></thead>
-      <tbody id="recentBody"><tr class="empty-row"><td colspan="8">로딩 중…</td></tr></tbody>
-    </table></div>
-  </div>
-</div>
+<!-- 통계 탭은 2026-08-28 삭제 — 최근 활동 20건은 User Action Monitoring 의 앞부분과 같고,
+     사용자별 집계·접속 추이는 이미 사용자 탭에 있어 중복이었다. -->
 
 <!-- ═══ 세션 ═══ -->
 <div id="pSessions" class="panel">
@@ -800,42 +764,57 @@ body { position: relative; }
         <button class="btn" id="btnTrendRefresh" title="지금 즉시 새로고침">↻</button>
       </span></h2>
 
-    <div class="trend-h">일별 접속자 <span class="hint">막대 = 그날 접속한 사람 수(신규/재방문) · 선 = 접속 횟수(오른쪽 축)</span></div>
-    <div class="chart-legend">
-      <span class="key"><span class="sw" style="background:var(--s-new)"></span>신규</span>
-      <span class="key"><span class="sw" style="background:var(--s-return)"></span>재방문</span>
-      <span class="key"><span class="sw" style="background:var(--s-visit)"></span>접속 횟수(우축)</span>
-    </div>
-    <div class="chart-box">
-      <svg id="trendUserChart" width="100%" height="240" viewBox="0 0 900 240" preserveAspectRatio="none"></svg>
-      <div class="m-tip"></div>
-    </div>
+    <div class="trend-grid">
+      <div>
+        <div class="trend-h">일별 접속자 <span class="hint">막대 = 그날 접속한 사람 수(신규/재방문) · 선 = 접속 횟수(우축)</span></div>
+        <div class="chart-legend">
+          <span class="key"><span class="sw" style="background:var(--s-new)"></span>신규</span>
+          <span class="key"><span class="sw" style="background:var(--s-return)"></span>재방문</span>
+          <span class="key"><span class="sw" style="background:var(--s-visit)"></span>접속 횟수(우축)</span>
+        </div>
+        <div class="chart-box">
+          <svg id="trendUserChart" width="100%" height="210" viewBox="0 0 900 210" preserveAspectRatio="none"></svg>
+          <div class="m-tip"></div>
+        </div>
+      </div>
 
-    <div class="trend-h">주간 접속자 · 누적 사용자 <span class="hint">막대 = 그날 포함 최근 7일 동안 접속한 사람 수(WAU) · 선 = 지금까지 한 번이라도 쓴 사람 총합(오른쪽 축)</span></div>
-    <div class="chart-legend">
-      <span class="key"><span class="sw" style="background:var(--s-return)"></span>주간 접속자(7일)</span>
-      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>누적 사용자(우축)</span>
-    </div>
-    <div class="chart-box">
-      <svg id="trendWeeklyChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
-      <div class="m-tip"></div>
-    </div>
+      <div>
+        <div class="trend-h">주간 접속자 · 누적 사용자 <span class="hint">막대 = 최근 7일 접속자(WAU) · 선 = 누적 사용자(우축)</span></div>
+        <div class="chart-legend">
+          <span class="key"><span class="sw" style="background:var(--s-return)"></span>주간 접속자(7일)</span>
+          <span class="key"><span class="sw" style="background:var(--s-upload)"></span>누적 사용자(우축)</span>
+        </div>
+        <div class="chart-box">
+          <svg id="trendWeeklyChart" width="100%" height="210" viewBox="0 0 900 210" preserveAspectRatio="none"></svg>
+          <div class="m-tip"></div>
+        </div>
+      </div>
 
-    <div class="trend-h">Peak 동시 접속자 <span class="hint" id="trendPeakHint">최근 5분 안에 요청을 보낸 사람 수의 그날 최대값</span></div>
-    <div class="chart-box">
-      <svg id="trendPeakChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
-      <div class="m-tip"></div>
-    </div>
+      <div>
+        <div class="trend-h">Peak 동시 접속자 <span class="hint" id="trendPeakHint">최근 5분 안에 요청을 보낸 사람 수의 그날 최대값</span></div>
+        <!-- 계열이 하나뿐이라 범례가 없다. 격자에서 옆 칸(용도별)과 차트 위치를 맞추려면
+             자리는 차지해야 해서 빈 범례를 둔다 — 없으면 두 차트가 세로로 어긋난다. -->
+        <div class="chart-legend">
+          <span class="key"><span class="sw" style="background:var(--s-peak)"></span>동시 접속자</span>
+        </div>
+        <div class="chart-box">
+          <svg id="trendPeakChart" width="100%" height="210" viewBox="0 0 900 210" preserveAspectRatio="none"></svg>
+          <div class="m-tip"></div>
+        </div>
+      </div>
 
-    <div class="trend-h">용도별 접속 횟수 <span class="hint">Honey 앱을 쓰는지 웹으로 보는지</span></div>
-    <div class="chart-legend">
-      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>Honey 실행</span>
-      <span class="key"><span class="sw" style="background:var(--s-edit)"></span>검색페이지</span>
-      <span class="key"><span class="sw" style="background:var(--s-peak)"></span>세션 상세</span>
-    </div>
-    <div class="chart-box">
-      <svg id="trendKindChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
-      <div class="m-tip"></div>
+      <div>
+        <div class="trend-h">용도별 접속 횟수 <span class="hint">Honey 앱을 쓰는지 웹으로 보는지</span></div>
+        <div class="chart-legend">
+          <span class="key"><span class="sw" style="background:var(--s-upload)"></span>Honey 실행</span>
+          <span class="key"><span class="sw" style="background:var(--s-edit)"></span>검색페이지</span>
+          <span class="key"><span class="sw" style="background:var(--s-peak)"></span>세션 상세</span>
+        </div>
+        <div class="chart-box">
+          <svg id="trendKindChart" width="100%" height="210" viewBox="0 0 900 210" preserveAspectRatio="none"></svg>
+          <div class="m-tip"></div>
+        </div>
+      </div>
     </div>
 
     <div class="trend-h">요일 · 시간대 <span class="hint">언제 몰리는지 — 색이 진할수록 접속이 많습니다</span></div>
@@ -902,15 +881,18 @@ body { position: relative; }
       </select></h2>
     <div class="subtabs" id="usersSubtabs">
       <button class="subtab active" data-view="act"
-              title="업로드·수정·삭제 등 실제 작업 건수 (report_audit_log)">작업 활동</button>
+              title="업로드한 Session · Issue Table 코멘트 · 편집 참여 — 사용자가 /pe/report 사용자 메뉴 '내 정보' 에서 보는 것과 같은 기준">작업 활동</button>
       <button class="subtab" data-view="visit"
               title="Honey 실행·웹페이지 방문 횟수 (report_usage_daily)">접속 횟수</button>
     </div>
     <div class="table-wrap" id="usersActView"><table>
-      <thead><tr><th>#</th><th>사용자</th><th>PC</th><th>IP</th>
-        <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
-        <th class="num">합계</th><th>마지막 활동</th></tr></thead>
-      <tbody id="activeUserBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+      <thead><tr><th>#</th><th>사용자</th>
+        <th class="num" title="이 사람이 업로드한 세션 수">📤 업로드 Session</th>
+        <th class="num" title="이 사람이 단 Issue Table 코멘트 수">💬 Issue Table 코멘트</th>
+        <th class="num" title="이 사람이 무엇이든 편집한 세션 수 (코멘트·Note·차트 주석 등 전부)">🗂 편집 참여 Session</th>
+        <th class="num" title="업로드 + 코멘트">합계</th>
+        <th title="마지막으로 편집한 시각">🕘 마지막 활동</th></tr></thead>
+      <tbody id="activeUserBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="table-wrap" id="usersVisitView" style="display:none"><table>
       <thead><tr><th>#</th><th>사용자</th>
@@ -920,7 +902,11 @@ body { position: relative; }
         <th class="num">합계</th><th>마지막 접속</th></tr></thead>
       <tbody id="usageRankBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
-    <div class="msg">신원 없는 브라우저·구버전 Honey 는 <span class="mono">ip:주소</span> 행으로 집계되지만,
+    <div class="msg"><b>작업 활동</b>은 사용자가 <b>/pe/report 사용자 메뉴 → 내 정보</b> 에서 보는 것과 <b>같은 기준·같은 소스</b>입니다
+      (업로드 세션 · Issue Table 코멘트 · 편집 참여 세션). 기간을 <b>최근 1년</b> 보다 짧게 잡으면 그만큼 값이 작게 나오니,
+      본인 화면 숫자와 맞춰볼 때는 기간을 넉넉히 두세요.
+      2026-07-11 이전 편집은 작성자 기록이 없어 코멘트·편집 건수는 <b>최소값</b>입니다(내 정보 화면도 같은 각주를 답니다).
+      <br>신원 없는 브라우저·구버전 Honey 는 <span class="mono">ip:주소</span> 행으로 집계되지만,
       <b>그 IP 를 쓰는 계정 중 활동이 가장 많은 사람(주 사용자)에게 합칩니다</b> (<span class="badge gray">IP 병합</span> 표시 ·
       배지에 마우스를 올리면 합쳐진 원래 이름이 보입니다).
       한 PC 를 여러 사람이 쓰면(공용 PC·NAT) 다른 사람의 활동도 주 사용자 행에 섞일 수 있으니, 정확히 가려야 할 때는 배지로 확인하세요.</div>
@@ -1213,7 +1199,7 @@ const loadedTabs = new Set();
 const TAB_LOADERS = {
   pHealth: loadHealth, pDiag: loadDiagTab,
   pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
-  pStorage: loadStorageTab, pStats: loadStats,
+  pStorage: loadStorageTab,
   pSessions: loadSessions, pUsers: loadUsersTab, pVoc: loadVocTab,
   pChatbot: loadChatbotTab,
   pDb: loadDb, pLogs: () => { loadLogFileList(); loadLogs(); }, pAudit: loadAudit,
@@ -1240,7 +1226,7 @@ function showAuditFor(action) {
   btn.click();
   if (wasLoaded) loadAudit();
 }
-// 특정 사용자/검색어로 감사 탭 이동 (통계 사용자 순위 클릭 등)
+// 특정 사용자/검색어로 감사 탭 이동 (사용자 탭 누적 사용량의 이름 클릭 등)
 function showAuditQuery(q) {
   const btn = document.querySelector('.tab[data-panel="pAudit"]');
   if (!btn) return;
@@ -1433,7 +1419,8 @@ $("btnS3Check").onclick = async () => {
   } catch (e) { $("s3Msg").textContent = "확인 실패: " + e; }
 };
 
-// ── 현황: 리소스 시계열 + 피크 (api/metrics/history) ────────────────────────
+// ── 현황: 피크 타일 (api/metrics/history) + 공용 시계열 렌더러 ────────────────
+// renderMetricsChart 는 현황 탭에서 빠진 뒤에도 이력·public API·Watchdog 탭이 쓴다.
 function fmtClock(unix) {
   const d = new Date(unix * 1000);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -1493,9 +1480,13 @@ function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed, fmtX) {
   });
   hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
 }
+// 현황 탭 피크 타일. 시계열 그래프는 이력 탭으로 일원화했으므로 여기서는 그리지 않고
+// 타일에 쓰는 current/peaks 만 읽는다. peaks 는 서버가 고정 창(5분·1시간·24시간)으로
+// 늘 함께 계산하므로 window 와 무관하다 — 그래서 최소값(60)을 줘 series 전송량만 줄인다
+// (10초마다 도는 폴링이라 24시간치 배열을 매번 받을 이유가 없다).
 async function loadMetrics() {
   try {
-    const m = await getJSON("api/metrics/history?window=" + $("metricsWindow").value);
+    const m = await getJSON("api/metrics/history?window=60");
     const cur = m.current, pk = m.peaks, thr = m.threads;
     const inflPct = Math.min(cur.inflight / thr * 100, 100);
     const pct = v => v.toFixed(0) + "%";
@@ -1514,28 +1505,15 @@ async function loadMetrics() {
       <div class="tile"><div class="lbl">report_server RSS (부모+워커)</div>
         <div class="val" style="font-size:20px">${fmtBytes(cur.total_rss || cur.rss)}</div>
         <div class="det">부모 ${fmtBytes(cur.rss)} · 워커 ${fmtBytes(cur.workers_rss || 0)} (${cur.workers_n || 0}개)<br>피크 5분 ${fmtBytes((pk.w300.total_rss) || pk.w300.rss)} · 24시간 ${fmtBytes((pk.w86400.total_rss) || pk.w86400.rss)} · 기동후 ${fmtBytes((pk.boot.total_rss && pk.boot.total_rss.v) || pk.boot.rss.v)}</div></div>`;
-    const se = m.series;
-    renderMetricsChart($("cpuChart"), se.ts, [
-      { arr: se.cpu_avg, color: "var(--accent)", label: "CPU 평균", area: true },
-      { arr: se.cpu_max, color: "var(--st-warn)", label: "CPU 최대" },
-    ], pct, 100);
-    renderMetricsChart($("ramChart"), se.ts, [
-      { arr: se.mem_used_max, color: "var(--s-upload)", label: "시스템 RAM", area: true },
-      { arr: se.total_rss_max || se.rss_max, color: "var(--st-warn)", label: "서버 합계(부모+워커)" },
-      { arr: se.rss_max, color: "var(--s-edit)", label: "부모 RSS" },
-    ], fmtBytes, null);
-    renderMetricsChart($("inflightChart"), se.ts, [
-      { arr: se.inflight_max, color: "var(--s-delete)", label: "동시 요청", area: true },
-    ], v => String(Math.round(v)), Math.max(thr, niceMax(Math.max(...se.inflight_max, 0))));
   } catch (e) {
     $("metricsTiles").innerHTML = `<div class="tile"><div class="lbl">리소스 계측 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
 }
-$("metricsWindow").onchange = () => loadMetrics();
 
 // ── 이력 탭 (파일 기반 — 재시작과 무관) ──────────────────────────────────────
-// 현황 탭 시계열은 in-memory 라 재기동마다 초기화된다. watchdog 재기동이 잦을수록
-// 정작 필요한 순간에 비어 있으므로, 파일에 남은 1분 해상도 이력을 여기서 본다.
+// 리소스 시계열을 보는 유일한 곳이다(2026-08-28 현황 탭의 in-memory 그래프를 걷어냈다 —
+// 재기동마다 초기화돼 watchdog 이 재기동한 뒤엔 정작 볼 게 없었다).
+// 이쪽은 파일에 남은 1분 해상도라 서버가 죽었다 살아나도 남는다.
 function fmtDayClock(unix) {
   const d = new Date(unix * 1000);
   return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -1699,16 +1677,22 @@ const SCHED_OVERDUE_GRACE = 600;
 function schedOverdue(s) {
   return !!(s && s.next_run && s.next_run < Date.now() / 1000 - SCHED_OVERDUE_GRACE);
 }
-function schedTile(label, s) {
-  if (!s) return `<div class="tile"><div class="lbl">${label}</div><div class="val" style="font-size:14px">-</div></div>`;
+// 런타임 상태 한 줄의 조각 하나. 값은 짧게 보이고 자세한 수치는 title 툴팁으로 내린다
+// (타일이던 시절의 .det 내용이 그대로 툴팁이 된다 — 정보를 줄인 게 아니라 접은 것).
+function rsItem(label, value, detail, cls, attrs) {
+  return `<span class="rs-item${cls ? " " + cls : ""}"${detail ? ` title="${esc(detail)}"` : ""}${attrs || ""}>` +
+         `<span class="rs-lbl">${label}</span><span class="rs-val">${value}</span></span>`;
+}
+function schedItem(label, s) {
+  if (!s) return rsItem(label, "-");
   const overdue = schedOverdue(s);
   const mark = s.last_ok === false ? "❌ " : (s.last_ok ? "✅ " : "");
-  const nextTxt = s.next_run
-    ? ` · 다음 <span style="${overdue ? "color:var(--st-warn)" : ""}">${fmtDate(s.next_run)}${overdue ? " ⚠ 지연" : ""}</span>`
-    : "";
-  return `<div class="tile"><div class="lbl">${label}${overdue ? ' <span style="color:var(--st-warn)">⚠</span>' : ""}</div>
-    <div class="val" style="font-size:14px">${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}</div>
-    <div class="det">${mark}${esc(s.last_result || "-")}${nextTxt}</div></div>`;
+  const detail = `${mark}${s.last_result || "-"}`
+    + ` · 마지막 ${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}`
+    + (s.next_run ? ` · 다음 ${fmtDate(s.next_run)}${overdue ? " ⚠ 지연" : ""}` : "");
+  const state = s.last_ok === false ? "❌" : overdue ? "⚠ 지연" : s.last_ok ? "✅" : "-";
+  return rsItem(label, state, detail,
+                s.last_ok === false ? "crit" : overdue ? "warn" : "");
 }
 // "IP 가 같으면 같은 사용자" 병합 표시 — 서버(identity_merge)가 합친 행에 붙는 꼬리표.
 // 어떤 IP 가 합쳐졌는지 툴팁으로 보여줘야 관리자가 오병합을 알아챌 수 있다.
@@ -1876,41 +1860,41 @@ async function loadRuntime() {
     const lockWaits = Object.values(ca.lock_waits || {}).reduce((a, v) => a + (v.count || 0), 0);
     const ondemandPending = cp.ondemand_pending || 0, distpackPending = cp.distpack_pending || 0;
     const longBuilds = builds.filter(b => (b.elapsed || 0) >= 60);
-    $("runtimeTiles").innerHTML = `
-      <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
-        <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
-        <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
-      <div class="tile" id="auTile" style="cursor:pointer" title="사용자 탭에서 누가 접속 중인지 자세히 봅니다">
-        <div class="lbl">지금 접속 중</div>
-        <div class="val" style="font-size:20px">${au.count || 0}<span style="font-size:12px;color:var(--ink-3)">명</span></div>
-        <div class="det">최근 ${Math.round((au.window_sec || 300) / 60)}분 내 요청 기준 · Honey ${au.honey || 0} · 익명 ${(au.count || 0) - (au.named || 0)}<br><span class="log-link" data-go="users">사용자 탭에서 보기 ›</span></div></div>
-      <div class="tile"><div class="lbl">동시 열람 세션</div>
-        <div class="val" style="font-size:20px">${vw.count || 0}</div>
-        <div class="det">최근 ${Math.round((vw.window_sec || 300) / 60)}분 내 데이터 요청 기준${
-          (vw.sessions || []).length ? " · " + (vw.sessions || []).slice(0, 3).map(s => esc(String(s.session_id).slice(0, 8))).join(", ") : ""}</div></div>
-      <div class="tile"><div class="lbl">컴퓨트 워커</div>
-        <div class="val" style="font-size:20px">${cp.processes || 0} / ${cp.workers || 0}</div>
-        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 온디맨드 대기 <span style="${ondemandPending ? "color:var(--st-warn)" : ""}">${ondemandPending}</span>/${cp.ondemand_workers || 0} · distpack 대기 <span style="${distpackPending ? "color:var(--st-warn)" : ""}">${distpackPending}</span><br>타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}${
-          ((cs.timeout || 0) + (cs.broken || 0) + (cs.error || 0)) > 0
-            ? ` · <span class="log-link" data-grep="compute" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
-      <div class="tile"><div class="lbl">진행 중 콜드 빌드${storm.storm ? ` <span style="color:var(--st-warn)">🌩 폭풍</span>` : ""}</div>
-        <div class="val" style="font-size:20px${(longBuilds.length || storm.storm) ? ";color:var(--st-warn)" : ""}">${builds.length}</div>
-        <div class="det">${builds.length ? `최장 ${builds[0].elapsed}s · ${esc(builds[0].kind || builds[0].stage || "")}${
-          (builds[0].waiting || []).length ? ` · 대기 ${(builds[0].waiting || []).length}명` : ""}` : "없음"}${
-          longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}${
-          storm.storm ? `<br>폭풍 ${stormMin(storm.duration_sec || 0)}째 · 대기 ${storm.queued || 0} · 캐시 세대 v${storm.schema_version ?? "?"} · 기동 후 ${stormMin(storm.uptime_sec || 0)}` : ""}</div></div>
-      <div class="tile"><div class="lbl">프리웜 큐</div>
-        <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
-        <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
-      <div class="tile"><div class="lbl">캐시 히트율</div>
-        <div class="val" style="font-size:20px">${ca.hit_rate == null ? "-" : ca.hit_rate + "%"}</div>
-        <div class="det">RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"} · tables ${fmtBytes(ca.tables_bytes || 0)}<br>응답 ${fmtBytes(respBytes)} · chunk ${fmtBytes(ca.chunk_bytes || 0)} · 잠금대기 ${lockWaits}회</div></div>
-      <div class="tile"><div class="lbl">DB 잠금 경합</div>
-        <div class="val" style="font-size:20px${lk.count ? ";color:#d33" : ""}">${lk.count || 0}</div>
-        <div class="det">busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}${
-          lk.count ? ` · <span class="log-link" data-grep="locked" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
-      ${schedTile("백업 스케줄러", sch.backup)}
-      ${schedTile("정리 스케줄러", sch.cleanup)}`;
+    const computeErrs = (cs.timeout || 0) + (cs.broken || 0) + (cs.error || 0);
+    $("runtimeTiles").innerHTML =
+      rsItem("응답시간", `${lat.p95 || 0} ms`,
+             `p95 기준 · p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms (최근 ${lat.samples || 0}건)`) +
+      rsItem("접속 중", `${au.count || 0}명`,
+             `최근 ${Math.round((au.window_sec || 300) / 60)}분 내 요청 기준 · Honey ${au.honey || 0} · 익명 ${(au.count || 0) - (au.named || 0)} — 클릭하면 사용자 탭으로 이동`,
+             "clickable", ' id="auTile"') +
+      rsItem("열람 세션", `${vw.count || 0}`,
+             `최근 ${Math.round((vw.window_sec || 300) / 60)}분 내 데이터 요청 기준`
+             + ((vw.sessions || []).length ? " · " + (vw.sessions || []).slice(0, 3).map(s => String(s.session_id).slice(0, 8)).join(", ") : "")) +
+      rsItem("컴퓨트 워커", `${cp.processes || 0}/${cp.workers || 0}`,
+             `${cp.pool_alive ? "가동" : "미기동"} · 온디맨드 대기 ${ondemandPending}/${cp.ondemand_workers || 0}`
+             + ` · distpack 대기 ${distpackPending} · 타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}`,
+             (cs.broken ? "crit" : (ondemandPending || distpackPending || computeErrs) ? "warn" : "")
+             + (computeErrs ? " clickable" : ""),
+             computeErrs ? ' data-grep="compute"' : "") +
+      rsItem(`콜드 빌드${storm.storm ? " 🌩" : ""}`, `${builds.length}`,
+             (builds.length ? `최장 ${builds[0].elapsed}s · ${builds[0].kind || builds[0].stage || ""}`
+                + ((builds[0].waiting || []).length ? ` · 대기 ${(builds[0].waiting || []).length}명` : "") : "진행 중인 콜드 빌드 없음")
+             + (longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : "")
+             + (storm.storm ? ` · 🌩 폭풍 ${stormMin(storm.duration_sec || 0)}째 · 대기 ${storm.queued || 0}`
+                + ` · 캐시 세대 v${storm.schema_version ?? "?"} · 기동 후 ${stormMin(storm.uptime_sec || 0)}` : ""),
+             (longBuilds.length || storm.storm) ? "warn" : "") +
+      rsItem("프리웜 큐", `${cp.prewarm_pending || 0}/${cp.prewarm_max || 0}`,
+             `완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}`) +
+      rsItem("캐시 히트율", ca.hit_rate == null ? "-" : ca.hit_rate + "%",
+             `RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"}`
+             + ` · tables ${fmtBytes(ca.tables_bytes || 0)} · 응답 ${fmtBytes(respBytes)}`
+             + ` · chunk ${fmtBytes(ca.chunk_bytes || 0)} · 잠금대기 ${lockWaits}회`) +
+      rsItem("DB 잠금", `${lk.count || 0}`,
+             `busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}`
+             + (lk.count ? " — 클릭하면 관련 로그로 이동" : ""),
+             lk.count ? "crit clickable" : "", lk.count ? ' data-grep="locked"' : "") +
+      schedItem("백업", sch.backup) +
+      schedItem("정리", sch.cleanup);
     // 이상 징후 수집 (스케줄러 지연/실패 · DB 잠금 · 컴퓨트 붕괴)
     _warnRuntime = [];
     if (sch.backup && sch.backup.last_ok === false) _warnRuntime.push({ level: "crit", text: "백업 마지막 실행 실패" });
@@ -1965,8 +1949,9 @@ async function loadRuntime() {
 // 런타임 타일의 "로그 ›" 클릭 → console log 탭으로 관련 키워드 프리필 이동 (타일은
 // 10초마다 재렌더되므로 컨테이너에 위임 1회 등록)
 $("runtimeTiles").addEventListener("click", e => {
-  if (e.target.closest("#auTile")) { goUsersTab(); return; }   // 타일 전체가 클릭 대상
-  const link = e.target.closest(".log-link");
+  if (e.target.closest("#auTile")) { goUsersTab(); return; }   // 조각 전체가 클릭 대상
+  // 한 줄로 접으면서 data-grep 이 안쪽 .log-link 가 아니라 조각(.rs-item) 자신에 붙었다.
+  const link = e.target.closest("[data-grep]");
   if (link) showLogsFor(link.dataset.grep || "", "error");
 });
 
@@ -2276,12 +2261,7 @@ $("btnStgBulkDelete").onclick = async () => {
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };
 
-// ── 통계: 스택 막대 차트 ────────────────────────────────────────────────────
-const SERIES = [
-  { key: "upload", label: "업로드", color: "var(--s-upload)" },
-  { key: "edit",   label: "수정",   color: "var(--s-edit)"   },
-  { key: "delete", label: "삭제",   color: "var(--s-delete)" },
-];
+// ── 차트 공용 헬퍼 (접속 추이 renderTrendChart 가 쓴다) ──────────────────────
 function niceMax(v) {
   if (v <= 5) return 5;
   const mag = Math.pow(10, Math.floor(Math.log10(v)));
@@ -2293,105 +2273,6 @@ function roundedTopRect(x, y, w, h, r) {
   return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} ` +
          `Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
 }
-function renderDailyChart(rows) {
-  const svg = $("dailyChart");
-  const W = 900, H = 240, padL = 44, padR = 10, padT = 10, padB = 26;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const n = rows.length;
-  const maxTotal = Math.max(...rows.map(r => r.upload + r.edit + r.delete), 0);
-  if (!n || maxTotal === 0) {
-    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6f737e" font-size="13">기간 내 기록이 없습니다.</text>`;
-    return;
-  }
-  const yMax = niceMax(maxTotal);
-  const slot = plotW / n;
-  const barW = Math.min(24, Math.max(3, slot - 2));   // 인접 막대 사이 2px 표면 간격
-  const y = v => padT + plotH * (1 - v / yMax);
-  let parts = [];
-  // 가로 그리드 (hairline) + y 눈금
-  const ticks = 4;
-  for (let i = 0; i <= ticks; i++) {
-    const v = yMax * i / ticks, yy = y(v);
-    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#2b2e36" stroke-width="1"/>`);
-    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#6f737e"
-                 font-variant-numeric="tabular-nums">${Math.round(v).toLocaleString()}</text>`);
-  }
-  // 막대 (스택: 업로드 → 수정 → 삭제, 세그먼트 사이 2px 표면 간격)
-  const labelEvery = n > 40 ? 10 : n > 14 ? 5 : 1;
-  rows.forEach((r, i) => {
-    const x = padL + slot * i + (slot - barW) / 2;
-    const segs = SERIES.map(s => ({ ...s, v: r[s.key] })).filter(s => s.v > 0);
-    let cursor = padT + plotH;
-    segs.forEach((s, si) => {
-      const hRaw = plotH * s.v / yMax;
-      const gap = si < segs.length - 1 ? 2 : 0;   // 위 세그먼트와의 표면 간격
-      const h = Math.max(hRaw - gap, 1);
-      const top = cursor - hRaw;
-      if (si === segs.length - 1)
-        parts.push(`<path d="${roundedTopRect(x, top, barW, h, 4)}" fill="${s.color}"/>`);
-      else
-        parts.push(`<rect x="${x}" y="${top}" width="${barW}" height="${h}" fill="${s.color}"/>`);
-      cursor = top;
-    });
-    // x 라벨 (선택적)
-    if (i % labelEvery === 0)
-      parts.push(`<text x="${padL + slot * i + slot / 2}" y="${H - 8}" text-anchor="middle"
-                   font-size="10" fill="#6f737e">${r.date.slice(5)}</text>`);
-    // 호버 히트 영역 (막대보다 크게)
-    parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
-                 width="${slot}" height="${plotH}" fill="transparent"/>`);
-  });
-  // 기준선
-  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#40444e" stroke-width="1"/>`);
-  svg.innerHTML = parts.join("");
-
-  const tip = $("chartTip");
-  svg.querySelectorAll(".hit").forEach(hit => {
-    hit.addEventListener("mousemove", ev => {
-      const r = rows[+hit.dataset.i];
-      tip.innerHTML = `<div class="t-date">${esc(r.date)}</div>` + SERIES.map(s =>
-        `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${s.label} ${r[s.key]}건</div>`).join("");
-      const box = svg.parentElement.getBoundingClientRect();
-      tip.style.display = "block";
-      tip.style.left = Math.min(ev.clientX - box.left + 14, box.width - 150) + "px";
-      tip.style.top = (ev.clientY - box.top - 10) + "px";
-    });
-    hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-  });
-}
-async function loadStats() {
-  const days = $("statsDays").value;
-  try {
-    const d = await getJSON("api/stats/daily?days=" + days);
-    renderDailyChart(d.rows);
-    $("dailyTable").innerHTML =
-      `<thead><tr><th>날짜</th><th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th></tr></thead><tbody>` +
-      d.rows.map(r => `<tr><td>${esc(r.date)}</td><td class="num">${r.upload}</td>
-        <td class="num">${r.edit}</td><td class="num">${r.delete}</td></tr>`).join("") + "</tbody>";
-  } catch (e) {
-    $("dailyChart").innerHTML = `<text x="450" y="120" text-anchor="middle" fill="#f87171" font-size="13">조회 실패: ${esc(e)}</text>`;
-  }
-  // 사용자별 집계(작업 활동·접속 횟수)는 사용자 탭으로 이동했다 — 여기선 안 그린다.
-  try {
-    const rec = await getJSON("api/audit?limit=20");
-    $("recentBody").innerHTML = rec.length ? rec.map(r => {
-      const act = r.action || "";
-      const fail = (r.result && r.result !== "ok") ? `<span class="badge-fail">${esc(r.result)}</span>` : "";
-      return `<tr>
-        <td>${fmtDate(r.created_at)}</td>
-        <td><span class="badge ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${fail}</td>
-        <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
-        <td>${esc(r.lot_id || "-")}</td>
-        <td>${esc(r.file_name || r.changed_fields || r.session_id || "-")}</td>
-        <td>${auditWho(r)}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
-        <td class="mono">${esc(r.client_ip || "-")}</td></tr>`;
-    }).join("") : `<tr class="empty-row"><td colspan="8">기록이 없습니다.</td></tr>`;
-  } catch (e) {
-    $("recentBody").innerHTML = `<tr class="empty-row"><td colspan="8">조회 실패: ${esc(e)}</td></tr>`;
-  }
-}
-$("statsDays").onchange = loadStats;
-$("goUsersTab").onclick = goUsersTab;
 
 // ── 세션 ────────────────────────────────────────────────────────────────────
 const SESS_PAGE = 100;
@@ -2577,8 +2458,8 @@ $("btnPurgeExpired").onclick = async () => {
 
 // ── 사용자 ────────────────────────────────────────────────────────────────────
 // 사용자 관련 화면은 전부 이 탭에 모았다 (실시간 접속 / 누적 사용량 / 웹 로그인 계정).
-// 이전에는 현황·통계·사용자 세 탭에 흩어져 있었고 통계 탭 '사용자별 사용량' 은 여기
-// '작업 활동' 표와 같은 API 를 두 번 그리는 중복이었다.
+// 통계 탭은 2026-08-28 삭제됐다 — 남아 있던 '최근 활동 20건'은 User Action Monitoring
+// 의 앞부분과 같았고, 일별 추이는 이 탭의 접속 추이와 성격이 겹쳤다.
 function loadUsersTab() { loadLiveUsers(); loadClientVersions(); loadUsageTrend(); loadUsageTables(); loadUsers(); loadMessages(); }
 
 function goUsersTab() {
@@ -2882,13 +2763,12 @@ async function loadUsageTables() {
       <tr><td>${i + 1}</td>
         <td><b class="who-link" data-who="${esc(whoId(r, r.who))}" title="이 사용자의 활동 기록 보기"
               style="cursor:pointer;color:var(--accent)">${whoLabel(whoId(r, r.who), r.name)}</b>${mergeBadge(r.merged_from)}</td>
-        <td>${esc(r.host || "-")}</td>
-        <td class="mono">${esc(r.ip || "-")}</td>
-        <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
+        <td class="num">${r.uploads}</td><td class="num">${r.comments}</td>
+        <td class="num">${r.edited_sessions}</td>
         <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="9">기간 내 활동 기록이 없습니다.</td></tr>`;
+      : `<tr class="empty-row"><td colspan="7">기간 내 활동 기록이 없습니다.</td></tr>`;
   } catch (e) {
-    $("activeUserBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+    $("activeUserBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
   }
   try {
     const g = await getJSON("api/stats/usage?days=" + days);
@@ -2905,8 +2785,7 @@ async function loadUsageTables() {
   }
 }
 // ── 접속 추이 그래프 ──────────────────────────────────────────────────────────
-// 스택 막대(좌축) + 선(우축) 겸용 렌더러. 추이 차트 4개가 이 하나를 공유한다
-// (통계 탭의 renderDailyChart 는 #dailyChart·SERIES 고정 전용이라 건드리지 않는다).
+// 스택 막대(좌축) + 선(우축) 겸용 렌더러. 추이 차트 4개가 이 하나를 공유한다.
 // 값이 null 이면 '기록 없음'이라 막대를 그리지 않는다 — 0(그날 아무도 안 씀)과 다르다.
 function renderTrendChart(svgId, rows, opt) {
   const svg = $(svgId), H = +svg.getAttribute("height");
@@ -3902,7 +3781,7 @@ function resumeAdminIdle() {
   else if ($("pChatbot").classList.contains("active")) loadChatbotTab();
 }
 
-// 초기 로드 — #pStats 처럼 해시로 특정 탭 딥링크 가능
+// 초기 로드 — #pUsers 처럼 해시로 특정 탭 딥링크 가능
 const hashTab = document.querySelector(`.tab[data-panel="${location.hash.slice(1)}"]`);
 if (hashTab) {
   hashTab.click();

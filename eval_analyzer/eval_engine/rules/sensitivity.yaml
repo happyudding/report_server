@@ -1,0 +1,99 @@
+# signature 발화 민감도 게이지 1~5 단계표 — 세션 단위 threshold 오버라이드의 값 출처.
+#
+# 게이지 의미: 1=rough(굵직한 것만, 덜 발화) ← 3=현행 기본값 → 5=tight(꼼꼼히, 더 발화).
+# **L3 열은 thresholds.yaml default 와 반드시 같다** (tests/test_sensitivity_table.py 가 강제).
+# 단계 간격은 레벨당 약 3% — 미세 조정용이다(20% 급으로 벌리면 게이지 한 칸이 룰을 통째로
+# 켜고 끄는 스위치가 되어 "조금만 더 보고 싶다" 를 못 한다).
+#
+# 그룹으로 묶는 이유: 여러 signature 가 **같은 threshold 키를 공유**한다(공간 4종+SPOT 이
+# region_fail_share_min·spatial_fail_count_min 을, 꼬리 3종이 tail_* 을). 키 하나를 룰마다
+# 다른 값으로 만들려면 엔진이 룰별 threshold 네임스페이스를 가져야 하고, 특히
+# RING(>)/SPOT(<=)이 `spot_fail_spread_max` 를 **부호 반대로** 공유하는 no-gap 설계가 깨져
+# "둘 다 미발화" 틈이 생긴다. 그래서 조절 단위는 룰이 아니라 **키를 공유하는 그룹**이다.
+#
+# ⚠ 여기 없는 키는 게이지·직접수정 대상이 아니다(구조 키). n_min(최소 표본)·
+# edge/center_region_pct(웨이퍼 영역 분할 자체)·outlier_body_z·outlier_sigma·
+# subpop_outlier_sigma·subpop_n_min·cpk_bad·cpk_trump_yield_floor(L4 trump)·
+# spot_fail_spread_max(RING/SPOT no-gap 경계선) — 잘못 만지면 판정 체계 자체가 흔들린다.
+version: 1
+
+groups:
+
+  OUTLIER:
+    label_ko: "이상치 (OUTLIER)"
+    signatures: [OUTLIER]
+    keys:
+      # 중심에 가장 가까운 fail 이 중앙값에서 MAD 의 몇 배 밖인가. 낮출수록 민감.
+      outlier_fail_mad_min:   [4.24, 4.12, 4.0, 3.88, 3.76]
+      # 몸통 경계~최근접 fail 구간에서 한 번에 비어 있는 최대 폭의 비율. 낮출수록 민감.
+      # ⚠ L5(0.282)는 실측 HEAVY_TAIL 상단(0.287)에 근접한다 — outlier_fail_mad_min 과
+      #   AND 조건이라 단독으로는 오발화하지 않지만, 더 낮추면 꼬리와 섞인다.
+      outlier_jump_ratio_min: [0.318, 0.309, 0.30, 0.291, 0.282]
+
+  LOW_CPK:
+    label_ko: "공정능력 (LOW_CPK)"
+    signatures: [LOW_CPK]
+    # ⚠ 게이지로 움직이지 않는다(전 단계 동일값 — 2026-08-28 사용자 지시). cpk_warn 은
+    #   L6 저장 게이트(present.should_store)를 겸해서, 게이지 한 칸이 발화 여부가 아니라
+    #   **Issue Table 에 항목이 실리는지 자체**를 바꾼다. 조정이 필요하면 직접 입력으로만.
+    gauge_fixed: true
+    keys:
+      cpk_warn: [1.33, 1.33, 1.33, 1.33, 1.33]
+
+  MEAN_SHIFT:
+    label_ko: "중심 치우침 (MEAN_SHIFT)"
+    signatures: [MEAN_SHIFT]
+    keys:
+      mean_shift_warn: [0.318, 0.309, 0.30, 0.291, 0.282]
+
+  TAIL:
+    label_ko: "꼬리 (USL_TAIL·LSL_TAIL·BIDIR_TAIL)"
+    signatures: [USL_TAIL, LSL_TAIL, BIDIR_TAIL]
+    keys:
+      # 초과첨도 — 단방향(USL/LSL)만 참조. BIDIR 은 게이트에서 뺐다(대칭 꼬리는 낮게 나온다).
+      kurtosis_warn:        [10.6, 10.3, 10.0, 9.7, 9.4]
+      # 꼬리 끝(P99.5)이 몸통 robust σ 의 몇 배까지 뻗었나. 정규 ≈2.58.
+      tail_extent_min:      [5.3, 5.15, 5.0, 4.85, 4.7]
+      # 방향별 꼬리 질량 밴드. 밴드가 넓어지는 쪽이 민감(min↓ / max↑) — 전 레벨 min<=max.
+      heavy_tail_mass_min:  [0.0106, 0.0103, 0.01, 0.0097, 0.0094]
+      heavy_tail_mass_max:  [0.0658, 0.0679, 0.07, 0.0721, 0.0742]
+      # 꼬리 질량 중 그 방향이 가진 몫의 하한(보조 조건).
+      tail_side_share_min:  [0.212, 0.206, 0.20, 0.194, 0.188]
+
+  SPATIAL:
+    label_ko: "공간 (E1·EDGE·CENTER·RING·SPOT)"
+    signatures: [E1_FAIL, EDGE_FAIL, CENTER_FAIL, RING_FAIL, SPOT_FAIL]
+    keys:
+      # 전체 fail 중 그 영역이 차지하는 점유율. ⚠ L1 은 상한 1.0 제약으로 0.99 클램프.
+      region_fail_share_min:  [0.99, 0.98, 0.95, 0.92, 0.89]
+      # 공간 룰 최소 fail 수. count 형이라 정수 — 3% 가 1 미만이라 최소 간격 ±1 을 쓴다.
+      spatial_fail_count_min: [12, 11, 10, 9, 8]
+
+  CODE_RAIL:
+    label_ko: "레일 포화 (CODE_RAIL)"
+    signatures: [CODE_RAIL]
+    keys:
+      code_edge_hit_warn: [0.053, 0.0515, 0.05, 0.0485, 0.047]
+
+  FUNC_FAIL:
+    label_ko: "기능성 항목 (FUNC_FAIL)"
+    signatures: [FUNC_FAIL]
+    keys:
+      # pass 값이 고정값(=limit)에 붙어 있는 비율 하한. 상한 1.0 제약이라 절대 간격 0.003.
+      func_fail_pass_fix_min: [0.996, 0.993, 0.99, 0.987, 0.984]
+
+  BIMODALITY:
+    label_ko: "이봉/분리 (BIMODALITY)"
+    signatures: [BIMODALITY]
+    # ⚠ when_metric 이 아니라 L2 features(modality_v2)가 직접 읽는 특수분기다. thresholds_for
+    #   를 경유하므로 오버라이드는 그대로 먹는다.
+    # ⚠ MDDI 제품군 오버레이가 bimodality_warn 0.33 을 쓴다 — 게이지가 3 이 아니면 세션값이
+    #   그 오버레이를 덮는다(세션이 가장 구체적 스코프). 조회 모달이 출처를 표시한다.
+    keys:
+      bimodality_warn:           [0.588, 0.572, 0.555, 0.538, 0.522]
+      # 실질 판별자(분포 사이 골 — separated 판정).
+      subpop_density_gap_strong: [0.212, 0.206, 0.20, 0.194, 0.188]
+      subpop_density_gap_warn:   [0.318, 0.309, 0.30, 0.291, 0.282]
+      subpop_value_gap_warn:     [0.318, 0.309, 0.30, 0.291, 0.282]
+      # 이 비율 이상 outlier 면 산발로 보고 판정 보류 — 올릴수록 보류가 풀려 민감.
+      subpop_outlier_ratio_max:  [0.141, 0.146, 0.15, 0.155, 0.159]

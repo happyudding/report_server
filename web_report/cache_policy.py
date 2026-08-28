@@ -18,7 +18,7 @@
 | _SCATTER_CACHE     | (akey, chash[, prep], mode, subject[, "bin1"])   | raw_data 편집 / 전처리 / 세션 삭제 ("bin1"=양품만) |
 | DIST_CHUNK_CACHE   | (akey, chash[, prep], mode, chunk_id)            | raw_data 편집 / 전처리 / 세션 삭제  |
 | _GAP_CACHE         | (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) | raw_data 편집 / 전처리 / **수식 수정(spec_digest)** / 세션 삭제 — **edits_rev·sid 무관** |
-| AI_COMMENT_CACHE   | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver) | raw_data 편집 / 전처리 / 세션 메타(PATCH) / eval 룰 편집 — **edits_rev·sid 무관**(comment 편집으로 재평가 안 함) |
+| AI_COMMENT_CACHE   | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"][, sens_digest], aiver) | raw_data 편집 / 전처리 / 세션 메타(PATCH) / eval 룰 편집 / **세션 민감도 게이지** — **edits_rev·sid 무관**(comment 편집으로 재평가 안 함) |
 
 공통 규약:
 - 모든 키의 **첫 요소는 analysis_key** — AKEY_CACHES 무효화(evict/invalidate)의 전제.
@@ -37,8 +37,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
-from .validation import validate_mode, webreport_ai_comment, webreport_compare_para
+from .validation import (validate_mode, webreport_ai_comment, webreport_compare_para,
+                         webreport_eval_overrides)
 
 
 def _base(session, prep_digest: str = "") -> tuple:
@@ -426,6 +428,25 @@ def _eval_rules_suffix() -> tuple:
     return parts
 
 
+def _eval_sensitivity_suffix(opts_raw: str) -> tuple:
+    """세션 민감도 게이지 꼬리표 — ai_comment_key 전용.
+
+    **이 꼬리표가 없으면 조용한 오답이 난다.** `ai_comment_key` 는 dedup 이익을 위해
+    session_id 를 일부러 빼는데(perf_guard S10), 민감도는 `webreport_options` 에만 있고
+    analysis_key·content_hash 에는 반영되지 않는다 — 같은 rawdata 를 서로 다른 민감도로
+    두 번 올리면 두 세션이 **같은 키**를 공유해 두 번째가 첫 번째의 평가 결과를 그대로 본다.
+
+    session_id 가 아니라 **설정값 digest** 를 넣는 것이 요점이다: 값이 같으면 형제 세션이
+    계속 캐시를 공유하므로 S10 이 지키려던 이익은 그대로다.
+    설정이 없으면 빈 튜플 = 기존 세션 키 바이트 불변(콜드 폭풍 회피 — _eval_rules_suffix 와 같은 규약).
+    """
+    ovr = webreport_eval_overrides(opts_raw)
+    if not ovr:
+        return ()
+    canon = json.dumps(ovr, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return ("sens" + hashlib.sha256(canon).hexdigest()[:12],)
+
+
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
     # 전처리 변경은 edits_rev 증가로 무효화되므로 prep 을 따로 넣지 않는다
     # (rev 가 이미 키에 있어 덧붙여도 재사용 이득이 없다).
@@ -530,7 +551,9 @@ def ai_comment_key(session, prep_digest: str = "") -> tuple:
     달라질 수 있음) 이 전제가 흔들린다 — LLM/선례 활성화 시 세션 축 추가를 재검토할 것.
     """
     return (_base(session, prep_digest) + (_mode(session), _ai_meta_digest(session))
-            + _eval_rules_suffix() + (AI_COMMENT_SCHEMA_VERSION,))
+            + _eval_rules_suffix()
+            + _eval_sensitivity_suffix(session.get("webreport_options") or "")
+            + (AI_COMMENT_SCHEMA_VERSION,))
 
 
 def trim_key(session, session_id: str, edits_rev: int, source: str) -> tuple:

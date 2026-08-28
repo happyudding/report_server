@@ -95,6 +95,30 @@ def _read_manifest():
     return manifest
 
 
+def _normalize_eval_sensitivity(manifest):
+    """manifest.options 의 민감도 설정을 검증·정규화해 **제자리에서** 바꾼다.
+
+    ingest 는 options dict 를 그대로 세션에 굳히므로, 여기서 걸러야 잘못된 임계값이
+    세션에 남지 않는다. 기본 설정이면 키를 통째로 지운다 — 옵션 원문이 캐시 키의
+    원소라, 기본값도 실으면 기존 세션과 키가 갈려 콜드 재빌드가 된다.
+    구 클라(키 없음)는 아무 일도 일어나지 않는다.
+    """
+    options = manifest.get("options")
+    if not isinstance(options, dict) or "eval_sensitivity" not in options:
+        return
+    from report.eval_sensitivity import SensitivityError, normalize
+    from web_report import eval_debug
+    try:
+        normalized = normalize(options.get("eval_sensitivity"),
+                               rules_rev=eval_debug.rules_rev())
+    except SensitivityError as exc:
+        abort(400, f"AI Comment 민감도 설정이 올바르지 않습니다: {exc}")
+    if normalized:
+        options["eval_sensitivity"] = normalized
+    else:
+        options.pop("eval_sensitivity", None)
+
+
 def _read_files():
     items = []
     total = 0
@@ -285,6 +309,7 @@ def upload_webreport():
         # 그 구간은 클라가 재는 body_sec 로만 알 수 있다.
         with _stage("multipart"):
             manifest = _read_manifest()
+        _normalize_eval_sensitivity(manifest)
         with _stage("read_files"):
             files = _read_files()
         with _stage("read_dist"):

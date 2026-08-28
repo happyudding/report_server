@@ -13,6 +13,7 @@
 | `outcome_taxonomy.yaml` | case_outcome 의 action/result 허용 어휘 + ko/group. | `outcome_label()` / `validate_outcome()` |
 | `item_alias.yaml` | raw item명 → item_canonical 수동 별칭. | `_alias_map()` |
 | `exclusions.yaml` | 평가 제외 목록(전 제품군 공통). `item_contains`(item명 부분일치)·`units`(UNIT 정확일치, 둘 다 대소문자 무시) 매칭 시 L3 발화 전체 차단 + L6 저장 차단(AI Comment 미생성). `/pe/eval` Signatures 탭에서 편집. | `exclusion_reason(case_ctx)` |
+| `sensitivity.yaml` | **민감도 게이지 1~5 단계표**(2026-08-28). signature 그룹 8개 × 키별 `[L1..L5]`. **엔진은 읽지 않는다** — 호출자(report_server)가 카탈로그로 노출하고, 사용자가 고른 단계를 구체값으로 굳혀 `evaluate(thresholds_override=…)` 로 넘긴다. | (서버 `eval_debug.sensitivity_catalog`) |
 
 ## thresholds 스코프 우선순위
 ```
@@ -20,8 +21,14 @@ default (cold-start 표준 robust 시드)
   └─ product_type[<PT>]  override                      (thresholds.yaml 안의 레거시 섹션)
         └─ thresholds/<PT>/_default.yaml               (제품군 공통 오버레이 파일)
               └─ thresholds/<PT>/<FAMILY>.yaml         (family_product 오버레이 파일)
-                    └─ item_class["<category>|<value_type>"]  ← 가장 구체, 최우선
+                    └─ item_class["<category>|<value_type>"]
+                          └─ **세션 오버라이드**(evaluate thresholds_override) ← 최우선
 ```
+- 마지막 단계는 **파일이 아니라 호출 인자**다(2026-08-28) — 세션 단위 민감도 게이지가
+  구체값으로 얹힌다. `api.evaluate` 가 case 마다 `_th_override`/`_th_override_digest` 를
+  스탬프하고 `thresholds_for` 가 캐시 키에 digest 를 넣는다. ⚠ 스코프 전역(`_scope`)에
+  넣으면 서로 다른 민감도의 동시 evaluate 가 서로를 덮어쓴다 — 반드시 case 탑재.
+  단계표는 `sensitivity.yaml`, 규약 전문은 ../../../docs/13 §17.
 - ⚠ `item_class` 는 **2단**이다(2026-08-19 — 종전 3단의 마지막 조각 `bin` 이 빠졌다).
   case 가 item 당 1개가 되면서 식별 축에서 bin 을 뺀 결정과 같은 이유이고, 부수 효과로
   보정 모집단이 합쳐진다(실측: 버킷 34개 대부분 n<10 → 6개 전부 n≥10 — `min_n` 을 넘겨

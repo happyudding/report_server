@@ -37,6 +37,8 @@ from web_report import eta as web_report_eta
 from web_report import response_cache as web_report_response_cache
 from web_report import preprocess as web_report_preprocess
 from web_report import rawedit as web_report_rawedit
+from web_report import validation as web_report_validation
+from web_report import eval_debug as web_report_eval_debug
 
 _log = logging.getLogger(__name__)
 
@@ -115,6 +117,95 @@ def web_report_input_info(session_id):
     except Exception:
         _log.exception("web_report input_info failed for session %s", session_id)
         abort(500, "input_info failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/eval_sensitivity")
+def web_report_eval_sensitivity(session_id):
+    """세션 상세 우상단 🎚 모달 — 이 세션의 AI Comment 판정 기준(민감도 게이지) 조회.
+
+    세션 행의 `webreport_options` 만 읽는다(parquet 미접근 — input_info 와 같은 성격).
+    조회 기능이라 읽기 전용 사용자에게도 열려 있다.
+
+    설정이 없는 세션(기본 3단계 또는 이 기능 도입 전 업로드)은 `applied:false` 로 답하고
+    화면이 "기본 설정" 안내를 그린다 — 에러가 아니다.
+    """
+    session = _require_web_report_session(session_id)
+    from .eval_sensitivity import describe
+    opts_raw = session.get("webreport_options") or ""
+    spec = web_report_validation.webreport_eval_sensitivity(opts_raw)
+    try:
+        result = describe(spec)
+    except Exception:
+        _log.exception("web_report eval_sensitivity failed for session %s", session_id)
+        abort(500, "eval_sensitivity failed")
+    result["ai_comment"] = web_report_validation.webreport_ai_comment(opts_raw)
+    result["can_edit"] = _editor_guard(session) is None
+    return jsonify(result)
+
+
+@report_bp.patch("/session/<session_id>/web_report/eval_sensitivity")
+def web_report_eval_sensitivity_save(session_id):
+    """민감도 설정 **사후 변경** — webreport_options 의 eval_sensitivity 키만 부분 갱신.
+
+    body = 클라가 굳힌 설정 dict(`{"global":n,"groups":{...},"manual":{...},
+    "overrides":{...}}`) 또는 `null`(기본으로 되돌리기).
+
+    옵션 원문이 바뀌면 `report_key`·`ai_comment_key` 가 함께 갈려 다음 조회가 콜드 202 +
+    백그라운드 재빌드가 된다 — 별도 무효화 호출이 필요 없다(그래서 응답에 `rebuild` 를
+    실어 화면이 "변경된 Option 으로 Session Build 를 다시 진행합니다" 를 띄운다).
+    값이 그대로면 저장하지 않는다(no-op 저장이 세션 하나를 통째로 재빌드시키지 않게).
+
+    ⚠ `update_session_meta` 가 아니라 options JSON 만 손대는 이유는 STEP 부분 갱신
+    (`routes_session._update_session_step`)과 같다 — 메타 갱신 경로는 기준정보 컬럼을
+    함께 덮는다.
+    """
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    from .eval_sensitivity import SensitivityError, describe, normalize
+    body = request.get_json(force=True, silent=True)
+    spec = body.get("eval_sensitivity") if isinstance(body, dict) else None
+    try:
+        normalized = normalize(spec, rules_rev=web_report_eval_debug.rules_rev())
+    except SensitivityError as exc:
+        return jsonify({"error": f"민감도 설정이 올바르지 않습니다: {exc}"}), 400
+
+    raw = session.get("webreport_options") or ""
+    try:
+        opts = json.loads(raw) if raw else {}
+    except ValueError:
+        opts = {}
+    if not isinstance(opts, dict):
+        opts = {}
+    before = opts.get("eval_sensitivity")
+    if normalized:
+        opts["eval_sensitivity"] = normalized
+    else:
+        opts.pop("eval_sensitivity", None)
+    changed = opts.get("eval_sensitivity") != before
+    if changed:
+        report_db.update_session(session_id,
+                                 webreport_options=json.dumps(opts, sort_keys=True))
+        ip, ua = _client_meta()
+        try:
+            report_db.log_audit(
+                "webreport_eval_sensitivity", session_id=session_id,
+                analysis_key=session.get("analysis_key"),
+                product_type=session.get("product_type"), product=session.get("product"),
+                lot_id=session.get("lot_id"), file_name=session.get("file_name"),
+                changed_fields=json.dumps(
+                    (normalized or {}).get("overrides") or {}, sort_keys=True)[:1500],
+                client_ip=ip, user_agent=ua, result="ok")
+        except Exception:
+            pass
+    result = describe(normalized)
+    result["ai_comment"] = web_report_validation.webreport_ai_comment(
+        json.dumps(opts, sort_keys=True))
+    result["can_edit"] = True
+    result["rebuild"] = changed
     return jsonify(result)
 
 

@@ -79,7 +79,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode[, rules_rev][, "evalfail"]) | comment/override/전처리 편집(rev) + eval 룰 편집(ai 세션만) + 위 전부 |
-| AI_COMMENT_CACHE | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver) | raw_data 편집 / 전처리 / **세션 메타 PATCH**(meta_digest) / eval 룰 편집 — **sid·edits_rev 무관**: comment 편집·스키마 bump·dedup 형제 세션에서 eval 재평가(콜드 빌드 80%)를 안 한다 (2026-08-13, 아래 "AI Comment 비동기 분리") |
+| AI_COMMENT_CACHE | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"][, sens_digest], aiver) | raw_data 편집 / 전처리 / **세션 메타 PATCH**(meta_digest) / eval 룰 편집 / **세션 민감도 게이지**(sens_digest) — **sid·edits_rev 무관**: comment 편집·스키마 bump·dedup 형제 세션에서 eval 재평가(콜드 빌드 80%)를 안 한다 (2026-08-13, 아래 "AI Comment 비동기 분리") |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |
 | TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
@@ -330,6 +330,15 @@ payload 안에 `format` 필드로 실려 나가는 이름이다. **바꾸면 옛
     (완료 후 stale 304 방지). AI 잡 실패는 `build_status` (sid,"ai") 실패 누적으로
     재시도가 차단되고 리포트는 계속 열린다. 가드: perf_guard `S10-ai-comment-cache`,
     벤치 `#14 bench_ai_comment`(quick 포함).
+  - **세션 민감도 게이지 꼬리표** (2026-08-28): `_eval_sensitivity_suffix` — 세션이
+    `webreport_options.eval_sensitivity.overrides` 를 가지면 `("sens"+digest12,)` 가
+    붙는다. **없으면 빈 튜플**이라 기존 세션 키는 바이트 그대로다(콜드 폭풍 회피 —
+    `_eval_rules_suffix` 와 같은 규약). 이 꼬리표가 없으면 **조용한 오답**이 난다:
+    민감도는 `webreport_options` 에만 있고 analysis_key·content_hash 에는 없으므로,
+    같은 rawdata 를 다른 민감도로 두 번 올린 dedup 형제 세션이 같은 키를 공유해 두 번째가
+    첫 번째의 평가 결과를 그대로 본다. `session_id` 가 아니라 **설정값 digest** 라
+    S10 이 지키려는 dedup 이익(같은 설정이면 형제끼리 캐시 공유)은 그대로다.
+    → [docs/13 §17](13_eval_analyzer_integration.md)
 - **Compare 비동기 분리** (2026-08-19): Compare 모드 세션의 콜드 빌드에서 compare 계산이
   **34%** 였다(3.323s 중 1.147s — payload stage 의 74%). AI Comment 와 **같은 두 겹** 구조로
   분리했다. 값은 완전 등가다(`tests/test_compare_async.py` (a) 가 정준 JSON 일치를 고정).

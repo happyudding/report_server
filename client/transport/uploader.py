@@ -163,6 +163,26 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
     return resp.json()
 
 
+def fetch_eval_sensitivity_catalog(base_url=None):
+    """AI Comment 민감도 게이지 카탈로그(단계표 + 기본값 + 설명)를 서버에서 조회.
+
+    단계표를 클라에 복제하지 않기 위한 조회다 — 정본은 서버 rules/sensitivity.yaml 이고,
+    사본을 두면 사용자가 고른 "3단계" 와 서버가 아는 "3단계" 가 갈린다.
+
+    Returns: dict {version, groups, allowed_keys, help, usage}. 실패 시 RuntimeError —
+    호출측이 로컬 캐시본으로 폴백한다(part_ids 와 같은 무음 실패 금지 관례).
+    """
+    base = (base_url or SERVER_BASE_URL).rstrip("/")
+    url = f"{base}/pe/report/api/eval_sensitivity"
+    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC)
+    if not resp.ok:
+        raise RuntimeError(f"eval_sensitivity fetch failed: HTTP {resp.status_code}")
+    data = resp.json()
+    if not isinstance(data, dict) or not data.get("groups"):
+        raise RuntimeError("eval_sensitivity: 빈 카탈로그")
+    return data
+
+
 def fetch_part_ids(base_url=None):
     """서버 product_info.db 의 part_id/sub_part_id 검색 후보 목록을 조회.
     (업로드 다이얼로그 Product 검색용)

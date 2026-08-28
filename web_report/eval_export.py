@@ -843,6 +843,11 @@ def collect_session_snapshot(session_id: str, *, report_db, upload_root,
         return {"skipped": f"unsupported product_type: {session.get('product_type')!r}"}
 
     evaluate, engine_version = _engine_eval()
+    # 표본함 스냅샷도 AI Comment 와 **같은 기준**으로 재야 한다 — 세션에 민감도 게이지가
+    # 걸려 있는데 여기만 기본값으로 재면, 사용자가 화면에서 본 발화와 룰 튜닝 표본이
+    # 서로 다른 임계값에서 나온 것이 된다.
+    from .validation import webreport_eval_overrides
+    th_override = webreport_eval_overrides(session.get("webreport_options") or "") or None
 
     if tables is None:
         from . import loader
@@ -888,7 +893,8 @@ def collect_session_snapshot(session_id: str, *, report_db, upload_root,
                 raw_df = ai_comment._table_to_raw_df(table, items)
                 result = evaluate({"meta": meta, "raw_df": raw_df},
                                   persist=True, db_path=str(db_path()),
-                                  generate_comment=False)
+                                  generate_comment=False,
+                                  thresholds_override=th_override)
                 n_cases += len(result.get("cases") or [])
                 collected += 1
         finally:

@@ -237,7 +237,8 @@ function linkifyComment(txt) {
 // ── Issue Table "AI Comment" 셀 렌더 ────────────────────────────────────────
 // 서버가 만든 평문 한 덩어리
 //   "[MAJOR][이봉] [현상] … \n[과거사례] … \n [점검제안] …"
-// 를 **화면에서만** 재배치한다 — 섹션별 색 + 줄바꿈, 심각도/분포 배지는 맨 아랫줄.
+// 를 **화면에서만** 재배치한다 — 섹션별 색 + 줄바꿈, 분포 배지는 맨 아랫줄
+// (심각도 배지 [MAJOR]/[MINOR] … 는 2026-08-28 부터 화면에서 숨긴다 — aicIsSeverityBadge).
 // ⚠️ 서버(web_report/ai_comment.py `_cell_text`)를 고치지 않는 이유: 그 문자열은 payload 에
 // 그대로 굳어 디스크/응답 캐시에 남는다. 형식을 바꾸면 캐시된 세션과 새 세션이 갈리고,
 // 해소하려면 REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. 같은 문자열을
@@ -277,6 +278,12 @@ function aicBadgeClass(text) {
     : "aic-badge aic-mod";
 }
 
+// 심각도 배지([MAJOR]/[MINOR]/[CRITICAL]/[MONITOR]/[OK])는 **화면에만** 숨긴다
+// (2026-08-28 사용자 요청). 서버 문자열·payload·Excel·챗봇·eval export 는 그대로 두므로
+// REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드) 없이 옛/새 세션이 같은 화면을 낸다.
+// 판정은 aicBadgeClass 와 같은 "영문이면 심각도" 규칙 — 한글 분포 배지(이봉/다봉 …)는 남는다.
+function aicIsSeverityBadge(text) { return /^[A-Za-z_]+$/.test(String(text)); }
+
 // txt → 섹션 div + 배지 div. 본문은 반드시 linkifyComment 를 통과시킨다(@[..] 링크와
 // *[..] 서식 토큰 유지). linkifyComment 가 이미 esc 하므로 **이중 esc 금지** — 태그·배지
 // 텍스트만 esc 한다.
@@ -310,8 +317,9 @@ function renderAiComment(txt) {
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
       `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
   });
-  if (split.badges.length) {
-    out += `<div class="aic-badges">` + split.badges.map(b =>
+  const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));
+  if (shownBadges.length) {
+    out += `<div class="aic-badges">` + shownBadges.map(b =>
       `<span class="${aicBadgeClass(b)}">${esc("[" + b + "]")}</span>`).join("") + `</div>`;
   }
   return out || linkifyComment(raw);

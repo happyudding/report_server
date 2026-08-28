@@ -115,12 +115,16 @@ def thresholds_for(case_ctx: dict) -> dict:
     ⚠ **반환 dict 는 읽기 전용이다.** `rules_scope()` 안에서는 스코프가 같은
     (product_type, family_product, item_class) 조합의 case 들에 **같은 객체**를 돌려주므로,
     호출부가 값을 고치면 다른 case 로 번진다. 현재 파이프라인은 전부 읽기만 한다.
+
+    case 에 `_th_override`(세션 단위 임계값, api.evaluate 가 스탬프)가 붙어 있으면 병합 맨
+    뒤에 얹힌다. 캐시 키에 그 digest 를 함께 넣어야 같은 run 안에서 override 유무가 섞이지
+    않는다.
     """
     scope = _scope
     if scope is None:
         return _thresholds_merged(case_ctx)
     key = ("th", case_ctx.get("product_type"), case_ctx.get("family_product"),
-           case_ctx.get("item_class"))
+           case_ctx.get("item_class"), case_ctx.get("_th_override_digest"))
     hit = scope.get(key)
     if hit is None:
         hit = _thresholds_merged(case_ctx)
@@ -148,6 +152,10 @@ def _thresholds_merged(case_ctx: dict) -> dict:
     ic = doc.get("item_class", {}).get(case_ctx.get("item_class"))
     if ic:
         merged.update(ic)
+    # 세션 단위 오버라이드(민감도 게이지)가 가장 구체적인 스코프 — 파일 스코프 전체를 덮는다.
+    ovr = case_ctx.get("_th_override")
+    if ovr:
+        merged.update(ovr)
     return merged
 
 

@@ -76,6 +76,55 @@ def webreport_step(opts_raw: str) -> str:
     return str(opts.get("step") or "").strip()[:20]
 
 
+def webreport_eval_sensitivity(opts_raw: str):
+    """세션의 webreport_options JSON → eval 민감도 게이지 설정 (없으면 None).
+
+    조회 모달("이 세션에 어떤 기준이 적용됐나")용 구조 그대로다. 형태:
+        {"v":1, "global":3, "groups":{"OUTLIER":4,...}, "manual":{키:값},
+         "overrides":{키:값}, "rules_rev":"7"}
+    `overrides` 만이 평가에 실제로 쓰이는 값이고(webreport_eval_overrides), 나머지는
+    "그 값이 어디서 나왔나" 를 사람에게 보여주기 위한 메타다.
+
+    ⚠ 기본 설정(전 게이지 3·직접 수정 없음)인 세션은 이 키를 **아예 싣지 않는다** —
+    옵션 원문이 report_key 의 원소라, 기본값도 실으면 기존 세션의 캐시 키가 통째로
+    바뀌어 전 세션 콜드 재빌드가 된다.
+    """
+    if not opts_raw:
+        return None
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return None
+    if not isinstance(opts, dict):
+        return None
+    sens = opts.get("eval_sensitivity")
+    return sens if isinstance(sens, dict) and sens else None
+
+
+def webreport_eval_overrides(opts_raw: str) -> dict:
+    """세션의 webreport_options JSON → 엔진에 넘길 {임계값 키: 숫자} (없으면 빈 dict).
+
+    `evaluate(thresholds_override=...)` 인자로 그대로 들어가는 값이다. 값 검증(허용 키·
+    범위·관계식)은 **업로드/저장 시점**에 서버가 끝내므로(server/upload_webreport.py) 여기서는
+    숫자 형변환만 한다 — 조회 경로가 매번 룰 파일을 읽지 않게 하기 위해서다.
+    bool 은 숫자로 받지 않는다(True 가 1.0 으로 새어 임계값이 되는 것을 막는다).
+    """
+    sens = webreport_eval_sensitivity(opts_raw)
+    if not sens:
+        return {}
+    raw = sens.get("overrides")
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for key, value in raw.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        name = str(key).strip()
+        if name:
+            out[name] = value
+    return out
+
+
 def webreport_compare_groups(opts_raw: str, source_names):
     """세션의 webreport_options JSON → Compare 모드 Before/After 그룹 (source 이름 기준).
 

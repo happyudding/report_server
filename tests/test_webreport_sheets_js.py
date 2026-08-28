@@ -11,7 +11,7 @@ DOM 을 만들어 원문과 대조해야 한다. 같은 이유로 Signature 드�
 
 검증하는 것:
   (a) renderAiComment 가 원문 글자를 하나도 잃지 않는다 (공백 정규화 기준)
-  (b) 심각도/분포 배지가 **마지막** 블록에 온다
+  (b) 분포 배지가 **마지막** 블록에 오고, 심각도 배지(영문)는 화면에서 숨겨진다
   (c) [현상] 이 없는 옛 코멘트는 linkifyComment 결과와 **완전히 동일**하다 (폴백)
   (d) @[항목] 링크와 *[..] 서식 토큰이 살아 있다
   (e) HTML 이 이스케이프된다 (<img onerror> 가 태그로 남지 않는다)
@@ -132,12 +132,16 @@ def test_ai_comment_render():
         # 섹션 **라벨**도 같은 성격의 표시 규약이다(AIC_SEC_LABEL — 화면은 [사례]/[제안]
         # 으로 짧게 찍고 서버 문자열·파싱 키는 [과거사례]/[점검제안] 그대로). 기준 텍스트에
         # 같은 치환을 적용해 **본문** 글자 손실만 잡는다.
+        # 심각도 배지([MAJOR] 등 영문)는 2026-08-28 부터 **화면에서만** 숨기므로 기준
+        # 텍스트에서도 뺀다 — 서버 문자열은 그대로라 본문 손실 검사 취지는 유지된다.
         "var ref=document.createElement('div');ref.innerHTML=linkifyComment(SAMPLE);"
         "var rt=ref.textContent;"
         "Object.keys(AIC_SEC_LABEL).forEach(function(k){"
         "  rt=rt.split('['+k+']').join('['+AIC_SEC_LABEL[k]+']'); });"
         "var mm=rt.match(/^\\s*((?:\\[[^\\]\\s]{1,12}\\])+)\\s*([\\s\\S]*)$/);"
-        "var expected=mm?mm[2]+mm[1]:rt;"
+        "var keptBadges=mm?(mm[1].match(/\\[[^\\]\\s]{1,12}\\]/g)||[]).filter(function(b){"
+        "  return !aicIsSeverityBadge(b.slice(1,-1)); }).join(''):'';"
+        "var expected=mm?mm[2]+keptBadges:rt;"
         "out.lossless = norm(box.textContent)===norm(expected);"
         "out.expected = expected;"
         "out.text = box.textContent;"
@@ -163,7 +167,9 @@ def test_ai_comment_render():
     assert r["render"] == "OK", r
     assert r["lossless"], f"AI Comment 파싱이 글자를 잃었습니다:\n원문={SAMPLE!r}\n출력={r['text']!r}"
     assert r["lastIsBadges"], f"배지가 마지막 줄이 아닙니다: {r}"
-    assert "[MAJOR]" in r["badgeText"] and "[이봉]" in r["badgeText"], r["badgeText"]
+    # 심각도 배지는 숨기고(2026-08-28), 분포 배지(한글)만 남긴다.
+    assert "[MAJOR]" not in r["badgeText"], f"심각도 배지가 화면에 남았습니다: {r['badgeText']}"
+    assert "[이봉]" in r["badgeText"], r["badgeText"]
     assert r["secOrder"] == "aic-sym,aic-past,aic-act", r["secOrder"]
     assert r["link"] == 1, f"@[항목] 링크가 사라졌습니다: {r}"
     assert r["fmt"] == 1, f"*r[..] 서식 토큰이 사라졌습니다: {r}"
@@ -349,7 +355,7 @@ def main():
     test_no_es_module()
     test_script_registered()
     test_aic_past_expands_on_click()
-    test_aic_label_is_display_only()
+    test_aic_parses_old_and_new_section_tokens()
     if edge_path() is None:
         print(f"[a~h] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
         print("\n부분 통과 (정적 검사만)")

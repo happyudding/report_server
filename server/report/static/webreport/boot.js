@@ -350,6 +350,12 @@ async function load(resetMode=true) {
     applyDeepLink();
     hideLoadOverlay();
     maybeStartAiPendingPoll();   // AI 백그라운드 계산 중이면 완료를 폴링해 반영
+    // 판정 기준(민감도) 버튼은 AI Comment 세션에서만 — 그 외 세션은 적용 대상이 없다.
+    // pending 세션도 결국 AI 세션이므로 함께 켠다.
+    try {
+      const web = DATA.web_report || {};
+      evalSensButtonSync(!!(web.signature_options || web.ai_comment_pending));
+    } catch (e) { /* 버튼 노출 실패는 리포트와 무관 */ }
   } catch (e) {
     const box = document.getElementById("errorBox");
     box.style.display = "";

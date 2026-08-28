@@ -24,6 +24,7 @@ from pathlib import Path
 import pandas as pd
 
 from .honeyform import META_COLUMNS, META_ROW_LABELS
+from .validation import webreport_eval_overrides
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +375,14 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
     fail_only=None 이면 서버 기본(env). 참이면 fail 이 1chip 이상인 item 만 평가한다 —
     그 결과 **수율·cpk 는 정상인데 룰만 위반한 item(etc_auto_items)이 생기지 않는다**.
     의도된 동작이며, 되돌리려면 WEB_REPORT_EVAL_FAIL_ONLY=0.
+
+    세션에 민감도 게이지 설정(webreport_options.eval_sensitivity)이 있으면 그 구체값을
+    `thresholds_override` 로 넘긴다 — 단계표 해석은 저장 시점에 끝나 있고 여기는 숫자만
+    전달한다. 이 값은 `cache_policy.ai_comment_key` 에도 digest 로 들어가 있어야 한다
+    (없으면 같은 rawdata·다른 민감도인 dedup 형제 세션이 캐시를 공유해 조용한 오답이 된다).
     """
     evaluate = _evaluate_fn()
+    th_override = webreport_eval_overrides(session.get("webreport_options") or "") or None
     selected = {str(v) for v in (selected_items or []) if str(v)}
     fail_set = eval_fail_scope(tables) \
         if (fail_only if fail_only is not None else _FAIL_ONLY) else None
@@ -397,7 +404,8 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
         if not items:
             continue
         raw_df = _table_to_raw_df(table, items)
-        result = evaluate({"meta": meta, "raw_df": raw_df}, persist=False)
+        result = evaluate({"meta": meta, "raw_df": raw_df}, persist=False,
+                          thresholds_override=th_override)
         for case in result.get("cases") or []:
             key = str(case.get("item_raw") or "")
             prev = best.get(key)

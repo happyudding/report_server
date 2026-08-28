@@ -258,6 +258,74 @@ def usage_hourly_heatmap(days=30):
             "users": [[len(s) for s in row] for row in users]}
 
 
+def contribution_ranking(days=30, limit=50):
+    """사용자별 '기여' 순위 — /pe/report 사용자 메뉴 '내 정보' 와 **같은 기준**.
+
+    내 정보(database/users.user_activity)는 report_session(업로드) +
+    report_webreport_edit(코멘트·편집 참여) 를 세는데, 예전 이 화면은 report_audit_log
+    의 upload/edit/delete '건수'를 셌다. 소스도 지표도 달라 같은 사람의 숫자가 두 화면에서
+    맞을 수가 없었다(CLAUDE.md 규칙 13 — 같은 값은 한 기준에서만). 그래서 이쪽을
+    user_activity 와 같은 소스·같은 컬럼으로 맞춘다. 감사로그 기반 원본은
+    user_ranking() 으로 남아 있다(감사 탭 드릴다운이 그 축을 쓴다).
+
+    user_activity 와 다른 점은 **기간 필터**뿐이다 — 내 정보는 전체 기간, 이 표는 관리자가
+    고른 최근 N일. days=0 을 주면 전체 기간이라 내 정보와 정확히 같은 값이 된다.
+
+    신원 키는 두 테이블 모두 normalize_uid 로 정규화해 GROUP BY 하고, 그 뒤 usage_ranking
+    과 같은 규칙으로 IP 병합한다. LIMIT 도 같은 이유로 병합 후에 적용한다.
+
+    ⚠️ 2026-07-11 세션 편집 DB 이관 이전 편집은 updated_by 가 NULL 이라 누구의 활동으로도
+    세지 않는다 — 코멘트/편집 건수는 '최소값'이며 내 정보 화면도 같은 각주를 단다."""
+    try:
+        days = 0 if int(days) == 0 else _clamp_days(days)
+    except (TypeError, ValueError):
+        days = 30
+    cutoff = int(time.time()) - days * 86400 if days else 0
+    with report_db.get_conn() as conn:
+        up_rows = conn.execute(
+            "SELECT LOWER(TRIM(uploaded_by)) AS who, COUNT(*) AS uploads "
+            "FROM report_session WHERE uploaded_by IS NOT NULL AND TRIM(uploaded_by) <> '' "
+            "  AND created_at >= ? GROUP BY who", (cutoff,)).fetchall()
+        ed_rows = conn.execute(
+            "SELECT LOWER(TRIM(updated_by)) AS who, "
+            "       SUM(CASE WHEN kind='issue_comment' THEN 1 ELSE 0 END) AS comments, "
+            "       COUNT(DISTINCT session_id) AS edited_sessions, "
+            "       MAX(updated_at) AS last_at "
+            "FROM report_webreport_edit "
+            "WHERE updated_by IS NOT NULL AND TRIM(updated_by) <> '' "
+            "  AND updated_at >= ? GROUP BY who", (cutoff,)).fetchall()
+
+    mapping = identity_merge.ip_to_user()
+    merged = {}
+
+    def _bucket(raw):
+        name, was_merged = identity_merge.resolve(normalize_uid(raw), mapping=mapping)
+        cur = merged.get(name)
+        if cur is None:
+            cur = merged[name] = {"who": name, "uploads": 0, "comments": 0,
+                                  "edited_sessions": 0, "total": 0, "last_at": 0,
+                                  "merged_from": []}
+        if was_merged and raw not in cur["merged_from"]:
+            cur["merged_from"].append(raw)
+        return cur
+
+    for r in up_rows:
+        _bucket(r["who"])["uploads"] += r["uploads"] or 0
+    for r in ed_rows:
+        cur = _bucket(r["who"])
+        cur["comments"] += r["comments"] or 0
+        # 편집 참여 세션은 사람별 DISTINCT 라 IP 병합 시 합계가 과대해질 수 있다
+        # (두 키가 같은 세션을 편집한 경우). 정확한 재계산보다 합이 낫다 — 병합 자체가
+        # 근사이고, 여기서 다시 DISTINCT 를 잡으려면 세션 ID 를 전부 끌어와야 한다.
+        cur["edited_sessions"] += r["edited_sessions"] or 0
+        cur["last_at"] = max(cur["last_at"] or 0, r["last_at"] or 0)
+    for cur in merged.values():
+        cur["total"] = cur["uploads"] + cur["comments"]
+    out = sorted(merged.values(),
+                 key=lambda d: (d["total"], d["edited_sessions"]), reverse=True)[:int(limit)]
+    return {"days": days, "rows": out}
+
+
 def user_ranking(days=30, limit=50):
     """사용자별 사용량 순위. 신원은 client_user → client_host → client_ip 순 폴백
     (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러.

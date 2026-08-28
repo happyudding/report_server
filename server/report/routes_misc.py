@@ -705,6 +705,38 @@ def part_ids():
     return jsonify({"part_ids": list_search_candidates()})
 
 
+@report_bp.get("/api/eval_sensitivity")
+def eval_sensitivity_catalog():
+    """AI Comment 민감도 게이지 카탈로그 — 단계표 + 기본값 + 한국어 설명 + 사용처.
+
+    Honey 클라의 민감도 설정 창과 세션 조회 모달이 같은 목록을 그린다. `/pe/eval` 의
+    같은 정보는 관리자 인증 뒤에 있어 클라가 못 쓰므로 여기에 **읽기 전용 공개**로 낸다
+    (part_ids 와 같은 성격 — 값을 바꾸지 않고 선택지만 알려준다).
+
+    실패는 빈 카탈로그다(500 안 냄) — 클라는 그 경우 로컬 캐시본을 쓰고, 그것도 없으면
+    설정 UI 만 비활성으로 뜬다.
+    """
+    from web_report import eval_debug
+    try:
+        catalog = eval_debug.sensitivity_catalog()
+    except Exception:
+        _log.warning("eval_sensitivity 카탈로그 조회 실패", exc_info=True)
+        return jsonify({"version": 0, "groups": [], "allowed_keys": [], "help": {},
+                        "usage": {}})
+    help_map, usage = {}, {}
+    try:
+        from eval_panel import rules_io
+        allowed = set(catalog.get("allowed_keys") or [])
+        help_map = {k: v for k, v in rules_io.threshold_help().items() if k in allowed}
+        usage = {k: v for k, v in rules_io.threshold_usage().items() if k in allowed}
+    except Exception:
+        # 설명이 없어도 게이지는 동작한다 — 문구는 부가 정보다.
+        _log.warning("threshold 설명/사용처 조회 실패 — 문구 없이 응답", exc_info=True)
+    catalog["help"] = help_map
+    catalog["usage"] = usage
+    return jsonify(catalog)
+
+
 # ── /pe 랜딩 현황 수치 ────────────────────────────────────────────────────────
 # 무인증 공개 페이지에 나가는 값이라 **집계 숫자만** 싣는다 — 계정ID·IP·보고 있는
 # session_id 는 어떤 경로로도 포함하지 않는다(active_users() 는 count 만 꺼내 쓴다).

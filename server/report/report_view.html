@@ -2461,6 +2461,27 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
 }
 .iinfo-sub { font-size: 11px; color: #8a95a3; font-weight: 400; }
 
+/* ── AI Comment 민감도(게이지) 모달 — 표 골격은 .iinfo-* 재사용 ─────────────── */
+/* 게이지 셀은 단계 5개가 한 줄에 들어가야 한다(줄바꿈되면 어느 단계인지 못 읽는다). */
+.esens-gauge { display: inline-flex; gap: 2px; align-items: center; }
+.esens-step {
+  min-width: 26px; padding: 3px 0; border: 1px solid #d8dee6; background: #fff;
+  cursor: pointer; font-size: 11px; line-height: 1; border-radius: 5px; color: #556;
+}
+.esens-step.on { background: #2f6fd0; border-color: #2f6fd0; color: #fff; font-weight: 700; }
+.esens-step:disabled { cursor: default; opacity: .5; }
+.esens-custom { font-size: 11px; color: #7a6a2a; margin-left: 6px; white-space: nowrap; }
+.esens-val {
+  width: 82px; padding: 3px 5px; border: 1px solid #d8dee6; border-radius: 5px;
+  font-size: 12px; font-variant-numeric: tabular-nums; text-align: right;
+}
+.esens-val.changed { border-color: #2f6fd0; background: #f0f6ff; font-weight: 600; }
+.esens-key { font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.esens-help {
+  margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+  background: #f4f7fb; border: 1px solid #dfe6ef; color: #445; min-height: 18px;
+}
+
 /* ── Rawdata CSV 다운로드 (source 선택 메뉴) ───────────────────────────────── */
 .rawdl-wrap { position: relative; display: inline-flex; }
 .btn-topbar-rawdl {
@@ -2640,6 +2661,12 @@ html[data-theme="dark"] .iinfo-table tbody tr:nth-child(even) td { background: #
 html[data-theme="dark"] .iinfo-grouprow td { background: #2b313b !important; color: #c7d2e0; }
 html[data-theme="dark"] .iinfo-note { background: #38301b; border-color: #6e5326; color: #e8c96a; }
 html[data-theme="dark"] .iinfo-table td.iinfo-none { color: #6b7280; }
+html[data-theme="dark"] .esens-step { background: #262a33; border-color: #3a3f4b; color: #b9c0cc; }
+html[data-theme="dark"] .esens-step.on { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+html[data-theme="dark"] .esens-val { background: #1b1e24; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .esens-val.changed { border-color: #4d8ae0; background: #1d2a3d; }
+html[data-theme="dark"] .esens-help { background: #1f232b; border-color: #33373f; color: #b9c0cc; }
+html[data-theme="dark"] .esens-custom { color: #d8b85a; }
 html[data-theme="dark"] .rawdl-menu { background: #1b1e24; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 html[data-theme="dark"] .rawdl-menu-title { color: #8b93a1; }
 html[data-theme="dark"] .rawdl-item { color: #d5d9e0; }
@@ -3145,6 +3172,8 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
     <div class="topbar-actions" id="topbarActions">
       <!-- Input File 정보도 Rawdata 다운로드와 같은 조회 기능(권한 게이트 없음) -->
       <button class="btn-topbar-info" id="btnInputInfo" title="Input File Information — source 별 입력 파일·STDF 정보">ℹ</button>
+      <!-- AI Comment 판정 기준(민감도) 조회 — AI Comment 세션에서만 eval_sensitivity_info.js 가 켠다 -->
+      <button class="btn-topbar-info" id="btnEvalSens" title="AI Comment 판정 기준 (민감도 설정)" style="display:none;">🎚</button>
       <!-- Rawdata 다운로드는 조회 기능이라 읽기 전용 사용자에게도 보인다(권한 게이트 없음) -->
       <span class="rawdl-wrap">
         <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (source별 CSV / 전체 zip)">⬇</button>
@@ -3388,6 +3417,21 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   </div>
 </div>
 
+<!-- AI Comment 판정 기준(민감도 게이지) — 조회 + 편집 권한이 있으면 사후 변경.
+     표 본문·게이지는 eval_sensitivity_info.js 가 카탈로그로 그리므로 여기는 껍데기만 둔다. -->
+<div class="modal-overlay" id="evalSensModal" data-no-dirty>
+  <div class="modal-box modal-box-input-info">
+    <p class="modal-title">AI Comment 판정 기준</p>
+    <p class="modal-desc" id="esensDesc">이 세션의 AI Comment 가 어떤 기준으로 판정됐는지 보여줍니다.</p>
+    <div id="esensNote"></div>
+    <div class="iinfo-scroll"><div id="esensBody"></div></div>
+    <div class="modal-actions">
+      <button class="modal-btn" id="esensSave" style="display:none;">저장</button>
+      <button class="modal-btn primary" id="esensClose">닫기</button>
+    </div>
+  </div>
+</div>
+
 <!-- Distribution composite 만들기/수정 — Item 명이 길어도 안 잘리게 넓은 규격(.dc-modal-box).
      검색 목록은 Distribution 검색 제안(.dist-sug-item)과 같은 마크업을 재사용한다. -->
 <div class="modal-overlay" id="dcModal" data-no-dirty>
@@ -3564,6 +3608,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <script src="/pe/report/static/webreport/note.js"></script>
 <script src="/pe/report/static/webreport/edit_mode.js"></script>
 <script src="/pe/report/static/webreport/input_info.js"></script>
+<script src="/pe/report/static/webreport/eval_sensitivity_info.js"></script>
 <script src="/pe/report/static/webreport/leave_guard.js"></script>
 <!-- 챗봇은 독립 위젯(자체 DOM 주입) — 순서 결합이 없어 boot.js 직전에 둔다.
      실제 노출은 core.js loadAuth() 가 is_master 를 확인한 뒤 enable() 로 켠다. -->

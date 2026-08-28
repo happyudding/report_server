@@ -272,6 +272,10 @@ Issue Table 의 Signature 셀 옆 `?` 를 누르면 **그 판정에 쓰인 지�
   만든다. 구 클라가 보낸 `ai_comment=True` 세션은 optin 키가 없어 자동으로 미표시가
   된다 — 운영 DB 를 고치지 않고 되돌리기 위한 장치다(캐시는
   `REPORT_SCHEMA_VERSION` 25 로 무효화).
+- **민감도 게이지**(2026-08-28): 체크박스를 켜면 그 옆에 ⚙ 버튼이 뜨고, Options 창에도
+  "AI Comment 민감도 설정..." 버튼이 있다. 설정은 settings.json 에 **영속**하며(체크 상태와
+  달리 화면 활성 상태와 어긋날 여지가 없다 — 값이 그 자체로 완결적이다) 업로드 시
+  `options.eval_sensitivity` 로 실린다. 상세 → §17.
 
 ## 8. 의존성
 
@@ -1232,3 +1236,110 @@ kurtosis 는 ≈1/p 로 폭등한다 → USL+LSL 동시 발화 → `replaces` �
   perf_guard selftest 통과.
 - **v13 CSV 실엔진 재평가로 목표 확인**: `unknown_000~004` 전부 `BIDIR_TAIL` ·
   `bidir_tails_l2~l5` 유지 · `usl/lsl_tail_l2~l5` 유지 · `random_027` 의 BIDIR 오탐 소멸.
+
+---
+
+## 17. 세션 단위 민감도 게이지 — rough(1) ~ tight(5) (2026-08-28)
+
+**문제.** signature 발화 임계값은 v1~v14 를 거쳐 현재 값으로 굳었는데, 조절 수단이
+`/pe/eval` 의 제품군/family 파일 오버레이뿐이었다 — 관리자 전용이고 영향 범위가 전역이라
+"이 세션만 좀 더 꼼꼼히(또는 굵직하게) 보고 싶다" 를 할 방법이 없었다.
+
+**해법.** 업로드 세션 단위로 임계값을 밀어 주는 **게이지 1~5** 를 넣었다. 3 = 현행 v14 값이고
+간격은 레벨당 약 3%(미세 조정용 — 한 칸이 룰을 켜고 끄는 스위치가 되면 안 된다).
+
+### 17-1. 조절 단위는 룰이 아니라 **키를 공유하는 그룹** (8개)
+
+여러 signature 가 같은 threshold 키를 공유한다: 공간 4종+SPOT 이
+`region_fail_share_min`·`spatial_fail_count_min` 을, 꼬리 3종이 `tail_*` 을 쓴다. 룰별로
+다른 값을 주려면 엔진에 룰별 threshold 네임스페이스가 필요하고, 특히 RING(`>`)/SPOT(`<=`)이
+`spot_fail_spread_max` 를 **부호 반대로** 공유하는 no-gap 설계가 깨져 "둘 다 미발화" 틈이
+생긴다. 그래서 게이지 단위는 그룹이다: OUTLIER / LOW_CPK / MEAN_SHIFT / TAIL(USL·LSL·BIDIR) /
+공간(E1·EDGE·CENTER·RING·SPOT) / CODE_RAIL / FUNC_FAIL / BIMODALITY.
+
+- 단계표 정본 = `eval_analyzer/eval_engine/rules/sensitivity.yaml` (하드코딩 금지 규칙 5).
+  **L3 열은 thresholds.yaml default 와 같아야 하며** `tests/test_sensitivity_table.py` 가 강제한다.
+- **게이지 대상이 아닌 구조 키**: `n_min`·`edge/center_region_pct`·`outlier_body_z`·
+  `outlier_sigma`·`subpop_outlier_sigma`·`subpop_n_min`·`cpk_bad`·`cpk_trump_yield_floor`·
+  `gross_yield_bad`·`spot_fail_spread_max`. 판정 체계 자체를 정의하는 값이라 흔들면 룰이
+  더/덜 뜨는 게 아니라 판정의 의미가 달라진다.
+- **`cpk_warn` 은 게이지로 안 움직인다**(전 단계 1.33 고정, 사용자 지시). L6 저장 게이트
+  (`present.should_store`)를 겸해서 게이지 한 칸이 발화 여부가 아니라 **Issue Table 에 항목이
+  실리는지 자체**를 바꾼다. 조정이 필요하면 직접 입력으로만.
+
+### 17-2. 엔진 주입 — `evaluate(thresholds_override=…)` + **case 탑재**
+
+`api.evaluate` 에 kwarg 를 신설하고, ingest 직후 각 case 에 `_th_override` /
+`_th_override_digest` 를 스탬프한다. `_rules.thresholds_for` 는 스코프 캐시 키에 digest 를
+넣고 `_thresholds_merged` 맨 뒤에서 `merged.update(ovr)` — 파일 스코프(default → product_type
+→ 오버레이 트리 → item_class) 전체보다 **세션이 우선**이다(가장 구체적 스코프).
+
+⚠ **스코프 전역에 넣지 말 것.** `_rules._scope` 는 모듈 전역이라, 서로 다른 민감도의
+evaluate 가 동시에 돌면(서버는 컴퓨트 워커 여럿이 병렬로 부른다) 서로를 덮어쓴다. case 에
+실으면 데이터와 함께 흘러 경합 자체가 없다 —
+`tests/test_thresholds_override.py` 가 2스레드 교차 오염을 고정한다.
+
+### 17-3. 값의 흐름 (해석은 **저장 시점**에 끝난다)
+
+```
+Honey Options → "AI Comment 민감도 설정..." (EvalSensitivityDialog, 그룹 8행)
+   또는 AI Comment 체크 시 옆에 뜨는 ⚙ 버튼
+      ↓ settings.json["eval_sensitivity"] = {global, groups, manual}   (게이지 단계만 저장)
+      ↓ 업로드 시 client/eval_sensitivity.resolve(카탈로그, 설정) → 구체값으로 굳힘
+manifest.options["eval_sensitivity"] = {v, global, groups, manual, overrides}
+      ↓ server/upload_webreport._normalize_eval_sensitivity (검증 — 400)
+report_session.webreport_options
+      ↓ validation.webreport_eval_overrides  (조회 경로는 숫자만 꺼낸다)
+ai_comment.build_ai_comments → evaluate(..., thresholds_override=...)
+```
+
+- **카탈로그는 서버가 준다**: `GET /pe/report/api/eval_sensitivity` (공개·읽기전용,
+  `eval_debug.sensitivity_catalog()` + `threshold_help`/`threshold_usage`). 단계표를 클라에
+  복제하면 사용자가 고른 "3단계" 와 서버가 아는 "3단계" 가 갈린다. 클라는 마지막 카탈로그를
+  settings.json 에 캐시해 오프라인에서도 창이 열린다.
+- **게이지 3단계인 키는 싣지 않는다** — 값 비교가 아니라 **레벨 기준**이다. 3단계 값은 서버
+  default 와 같지만 절대값을 실으면 제품군 오버레이(예: MDDI `bimodality_warn` 0.33)를
+  세션값이 덮어 조용히 무력화한다. 직접 입력(manual)한 키만 3단계에서도 실린다.
+- **전부 기본이면 키 자체를 안 싣는다** — 옵션 원문이 캐시 키의 원소라, 기본값도 실으면
+  기존 세션과 키가 갈려 전 세션 콜드 재빌드가 된다(docs/12 콜드 폭풍).
+- **검증은 서버 층**(`server/report/eval_sensitivity.py`)에서 한다 — `eval_panel.rules_io` 의
+  `THRESHOLD_KINDS`/`_check_threshold_values` 를 재사용해 `/pe/eval` 과 같은 기준을 쓴다.
+  web_report → eval_panel 역방향 결합을 만들지 않으려고 web_report 밖에 뒀다.
+
+### 17-4. 조회 + 사후 변경 (세션 상세 우상단 🎚)
+
+- `GET  /pe/report/session/<sid>/web_report/eval_sensitivity` — 적용 값·기본값·출처
+  (gauge/manual)·대상 signature·한국어 설명. 세션 옵션만 읽어 parquet 미접근(input_info 와 같은 성격).
+  버튼은 **AI Comment 세션에서만** 뜬다(boot.js `evalSensButtonSync`).
+- `PATCH` 같은 경로 — 사후 변경(`_editor_guard` + CSRF). `routes_session._update_session_step`
+  과 같은 방식으로 options JSON 의 그 키만 부분 갱신한다(메타 갱신 경로는 기준정보 컬럼을
+  함께 덮는다). 값이 그대로면 저장하지 않는다(no-op 재빌드 방지).
+- 저장하면 옵션 원문이 바뀌어 `report_key`·`ai_comment_key` 가 **자동으로** 갈린다 —
+  별도 무효화 호출이 없다. 다음 조회가 콜드 202 + 백그라운드 재평가이므로 화면은
+  **"변경된 Option 으로 Session Build 를 다시 진행 합니다."** 를 띄우고 새로고침한다.
+
+### 17-5. profile 일관성 — evaluate 를 쓰는 곳은 전부 같은 override 를 쓴다
+
+같은 세션인데 경로마다 다른 임계값으로 재면 화면·표본함·근거 숫자가 어긋난다.
+`ai_comment.build_ai_comments`(운영 평가)와 `eval_export.collect_session_snapshot`
+(표본함 스냅샷) **둘 다** 세션 옵션에서 override 를 꺼내 넘긴다.
+
+### 17-6. 캐시 (가장 중요한 함정)
+
+`ai_comment_key` 에 `_eval_sensitivity_suffix` 를 추가했다 — **없으면 조용한 오답**이다.
+민감도는 `webreport_options` 에만 있고 analysis_key·content_hash 에는 없으므로, 같은
+rawdata 를 다른 민감도로 두 번 올리면 dedup 형제 세션이 같은 키를 공유해 두 번째가 첫 번째의
+평가 결과를 그대로 본다. `session_id` 가 아니라 **설정값 digest** 라 perf_guard S10 이
+지키려는 이익(같은 설정이면 형제끼리 캐시 공유)은 유지된다. → [docs/12](12_web_report_cache.md)
+
+**스키마 버전은 3종 모두 안 올렸다** — payload 구조도 `build_ai_comments` 반환 dict 구조도
+바뀌지 않았다(모달은 별도 엔드포인트). 콜드 폭풍 회피.
+
+### 17-7. 검증
+
+| 무엇 | 어디 |
+|---|---|
+| 단계표 정합성(L3==default·단조성·관계식·구조 키 제외) | `eval_analyzer/tests/test_sensitivity_table.py` |
+| override 배선 + **동시 evaluate 교차 오염 없음** | `eval_analyzer/tests/test_thresholds_override.py` |
+| 세션 상세 모달(저장 payload 규칙·렌더·읽기전용·다크모드 짝) | `tests/test_eval_sensitivity_js.py` (headless Edge) |
+| Honey 설정 창(게이지↔값 실시간·사용자설정 전환·resolve 규칙·영속) | `tests/test_eval_sensitivity_dialog.py` (PyQt6, 단독 실행) |

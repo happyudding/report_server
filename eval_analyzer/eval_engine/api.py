@@ -3,6 +3,8 @@
 계약: docs/INTEGRATION_CONTRACT.md (입력 run_input, 출력 RunResult).
 report_server 가 파일 1회 run 시 이 함수를 호출한다. eval_analyzer 는 report_server 를 import 안 함.
 """
+import hashlib
+import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +23,8 @@ logger = logging.getLogger(__name__)
 @_rules.rules_scope()
 def evaluate(run_input: dict, *, engine_version: str | None = None,
              model_version: str | None = None, persist: bool = True,
-             db_path=None, generate_comment: bool = True) -> dict:
+             db_path=None, generate_comment: bool = True,
+             thresholds_override: dict | None = None) -> dict:
     """한 세션의 fail item 들을 평가.
 
     흐름 (docs/5STAGE_COLUMNS, DB_SCHEMA):
@@ -42,6 +45,14 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
                          (L1~L4)만 쌓는 백그라운드 수집용이며 **LLM·선례 DB 조회 비용이
                          0** 이 된다. 그 대신 결과·적재분의 `comment` 는 None 이고
                          `precedents` 는 빈 목록이다.
+      `thresholds_override` {임계값 키: 값} — 이 run 에만 적용할 임계값. 파일 스코프 병합
+                         (default → product_type → 오버레이 트리 → item_class) **맨 뒤에**
+                         얹히므로 가장 구체적인 스코프가 된다. 호출자(report_server)가 세션
+                         단위 민감도 게이지로 만든 구체값을 넣는다 — 게이지 단계표는 서버가
+                         해석하고 엔진은 최종 숫자만 받는다(엔진에 UI 개념을 들이지 않는다).
+                         ⚠ 스코프 전역이 아니라 **case 마다 스탬프**한다. `_rules._scope` 는
+                         모듈 전역이라, 서로 다른 override 를 가진 evaluate 가 동시에 돌면
+                         전역 주입은 서로를 덮어쓴다(서버는 컴퓨트 워커 여럿이 병렬로 부른다).
     """
     engine_version = engine_version or config.ENGINE_VERSION
     t0 = time.perf_counter()
@@ -56,6 +67,17 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
     t_ingest = time.perf_counter()
     run_ctx = ingest.ingest(run_input, persist=persist, db_path=db_path)
     ms_ingest = (time.perf_counter() - t_ingest) * 1000
+
+    if thresholds_override:
+        # digest 는 `_rules.thresholds_for` 스코프 캐시 키의 일부다 — 같은 run 안에서
+        # override 별로 병합 결과가 갈리게 한다(값 자체를 키로 쓰면 dict 라 해시 불가).
+        _ovr = dict(thresholds_override)
+        _digest = hashlib.sha256(
+            json.dumps(_ovr, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12]
+        logger.info("thresholds_override %d keys digest=%s", len(_ovr), _digest)
+        for _case in run_ctx["cases"]:
+            _case["_th_override"] = _ovr           # 전 case 공유(읽기 전용)
+            _case["_th_override_digest"] = _digest
 
     # 레벨별 누적 소요(ms) — 종전에는 총소요 1줄뿐이라 "L1/L2 가 느리다" 를 확인하거나
     # 최적화 효과를 증명할 수치가 엔진에 전혀 없었다(2026-08-19 계측 추가).

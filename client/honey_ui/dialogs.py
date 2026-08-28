@@ -21,10 +21,12 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 import app_settings
 import chart_colors
+import eval_sensitivity
 from transport import uploader
 
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution",
@@ -302,10 +304,291 @@ class ColorEditorDialog(QDialog):
         self.accept()
 
 
-class OptionsDialog(QDialog):
-    """Honey 통합 옵션 — 기본 Product Type + Distribution 차트 색.
+class EvalSensitivityDialog(QDialog):
+    """AI Comment 민감도 게이지 — signature 그룹별 rough(1)~tight(5) + 값 직접 입력.
 
-    색 편집은 기존 ColorEditorDialog 를 그대로 재사용(버튼 → 모달)한다.
+    한 그룹 = 한 줄이다: [이름] [1..5 게이지] [사용자설정] [threshold 키별 값 입력란].
+    그룹 8개가 한 화면에 다 보여야 하므로(사용자 지정) 접이식이 아니라 가로로 넓은 창이다.
+
+    상호작용 3가지:
+      · 전체 게이지를 움직이면 전 그룹이 그 단계로 따라간다(직접 입력도 해제).
+      · 그룹 게이지를 움직이면 그 줄의 값 입력란이 **즉시** 그 단계 값으로 바뀐다.
+      · 값을 직접 고치면 그 줄이 '사용자설정'으로 바뀐다(게이지 선택 해제).
+
+    ⚠ 단계표(레벨별 숫자)를 여기 복제하지 않는다 — 정본은 서버
+    `eval_analyzer/eval_engine/rules/sensitivity.yaml` 이고 카탈로그로 받아온다.
+    사본을 두면 사용자가 고른 "3단계" 와 서버가 아는 "3단계" 가 갈린다.
+    """
+
+    LEVELS = 5
+    _catalog_ready = pyqtSignal(object, bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("AI Comment 민감도")
+        self._settings = eval_sensitivity.load_settings()
+        self._catalog = eval_sensitivity.load_cached_catalog()
+        self._rows = {}          # group_id → {"steps": [...], "inputs": {key: QLineEdit}}
+        self._loading = QLabel("서버에서 민감도 기준을 불러오는 중…")
+
+        root = QVBoxLayout(self)
+        info = QLabel(
+            "AI Comment 가 이슈를 얼마나 민감하게 잡을지 정합니다. "
+            "1 rough(굵직한 것만) ← 3 기본 → 5 tight(꼼꼼히). "
+            "값을 직접 입력하면 그 줄은 '사용자설정'이 됩니다.")
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#555;")
+        root.addWidget(info)
+
+        all_row = QHBoxLayout()
+        all_row.addWidget(QLabel("<b>전체</b>"))
+        self._all_steps = self._make_steps(lambda lv: self._on_all(lv))
+        for b in self._all_steps:
+            all_row.addWidget(b)
+        btn_reset = QPushButton("기본값(3단계)으로 초기화")
+        btn_reset.clicked.connect(lambda: self._on_all(eval_sensitivity.DEFAULT_LEVEL))
+        all_row.addSpacing(12)
+        all_row.addWidget(btn_reset)
+        all_row.addStretch(1)
+        root.addLayout(all_row)
+
+        self._grid = QGridLayout()
+        self._grid.setHorizontalSpacing(10)
+        self._grid.setVerticalSpacing(6)
+        root.addLayout(self._grid)
+        root.addWidget(self._loading)
+
+        self._help = QLabel(" ")
+        self._help.setWordWrap(True)
+        self._help.setStyleSheet(
+            "color:#445; background:#f4f7fb; border:1px solid #dfe6ef;"
+            "border-radius:6px; padding:6px 8px;")
+        root.addWidget(self._help)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self._on_ok)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+        self._catalog_ready.connect(self._apply_catalog)
+        if self._catalog:
+            self._apply_catalog(self._catalog, True)     # 캐시본으로 먼저 그린다
+        # 캐시가 있어도 최신본을 받아 둔다(단계표가 서버에서 바뀌었을 수 있다).
+        threading.Thread(target=self._fetch_catalog_bg, daemon=True).start()
+
+    # ── 카탈로그 로드 ───────────────────────────────────────────────────────
+    def _fetch_catalog_bg(self):
+        try:
+            catalog = uploader.fetch_eval_sensitivity_catalog()
+            ok = True
+        except Exception:  # noqa: BLE001
+            catalog, ok = None, False
+        try:
+            self._catalog_ready.emit(catalog, ok)
+        except RuntimeError:
+            pass   # 다이얼로그가 이미 닫혀 C++ 객체가 파괴된 경우
+
+    def _apply_catalog(self, catalog, ok):
+        if catalog:
+            self._catalog = catalog
+            eval_sensitivity.save_cached_catalog(catalog)
+        if not self._catalog:
+            self._loading.setText(
+                "서버에서 민감도 기준을 불러오지 못했습니다. 네트워크를 확인한 뒤 다시 열어 주세요.")
+            return
+        self._loading.setVisible(False)
+        self._build_rows()
+
+    # ── 행 구성 ─────────────────────────────────────────────────────────────
+    def _make_steps(self, on_click):
+        """1~5 단계 버튼 5개. 체크형이라 현재 단계가 눌린 상태로 보인다."""
+        buttons = []
+        for level in range(1, self.LEVELS + 1):
+            b = QPushButton(str(level))
+            b.setCheckable(True)
+            b.setFixedWidth(30)
+            b.setToolTip({1: "1 rough — 덜 발화", 3: "3 기본(현행)",
+                          5: "5 tight — 더 발화"}.get(level, f"{level} 단계"))
+            b.clicked.connect(lambda _c, lv=level: on_click(lv))
+            buttons.append(b)
+        return buttons
+
+    def _build_rows(self):
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        self._rows = {}
+        for r, group in enumerate(self._catalog.get("groups") or []):
+            gid = str(group.get("id") or "")
+            name = QLabel(f"<b>{group.get('label_ko') or gid}</b>")
+            name.setToolTip(", ".join(group.get("signatures") or []))
+            self._grid.addWidget(name, r, 0)
+
+            gauge = QHBoxLayout()
+            gauge.setSpacing(2)
+            steps = self._make_steps(lambda lv, g=gid: self._on_group(g, lv))
+            fixed = bool(group.get("gauge_fixed"))
+            for b in steps:
+                b.setEnabled(not fixed)
+                gauge.addWidget(b)
+            holder = QWidget()
+            holder.setLayout(gauge)
+            self._grid.addWidget(holder, r, 1)
+
+            mark = QLabel("게이지 고정 · 직접 입력만" if fixed else "")
+            mark.setStyleSheet("color:#7a6a2a; font-size:11px;")
+            self._grid.addWidget(mark, r, 2)
+
+            values = QHBoxLayout()
+            values.setSpacing(10)
+            inputs = {}
+            for entry in group.get("keys") or []:
+                key = str(entry.get("key") or "")
+                label = QLabel(key)
+                label.setStyleSheet("font-family:Consolas,monospace; font-size:11px;")
+                label.setToolTip(self._help_text(key))
+                edit = QLineEdit()
+                edit.setFixedWidth(78)
+                edit.setAlignment(Qt.AlignmentFlag.AlignRight)
+                edit.setToolTip(self._help_text(key))
+                edit.editingFinished.connect(
+                    lambda k=key, g=gid: self._on_value_edited(g, k))
+                # 클릭(포커스)하면 하단 설명 바에 그 기준의 뜻을 띄운다.
+                edit.installEventFilter(self)
+                edit.setProperty("threshold_key", key)
+                inputs[key] = edit
+                values.addWidget(label)
+                values.addWidget(edit)
+                default = entry.get("default")
+                if default is not None:
+                    hint = QLabel(f"기본 {default}")
+                    hint.setStyleSheet("color:#8a95a3; font-size:11px;")
+                    values.addWidget(hint)
+            values.addStretch(1)
+            vholder = QWidget()
+            vholder.setLayout(values)
+            self._grid.addWidget(vholder, r, 3)
+
+            self._rows[gid] = {"steps": steps, "inputs": inputs, "mark": mark,
+                               "fixed": fixed}
+        self._refresh()
+
+    def _help_text(self, key) -> str:
+        """threshold 한 줄 설명 — 문구 정본은 서버 threshold_help.yaml (클라 하드코딩 없음)."""
+        info = ((self._catalog or {}).get("help") or {}).get(key) or {}
+        what = str(info.get("what") or "").splitlines()
+        effect = str(info.get("effect") or "").splitlines()
+        parts = [p[0].strip() for p in (what, effect) if p and p[0].strip()]
+        return " / ".join(parts) or key
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent
+        if event.type() in (QEvent.Type.FocusIn, QEvent.Type.Enter):
+            key = obj.property("threshold_key")
+            if key:
+                self._help.setText(self._help_text(key))
+        return super().eventFilter(obj, event)
+
+    # ── 상호작용 ────────────────────────────────────────────────────────────
+    def _on_all(self, level):
+        """전체 게이지 — 전 그룹을 같은 단계로. 직접 입력은 해제한다.
+
+        해제하지 않으면 "전체 3단계" 로 되돌려도 손으로 넣은 값이 남아, 화면이 말하는
+        단계와 실제 적용값이 어긋난다.
+        """
+        self._settings["global"] = level
+        self._settings["groups"] = {gid: level for gid in self._rows}
+        self._settings["manual"] = {}
+        self._refresh()
+
+    def _on_group(self, group_id, level):
+        self._settings.setdefault("groups", {})[group_id] = level
+        # 그 그룹의 직접 입력은 게이지 선택으로 대체된다(둘이 공존하면 뭐가 적용됐는지 모른다).
+        row = self._rows.get(group_id) or {}
+        for key in (row.get("inputs") or {}):
+            self._settings.get("manual", {}).pop(key, None)
+        self._sync_global()
+        self._refresh()
+
+    def _on_value_edited(self, group_id, key):
+        row = self._rows.get(group_id) or {}
+        edit = (row.get("inputs") or {}).get(key)
+        if edit is None:
+            return
+        text = edit.text().strip()
+        gauge_val = self._gauge_value(group_id, key)
+        if not text:
+            self._settings.get("manual", {}).pop(key, None)
+            self._refresh()
+            return
+        try:
+            value = float(text)
+        except ValueError:
+            QMessageBox.warning(self, "값 오류", f"{key} 는 숫자여야 합니다.")
+            self._refresh()
+            return
+        # 게이지 값과 같아지면 직접 입력을 해제한다 — 같은 값을 두 방식으로 들고 있을
+        # 이유가 없고, 남기면 저장 payload 만 커진다.
+        if gauge_val is not None and value == float(gauge_val):
+            self._settings.get("manual", {}).pop(key, None)
+        else:
+            self._settings.setdefault("manual", {})[key] = value
+        self._sync_global()
+        self._refresh()
+
+    def _sync_global(self):
+        """그룹 단계가 제각각이거나 직접 입력이 있으면 전체는 '사용자설정'(0)."""
+        levels = {self._settings["groups"].get(gid, eval_sensitivity.DEFAULT_LEVEL)
+                  for gid in self._rows}
+        self._settings["global"] = (levels.pop() if len(levels) == 1 else 0)
+        if self._settings.get("manual"):
+            self._settings["global"] = 0
+
+    def _group_of(self, group_id):
+        for group in (self._catalog or {}).get("groups") or []:
+            if str(group.get("id")) == group_id:
+                return group
+        return None
+
+    def _gauge_value(self, group_id, key):
+        group = self._group_of(group_id)
+        if not group:
+            return None
+        level = self._settings["groups"].get(group_id, eval_sensitivity.DEFAULT_LEVEL)
+        return eval_sensitivity.gauge_value(group, key, level)
+
+    def _refresh(self):
+        """설정 → 화면. 게이지 이동이 값 입력란에 **실시간**으로 반영되는 지점이다."""
+        manual = self._settings.get("manual") or {}
+        gl = self._settings.get("global", eval_sensitivity.DEFAULT_LEVEL)
+        for i, b in enumerate(self._all_steps, start=1):
+            b.setChecked(i == gl)
+        for gid, row in self._rows.items():
+            level = self._settings["groups"].get(gid, eval_sensitivity.DEFAULT_LEVEL)
+            has_manual = any(k in manual for k in row["inputs"])
+            for i, b in enumerate(row["steps"], start=1):
+                b.setChecked((not has_manual) and (not row["fixed"]) and i == level)
+            if not row["fixed"]:
+                row["mark"].setText("사용자설정" if has_manual else "")
+            for key, edit in row["inputs"].items():
+                value = manual.get(key, self._gauge_value(gid, key))
+                edit.blockSignals(True)
+                edit.setText("" if value is None else str(value))
+                edit.blockSignals(False)
+                edit.setStyleSheet("font-weight:600; color:#2f6fd0;" if key in manual else "")
+
+    def _on_ok(self):
+        eval_sensitivity.save_settings(self._settings)
+        self.accept()
+
+
+class OptionsDialog(QDialog):
+    """Honey 통합 옵션 — 기본 Product Type + Distribution 차트 색 + AI Comment 민감도.
+
+    색 편집·민감도는 별도 다이얼로그를 버튼으로 연다(항목이 많아 한 창에 못 담는다).
     """
     # honey_main._pt_radios 와 동일 집합 — 두 곳이 어긋나지 않도록 함께 관리할 것.
     PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"]
@@ -340,6 +623,11 @@ class OptionsDialog(QDialog):
         btn_colors = QPushButton("Distribution 색 편집...")
         btn_colors.clicked.connect(lambda: ColorEditorDialog(self).exec())
         root.addWidget(btn_colors)
+
+        # (3) AI Comment 민감도 — 그룹 8개를 한 화면에 펼쳐야 해서 별도 큰 창으로 연다.
+        btn_sens = QPushButton("AI Comment 민감도 설정...")
+        btn_sens.clicked.connect(lambda: EvalSensitivityDialog(self).exec())
+        root.addWidget(btn_sens)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                               | QDialogButtonBox.StandardButton.Cancel)

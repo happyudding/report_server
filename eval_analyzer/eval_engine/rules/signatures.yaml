@@ -39,7 +39,7 @@ signatures:
                    fail_body_jump_ratio: ">=outlier_jump_ratio_min" }
     status_hint: MAJOR
     phenomenon_ko : "일부 die 가 정상 분포와 떨어진 곳에서 Fail 했습니다."
-    action_ko: "Contact Check, Retest 재현성 확인"
+    action_ko: "Retest 재현성 확인, Contact(환경성 요인) Check"
     evidence: ["fail_mad_min {fail_mad_min}",
                "fail_body_jump_ratio {fail_body_jump_ratio}",
                "fail_pass_gap_sigma {fail_pass_gap_sigma}",

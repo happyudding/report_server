@@ -61,6 +61,7 @@ from report_flow import (
 from web_report.honeyform import dedupe_item_columns, encode_honeyform_parquet
 import app_settings
 import chart_colors
+import eval_sensitivity
 
 
 def _report_error(kind, message, *, stack="", context=None):
@@ -977,10 +978,20 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_comment = QLabel("AI Comment")
         self.lbl_ai_comment.setStyleSheet("color: #A89C77;")   # 비활성 글자색
         self.lbl_ai_comment.installEventFilter(self)
+        # 민감도 설정 버튼 — AI Comment 를 **켠 상태에서만** 보인다. 꺼져 있으면 그 설정이
+        # 이번 업로드에 실리지 않으므로 버튼이 있으면 설정해도 안 먹는 것처럼 보인다.
+        self.btn_ai_sens = QPushButton("⚙")
+        self.btn_ai_sens.setToolTip("AI Comment 민감도 설정 (판정 기준 조절)")
+        self.btn_ai_sens.setFixedWidth(28)
+        self.btn_ai_sens.setVisible(False)
+        self.btn_ai_sens.clicked.connect(self.on_ai_sensitivity)
+        self.chk_ai_comment.toggled.connect(
+            lambda on: self.btn_ai_sens.setVisible(bool(on)))
         ai_row = QHBoxLayout()
         ai_row.setSpacing(6)
         ai_row.addWidget(self.chk_ai_comment)
         ai_row.addWidget(self.lbl_ai_comment)
+        ai_row.addWidget(self.btn_ai_sens)
         ai_row.addStretch(1)
         web_v.addLayout(ai_row)
         web_v.addWidget(self.btn_web_report)
@@ -2223,6 +2234,12 @@ class HoneyMainWindow(QMainWindow):
         if dlg.exec():
             self._status("Distribution 색 저장됨")
 
+    def on_ai_sensitivity(self):
+        """AI Comment 옆 ⚙ — 민감도 설정 창을 바로 연다(Options 를 거치지 않는다)."""
+        from honey_ui.dialogs import EvalSensitivityDialog
+        if EvalSensitivityDialog(self).exec():
+            self._status("AI Comment 민감도 저장됨")
+
     def on_options(self):
         """Options — 기본 Product Type + Distribution 색.
 
@@ -2780,6 +2797,21 @@ class HoneyMainWindow(QMainWindow):
         ai_on = bool(self.chk_ai_comment.isEnabled() and self.chk_ai_comment.isChecked())
         options = {"colors": chart_colors.load_colors(),
                    "ai_comment": ai_on, "ai_comment_optin": ai_on}
+        # AI Comment 민감도 — 게이지 단계를 **구체적인 임계값으로 굳혀서** 싣는다. 세션이
+        # "그때 무슨 기준으로 판정됐나"를 자기 안에 갖게 하기 위해서다(단계표를 나중에
+        # 튜닝해도 기존 세션의 기준은 안 변한다).
+        # ⚠ 기본 설정(전 게이지 3·직접 입력 없음)이면 resolve 가 None 을 주고 **키를 아예
+        # 싣지 않는다** — 옵션 원문이 캐시 키의 원소라, 기본값도 실으면 기존 세션과 키가
+        # 갈려 전 세션 콜드 재빌드가 된다.
+        if ai_on:
+            try:
+                sens = eval_sensitivity.resolve(
+                    eval_sensitivity.load_cached_catalog(),
+                    eval_sensitivity.load_settings())
+                if sens:
+                    options["eval_sensitivity"] = sens
+            except Exception:      # noqa: BLE001 — 민감도는 부가 기능이라 업로드를 막지 않는다
+                self._status("민감도 설정을 읽지 못해 기본값으로 진행합니다")
         # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).

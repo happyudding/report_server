@@ -253,12 +253,19 @@ def user_activity(user_id):
 
     ⚠️ 2026-07-11 세션 편집 DB 이관 **이전**에 manifest 로 저장됐던 편집은 원 작성자를
     알 수 없어 `updated_by` 가 NULL 이다. 그 행은 누구의 활동으로도 세지 않으므로 코멘트
-    건수는 '최소값'이다 — 화면이 그 사실을 각주로 알린다."""
+    건수는 '최소값'이다 — 화면이 그 사실을 각주로 알린다.
+
+    업로드 수는 sessions.py `_UPLOADER_MATCH`(도메인 제거 + 소문자)와 **같은 규칙**으로
+    센다. lower() 만 걸던 시절에는 `SECDS\\hong` 으로 저장된 세션이 빠져서, 같은 화면의
+    '내 업로드' 목록에는 보이는 세션이 이 숫자에는 안 잡혔다 (2026-08-28 수정)."""
     if not user_id:
         return {"uploads": 0, "comments": 0, "edited_sessions": 0, "last_active": None}
     with get_conn() as conn:
         uploads = conn.execute(
-            "SELECT COUNT(*) AS n FROM report_session WHERE lower(uploaded_by)=?",
+            "SELECT COUNT(*) AS n FROM report_session "
+            "WHERE LOWER(TRIM(CASE WHEN INSTR(uploaded_by, '\\') > 0 "
+            "  THEN SUBSTR(uploaded_by, INSTR(uploaded_by, '\\') + 1) "
+            "  ELSE uploaded_by END)) = ?",
             (user_id,),
         ).fetchone()["n"]
         row = conn.execute(

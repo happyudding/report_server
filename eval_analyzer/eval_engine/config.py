@@ -17,6 +17,9 @@ ITEM_ALIAS_FILE = RULES_DIR / "item_alias.yaml"
 PRODUCT_TAXONOMY_FILE = RULES_DIR / "product_taxonomy.yaml"
 OUTCOME_TAXONOMY_FILE = RULES_DIR / "outcome_taxonomy.yaml"
 EXCLUSIONS_FILE = RULES_DIR / "exclusions.yaml"
+# 민감도 게이지 1~5 단계표 — 엔진은 읽지 않는다(세션 오버라이드 값은 이미 구체값으로 와서
+# thresholds_override 로 주입된다). 서버가 카탈로그를 만들 때 쓰는 정본 위치 선언이다.
+SENSITIVITY_FILE = RULES_DIR / "sensitivity.yaml"
 
 ENGINE_VERSION = os.environ.get("EVAL_ENGINE_VERSION", "ev1")
 
