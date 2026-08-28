@@ -42,8 +42,10 @@ _EDGE_CANDIDATES = (
 
 # 서버가 실제로 만드는 AI Comment 셀 문자열 모양 (web_report/ai_comment.py `_cell_text`
 # + eval_engine recommend.make_comment). 배지 → 3섹션 순서와 공백까지 그대로 흉내낸다.
-SAMPLE = ("[MAJOR][이봉] [현상] @[ItemA] 산포가 spec 폭 대비 넓습니다.\n"
-          "[과거사례] 유사 lot 에서 *r[Trim] 재조정으로 개선. \n"
+# ⚠ @[..] 링크는 **[현상] 밖**에 둔다 — [현상] 은 화면에서 생략되므로(2026-08-28)
+# 그 안에만 링크를 두면 링크 보존 검사(d)가 검사할 대상 자체를 잃는다.
+SAMPLE = ("[MAJOR][이봉] [현상] 산포가 spec 폭 대비 넓습니다.\n"
+          "[과거사례] 유사 lot 에서 @[ItemA] 를 *r[Trim] 재조정으로 개선. \n"
           " [점검제안] 설비 3호기 편차 확인")
 LEGACY = "[MONITOR] 예전 형식 코멘트 — 섹션 토큰이 없다"
 
@@ -134,8 +136,12 @@ def test_ai_comment_render():
         # 같은 치환을 적용해 **본문** 글자 손실만 잡는다.
         # 심각도 배지([MAJOR] 등 영문)는 2026-08-28 부터 **화면에서만** 숨기므로 기준
         # 텍스트에서도 뺀다 — 서버 문자열은 그대로라 본문 손실 검사 취지는 유지된다.
+        # [현상] 섹션도 같은 성격이다(2026-08-28 사용자 요청 — 화면에서만 생략, 서버
+        # 문자열·Excel·챗봇·eval export 는 그대로). 기준 텍스트에서 그 섹션을 통째로
+        # 지운 뒤 비교해, 나머지 섹션의 본문 손실은 계속 잡는다.
         "var ref=document.createElement('div');ref.innerHTML=linkifyComment(SAMPLE);"
         "var rt=ref.textContent;"
+        "rt=rt.replace(/\\[현상\\][\\s\\S]*?(?=\\[(?:과거사례|점검제안|제안)\\]|$)/,'');"
         "Object.keys(AIC_SEC_LABEL).forEach(function(k){"
         "  rt=rt.split('['+k+']').join('['+AIC_SEC_LABEL[k]+']'); });"
         "var mm=rt.match(/^\\s*((?:\\[[^\\]\\s]{1,12}\\])+)\\s*([\\s\\S]*)$/);"
@@ -170,7 +176,8 @@ def test_ai_comment_render():
     # 심각도 배지는 숨기고(2026-08-28), 분포 배지(한글)만 남긴다.
     assert "[MAJOR]" not in r["badgeText"], f"심각도 배지가 화면에 남았습니다: {r['badgeText']}"
     assert "[이봉]" in r["badgeText"], r["badgeText"]
-    assert r["secOrder"] == "aic-sym,aic-past,aic-act", r["secOrder"]
+    # [현상](aic-sym)은 2026-08-28 부터 화면에서 생략한다 — 남는 것은 사례·제안 둘.
+    assert r["secOrder"] == "aic-past,aic-act", r["secOrder"]
     assert r["link"] == 1, f"@[항목] 링크가 사라졌습니다: {r}"
     assert r["fmt"] == 1, f"*r[..] 서식 토큰이 사라졌습니다: {r}"
     assert r["fallback"], "섹션 토큰 없는 옛 코멘트가 종전과 다르게 그려집니다"

@@ -36,6 +36,17 @@ row0 TSEQ  row1 TNO  row2 STEP(P1/P2/P3, 미사용)  row3 UNIT  row4 HILIM(USL) 
   않는다 — bin 은 die 의 binning 관례라 제품군·담당자에 따라 달라지는데, 실측상 한 item 의
   fail 은 소스 안에서 100% 단일 bin 이라 **식별 정보를 0 추가하면서 case 만 쪼갠다**
   (사람 코멘트·라벨·선례가 함께 희석됨). 배경 → ../../../docs/17.
+- ⚠ **좌표·fail_mask 는 두 벌이다** (2026-08-28). `values`/`fail_mask`/`x_pos`/`y_pos` 는
+  서로 같은 인덱스로 정렬된 **측정값 축**(= 측정 셀 파싱에 성공한 die 만)이고,
+  `spatial_fail_mask`/`spatial_x_pos`/`spatial_y_pos` 는 **전체 die 축**이다.
+  공간 룰(E1/EDGE/CENTER/RING/SPOT)은 FAILTNO 와 좌표만 보므로 전체 die 를 모집단으로
+  쓴다 — 측정값 축으로 재면 값이 빈 die 가 분모에서 빠져 점유율이 왜곡되고, 값이 **전부**
+  빈 item 은 판정 자체가 불가능해진다(종전엔 `if not values: continue` 로 case 조차
+  안 만들어져 "Yield 행은 있는데 AI Comment 만 없다"가 됐다).
+  **두 축을 합치지 말 것** — `_fail_outlier_features`/`_fail_body_jump_ratio`/
+  `_pass_limit_hit_ratio` 가 `values` 와 길이가 같아야 하고, 다르면 None 을 돌려주며
+  OUTLIER 판정이 조용히 죽는다(`test_measured_axis_survives_partial_missing` 이 고정).
+  `spatial_*` 가 없는 입력(레거시 raw_table·degrade)은 측정값 축으로 폴백 = 종전 동작.
 - `tools/` 의 생성기·testbench 는 **구 5-메타행(STEP 없음)** 을 가정 — 파서와 불일치.
   → [../../tools/CLAUDE.md](../../tools/CLAUDE.md) 의 ⚠ 참조.
 
@@ -43,6 +54,9 @@ row0 TSEQ  row1 TNO  row2 STEP(P1/P2/P3, 미사용)  row3 UNIT  row4 HILIM(USL) 
 - feature 가 None 이면 해당 signature `applies=False` (조건 False 처리). 결측을 "양호"로 읽지 않는다.
 - `n_dut < n_min`(thresholds) → 고차모멘트 의존 signature(skewness/kurtosis/bimodality) 비활성화.
 - 좌표/site 없으면 공간·site feature None → data_completeness ↓ → confidence ↓.
+- **측정값이 0 이어도 공간 feature 는 낸다**(2026-08-28) — `features.compute` 의 `n==0`
+  분기가 `_empty_features()` 에 공간분만 덮어 돌려준다. PF 블록이 "값 기반은 비우고
+  공간은 남긴다" 고 한 것과 같은 형태다. `n_dut` 는 0 그대로(측정 표본은 실제로 0).
 
 ## status 판정 요점 (status.py)
 - severity rank: MONITOR<MINOR<MAJOR<CRITICAL. bin `severity_bias` 로 rank 변조.

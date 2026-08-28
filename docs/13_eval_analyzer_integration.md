@@ -130,6 +130,26 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
     않고 `ai_comment_pending` payload 로 리포트를 먼저 연다. evaluate 는 온디맨드
     `"ai"` 잡(`report_job(ai_inline=True)`, 워커 강제 오프로드)이 백그라운드로 돌리고,
     프리웜·ingest 경로는 종전처럼 동기다.
+  - **Signature 2단계 분리 (2026-08-28, LLM 켜졌을 때만)**: LLM 이 켜지면 L5(코멘트
+    합성)가 케이스마다 HTTP 왕복이라 `"ai"` 잡 전체가 수십 초로 늘어난다. 그런데
+    **Signature 는 L1~L4 에서 이미 확정**돼 있어, 그동안 Signature 컬럼까지 비워 두는
+    것은 순전한 손해다. 그래서 `evaluate(generate_comment=False)` 로 판정만 끝낸
+    1단계 결과를 **별도 키**(`ai_comment_key(stage="sig")`)에 담고, pending payload 에
+    그것만 실어 Signature 를 먼저 띄운다(AI Comment 셀은 계속 "Loading 중…").
+    - 잡은 `"aisig"`(`compute.ai_signature_job` → `service.run_ai_signature_build`).
+      **payload 를 만들지 않는다** — 분리 캐시만 채우므로 `"ai"` 잡과 동시에 돌아도
+      같은 콜드 빌드를 두 번 하지 않는다. 재렌더는 프런트 `/full` 폴링이 가져간다.
+    - ⚠ 1단계 결과의 `comments` 는 **반드시 빈 dict** 다. 엔진이 `comment=None` 을 주므로
+      `_cell_text` 를 태우면 status 배지만 남은 껍데기가 셀에 굳는다("배지만 있고 내용이
+      없다"로 보인다). `_to_row_keys(with_comments=False)` 가 키 자체를 만들지 않는다.
+    - ⚠ pending 본 키도 갈린다(`kinds=("aisig",)`). 같은 키를 쓰면 Signature 가 비어
+      있던 본이 재사용돼, 1단계가 끝났는데도 화면이 계속 "미분류" 로 남는다. 최종본
+      승격 시 회수 목록에도 `("aisig",)`·`("aisig","compare")` 조합이 들어가야 한다.
+    - **LLM 이 꺼져 있으면 이 경로는 통째로 비활성**이다(`service._ai_two_stage_wanted`).
+      LLM off 의 L5 는 룰 템플릿 조립이라 비용이 ~0 이고 Signature 와 코멘트가 같은
+      순간 완성되므로, 1단계를 따로 돌리면 같은 평가를 두 번 하는 손해만 남는다.
+      판정을 그 함수 하나로 모은 이유는 예약(`request_build`)과 실행이 서로 다른 답을
+      내면 잡이 큐에 들어갔다 아무 일도 안 하고 끝나기 때문이다.
 - payload 캐시 키(`cache_policy.report_key`)에는 `content_hash` 와 `webreport_options` 가
   들어 있어 **rawdata 편집 시 자동 재평가**되고, 옵션 on/off 세션은 캐시가 분리된다.
 - **룰(threshold/signature) 편집도 재평가시킨다** (2026-08-03). `/pe/eval` 저장이
@@ -1343,3 +1363,107 @@ rawdata 를 다른 민감도로 두 번 올리면 dedup 형제 세션이 같은 
 | override 배선 + **동시 evaluate 교차 오염 없음** | `eval_analyzer/tests/test_thresholds_override.py` |
 | 세션 상세 모달(저장 payload 규칙·렌더·읽기전용·다크모드 짝) | `tests/test_eval_sensitivity_js.py` (headless Edge) |
 | Honey 설정 창(게이지↔값 실시간·사용자설정 전환·resolve 규칙·영속) | `tests/test_eval_sensitivity_dialog.py` (PyQt6, 단독 실행) |
+
+---
+
+## 18. 공간 룰 판정 모집단을 FAILTNO 기준으로 통일 (2026-08-28)
+
+사용자 지적에서 출발했다.
+
+> "공간 Fail 의 경우에는 해당 Item 의 Rawdata 말고, Rawdata 가 없어도 FAILTNO 는 있거든.
+> 그래서 FAILTNO 기준으로 Signature 발화 하도록 기준을 변경할 수 있을까?"
+
+대상은 공간 signature 5종 — `E1_FAIL` · `EDGE_FAIL` · `CENTER_FAIL` · `SPOT_FAIL` ·
+`RING_FAIL`.
+
+### 18-1. 증상과 원인
+
+**증상**: 측정값이 없는 item 은 **Yield 행에는 뜨는데 AI Comment(Signature)만 비어 있다.**
+에러가 아니라 빈 칸이라 발견이 늦다.
+
+원인은 공간 룰이 아니었다 — 그 룰들은 **이미 측정값을 한 글자도 안 본다**.
+`signatures.yaml` 의 when_metric 이 참조하는 값은 셋뿐이고 전부 좌표·FAILTNO 산출이다:
+
+| 값 | 출처 | 측정값 의존 |
+|---|---|---|
+| `e1/edge/center/ring_fail_share` | `features._spatial_features` (fail_mask + 좌표) | 없음 |
+| `fail_spread_norm` | 동상 | 없음 |
+| `fail_count` | `ingest.py` — 전체 행에서 FAILTNO 를 센다 | 없음 |
+
+막고 있던 것은 **그 앞 단계의 게이트 3개**였다:
+
+1. `ingest._ingest_raw_df` 의 `if not values: continue` — 측정 셀이 전부 NaN 이면
+   **case 자체를 안 만든다**. 룰이 평가될 기회조차 없었다(가장 결정적).
+2. 부분결측 시 `x_pos`/`y_pos`/`fail_mask` 를 **측정값이 있는 die 로 필터**해 `values` 와
+   길이를 맞춘다 → 공간 판정 모집단이 좁아진다.
+3. `features.compute` 의 `if n == 0: return _empty_features()` — 좌표가 멀쩡해도
+   `values` 가 0 이면 공간 feature 까지 통째로 None.
+
+설계 의도는 원래 반대쪽에 있었다. `features.compute` docstring 이
+"PF item 은 측정값 기반 feature 를 전부 None 으로 비운다 — **공간 feature 와 n_dut 는
+남는다**" 라고 이미 선언하고 있었고, PF 블록도 `spatial` 은 건드리지 않는다.
+**case 만 만들어지면 공간 룰은 이미 발화하도록 설계돼 있었다.**
+
+### 18-2. 해결 — 좌표·fail_mask 를 두 벌로 가른다
+
+한 벌로 합칠 수 없다. `fail_mask` 를 **두 종류 소비자가 공유**하기 때문이다:
+
+- **공간용** — `_spatial_features` : 좌표와 같은 인덱스여야 한다
+- **측정값용** — `_fail_outlier_features` / `_fail_body_jump_ratio` /
+  `_pass_limit_hit_ratio` : `values` 와 같은 인덱스여야 하고,
+  **길이가 다르면 `None` 을 돌려주는 가드가 이미 있다**
+
+그래서 좌표·mask 를 전체 die 로 그냥 되돌리면 OUTLIER 판정 2축이 **조용히 죽는다**
+(None → 조건 False → 미발화). 두 축을 나눈 이유가 이것이다.
+
+| 축 | 키 | 길이 | 쓰는 곳 |
+|---|---|---|---|
+| 측정값 | `values` `fail_mask` `x_pos` `y_pos` | 측정 성공 die | OUTLIER·꼬리·cpk·site |
+| 공간 | `spatial_fail_mask` `spatial_x_pos` `spatial_y_pos` | **전체 die** | 공간 룰 5종 |
+
+`spatial_*` 가 없는 입력(레거시 `raw_table`·degrade)은 측정값 축으로 폴백 — **종전 동작
+그대로**라 그 경로들은 한 줄도 안 고쳤다.
+
+함께 한 것:
+- `_spatial_features` 의 `fm_in` 파라미터를 **삭제**했다. 남겨 두면 다음 사람이 다시
+  측정값 축 mask 를 넘겨 같은 회귀를 만든다 — 이제 함수가 case_ctx 에서 직접 읽는다.
+- `_geom_shared`(좌표 전처리 공유통)가 **항상** 붙는다. 종전에는 "좌표가 소스 공용 배열
+  그대로일 때만" 이라 부분결측 item 이 매번 중심정렬·반경·E1 을 다시 만들었다.
+  공간 축은 늘 소스 공용 좌표라 그 조건이 필요 없어졌다 — 덤으로 성능 개선.
+- `metrics.compute` 의 degrade 분기에 yield 폴백 3줄. `values` 가 비면 그 분기로 가는데
+  raw_df case 에는 `yield` 키가 없어 **yield 가 None** 이 됐다 → PF trump(yield 단독
+  CRITICAL)와 GROSS_FAIL 이 조용히 죽는다. `fail_count`/`total_count` 로 계산해 채운다.
+
+### 18-3. 값이 바뀌는 범위 (사용자 승인)
+
+측정값이 **일부 die 만** 비어 있는 item 은 기존 세션의 공간 판정 값이 달라진다
+(측정된 die 분모 → 전체 die 분모). 이 점을 설명하고 **"그래도 전체 통일"** 로 재확인받았다
+— 공간 판정은 언제나 전체 die 기준이 맞다는 판단이다. 부분결측이 없는 item(대다수)은
+입력이 바이트 동일이라 값이 변하지 않는다.
+
+PF·UNKNOWN 과의 공존은 자동으로 옳다: 공간 룰이 뜨면 `fired` 가 비지 않아 `UNKNOWN`
+(`NO_STATS_PF`)이 아예 안 붙고, 공간 조건도 미달이면 그때 UNKNOWN 이 뜬다.
+
+### 18-4. 캐시
+
+- `AI_COMMENT_SCHEMA_VERSION` 2 → **3**. 이 상수는 원래 "반환 dict **구조**가 바뀔 때만"
+  올리는 것이고 값 변화는 `rules_rev` 가 덮는 규약인데, **이번은 그 규약의 의도적 예외**다
+  — `rules_rev` 는 `/pe/eval` 저장 카운터라 **엔진 파이썬 코드 변경을 감지하지 못한다**.
+- **`.rules_rev` 를 함께 +1 해야 한다**(`eval_debug.bump_rules_rev`). 위 상수는
+  `ai_comment_key` 에만 들어가고 `report_key` 에는 안 들어가서, 그것만 올리면 이미 구워진
+  report payload 안의 AI Comment 셀이 그대로 남는다. §16-4 와 같은 선례.
+- `REPORT_SCHEMA_VERSION`(전역)은 **건드리지 않았다** — 콜드 폭풍(규칙 14).
+- eval.db **스키마 변경 없음**. 공간 share 5종은 이미 v9 컬럼이고, 새 `spatial_*` 키는
+  메모리 전용이라 `save_features` 화이트리스트가 무시한다.
+
+### 18-5. 검증
+
+| 무엇 | 어디 |
+|---|---|
+| 측정값 없는 item 이 case 가 되고 공간 축이 전체 die 로 실린다 | `test_blank_value_item_still_makes_case_with_spatial_axis` |
+| **측정값 없이 `E1_FAIL` 이 실제로 발화** (핵심 회귀) | `test_blank_value_item_fires_spatial_signature` |
+| fail die 의 값만 지워도 공간 판정이 그 fail 을 그대로 본다 | `test_spatial_axis_uses_all_dies_not_just_measured` |
+| **부분결측에서 OUTLIER 3종이 죽지 않는다** (안전망) | `test_measured_axis_survives_partial_missing` |
+| 좌표 전처리 공유통이 항상 붙는다 | `test_geom_shared_attached_even_with_partial_missing` |
+
+전부 `eval_analyzer/tests/test_ingest_raw_df.py`. 엔진 스위트 **240 passed**.

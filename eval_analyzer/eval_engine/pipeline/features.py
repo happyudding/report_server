@@ -438,8 +438,10 @@ def _spatial_geometry(case_ctx):
     ring/quadrant 판정이 통째로 어긋난다. 좌표 범위의 중앙(bounding box 중심)을 쓴다.
     이미 중심 정렬된(음수 포함) 입력에는 no-op 이다.
     """
-    x = case_ctx.get("x_pos") or []
-    y = case_ctx.get("y_pos") or []
+    # 공간 축(전체 die) 우선 — 없으면 측정값 축 폴백(레거시·degrade 경로 = 종전 동작).
+    # ingest._case_dict 주석 참조: 측정값이 빈 die 를 빼고 재면 점유율이 왜곡된다.
+    x = case_ctx.get("spatial_x_pos") or case_ctx.get("x_pos") or []
+    y = case_ctx.get("spatial_y_pos") or case_ctx.get("y_pos") or []
     xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
     ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
     valid = np.isfinite(xs) & np.isfinite(ys)
@@ -457,7 +459,7 @@ def _spatial_geometry(case_ctx):
             "e1": _e1_mask(xs, ys)}
 
 
-def _spatial_features(case_ctx, th, geom=_UNSET, fm_in=None):
+def _spatial_features(case_ctx, th, geom=_UNSET):
     """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
 
     반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 영역마다 두 가지를 낸다:
@@ -471,10 +473,18 @@ def _spatial_features(case_ctx, th, geom=_UNSET, fm_in=None):
     영역 경계(edge_region_pct/center_region_pct)는 thresholds.yaml.
     geom 은 _spatial_geometry 결과 재사용용(compute 가 item 단위로 공유) — 미전달이면
     여기서 계산한다(종전 동작·직접 호출 테스트 호환).
-    fm_in 은 이미 bool ndarray 로 만든 fail_mask 재사용용(compute 가 case 단위로 1회
-    변환) — 미전달이면 여기서 변환한다. 값은 동일하다.
+    ⚠ mask 를 인자로 받지 않는다 — 종전 `fm_in` 은 compute 가 만든 **측정값 축** mask 를
+    그대로 넘겨 공간 판정 모집단을 좁히던 통로였다(2026-08-28 제거). 축을 헷갈릴 여지를
+    남기지 않으려고 여기서 case_ctx 를 직접 읽는다.
+
+    ⚠ 여기서 쓰는 mask·좌표는 **공간 축**(`spatial_*`, 전체 die)이다 — 측정값과 정렬된
+    `fail_mask`/`x_pos` 가 아니다(ingest._case_dict 주석). 측정값이 빈 die 를 분모에서
+    빼면 점유율이 왜곡되고, 값이 전부 빈 item 은 아예 판정 불가가 된다.
+    `spatial_*` 가 없는 입력(레거시 raw_table·degrade)은 측정값 축으로 폴백한다.
     """
-    fail_mask = case_ctx.get("fail_mask") or []
+    fail_mask = case_ctx.get("spatial_fail_mask")
+    if fail_mask is None:
+        fail_mask = case_ctx.get("fail_mask") or []
     out = {"edge_fail_ratio": None, "center_fail_ratio": None, "radial_gradient": None,
            "quadrant_imbalance": None, "x_gradient": None, "y_gradient": None,
            "wafer_zone_signature": None, "ring_fail_ratio" : None,
@@ -485,7 +495,7 @@ def _spatial_features(case_ctx, th, geom=_UNSET, fm_in=None):
            "fail_spread_norm": None}
     if geom is _UNSET:
         geom = _spatial_geometry(case_ctx)
-    fm = fm_in if fm_in is not None else np.asarray(fail_mask, dtype=bool)
+    fm = np.asarray(fail_mask, dtype=bool)
     if geom is None or fm.sum() == 0:
         return out
 
@@ -658,7 +668,15 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     th = thresholds_for(case_ctx)
     is_pf = case_ctx.get("value_type") == "PF"
     if n == 0:
-        return _empty_features()
+        # 측정값이 하나도 없어도 **공간 feature 는 낸다** (2026-08-28). 값 기반 지표는
+        # 계산할 것이 없지만 공간 룰(E1/EDGE/CENTER/RING/SPOT)은 FAILTNO 와 좌표만 보므로
+        # 여기서 비우면 그 item 은 영영 판정 불가가 된다(값이 전부 빈 functional test 등).
+        # 나머지 계산은 전부 values 의존이라 아래 본문으로 내려보내지 않는다.
+        out = _empty_features()
+        if case_ctx.get("spatial_fail_mask"):
+            out.update(_spatial_features(case_ctx, th))
+            out["n_dut"] = 0        # 측정 표본은 실제로 0 이다(공간만 산다)
+        return out
 
     # item 단위 공유(_shared — ingest 가 같은 item 의 case(bin)들에 같은 dict 를 붙임):
     # fail bin 과 무관한 계산(배열 변환·정렬·히스토그램·robust 통계·좌표 전처리)을 case
@@ -791,12 +809,14 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     # fail_mask 는 case 단위(bin 마다 다름)라 item 메모가 아니라 여기서 1회 변환해
     # 세 소비자가 공유한다 — 종전에는 파이썬 bool 리스트를 3번 다시 ndarray 로 만들었다
     # (2026-08-19, 값 동일 — np.asarray 는 이미 bool ndarray 면 그대로 돌려준다).
+    # ⚠ 이 `fm` 은 **측정값 축 전용**이다(values 와 같은 인덱스). 공간 계산에 넘기지 말 것 —
+    # 측정값이 빈 die 가 빠져 있어 점유율 분모가 좁아진다. `_spatial_features` 는 스스로
+    # 공간 축(spatial_fail_mask)을 읽는다(2026-08-28).
     fm = np.asarray(case_ctx.get("fail_mask") or [], dtype=bool)
     spatial = _spatial_features(case_ctx, th,
                                 _memo("spatial_geom",
                                       lambda: _spatial_geometry(case_ctx),
-                                      store=geom_store),
-                                fm_in=fm)
+                                      store=geom_store))
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
     pass_limit_hit_ratio = _pass_limit_hit_ratio(lo_hit, hi_hit, fm)

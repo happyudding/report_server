@@ -200,11 +200,22 @@ def _unit_text(unit):
 
 def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
                revision, lsl, usl, values, fail_mask, x_pos, y_pos, site, skewness=None,
-               item_raw=None, unit=None):
+               item_raw=None, unit=None,
+               spatial_fail_mask=None, spatial_x_pos=None, spatial_y_pos=None):
     """fail_case context dict (raw_table/raw_df 경로 공유 — 스키마 단일 소스).
 
     `unit` 은 판정에 쓰이지 않는다(분류는 이미 value_type 으로 끝났다). value_type 이
     왜 그렇게 나왔는지 되짚기 위한 진단용 원문이다 — /pe/eval 트레이스가 표시한다.
+
+    ⚠ **좌표/fail_mask 가 두 벌이다** (2026-08-28). `values`/`fail_mask`/`x_pos`/`y_pos`
+    는 서로 같은 인덱스로 정렬된 **측정값 축**이고(= 측정 셀 파싱에 성공한 die 만),
+    `spatial_*` 는 측정값과 무관한 **전체 die 축**이다. 공간 룰(E1/EDGE/CENTER/RING/
+    SPOT)은 FAILTNO 와 좌표만 보므로 전체 die 를 모집단으로 써야 한다 — 측정값 축으로
+    재면 값이 빈 die 가 분모에서 빠져 점유율이 왜곡되고, 값이 **전부** 빈 item 은 아예
+    판정 불가가 된다. 두 축을 하나로 합칠 수 없는 이유는 측정값 기반 지표
+    (`_fail_outlier_features`·`_fail_body_jump_ratio`·`_pass_limit_hit_ratio`)가
+    `values` 와 길이가 같아야 하고, 다르면 None 을 돌려주며 조용히 죽기 때문이다.
+    `spatial_*` 가 None 이면 측정값 축을 그대로 쓴다(레거시·degrade 경로 = 종전 동작).
     """
     return {
         "case_id": case_id, "item_id": item_id, "item_canonical": item_canonical,
@@ -221,6 +232,10 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
         "lsl": lsl, "usl": usl, "skewness": skewness,
         "values": values, "fail_mask": fail_mask,
         "x_pos": x_pos, "y_pos": y_pos, "site": site,
+        # 공간 축(전체 die) — 미전달이면 측정값 축을 그대로 쓴다(종전 동작).
+        "spatial_fail_mask": fail_mask if spatial_fail_mask is None else spatial_fail_mask,
+        "spatial_x_pos": x_pos if spatial_x_pos is None else spatial_x_pos,
+        "spatial_y_pos": y_pos if spatial_y_pos is None else spatial_y_pos,
     }
 
 
@@ -350,6 +365,7 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
     # 따로 만든 item 은 좌표가 다르므로 공유하면 안 된다).
     run_geom = {}
     cases = []
+    empty_values = 0        # 측정값이 하나도 안 읽힌 item 수 (아래 경고 판정용)
     for item in item_cols:
         value_type = _classify_value_type(unit_row[item], item)
         lsl, usl = _num_or_none(lolim_row[item]), _num_or_none(hilim_row[item])
@@ -385,8 +401,15 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                     continue
                 values.append(float(v))
                 x_pos.append(x); y_pos.append(y); bins.append(b); failtnos.append(ft)
+        # ⚠ 측정값이 하나도 없어도 **case 를 만든다** (2026-08-28).
+        # 종전에는 여기서 `continue` 로 버렸는데, 그러면 값이 전부 빈 item(functional
+        # test 등 — 컬럼은 있고 셀이 전부 NaN)이 평가 대상에서 통째로 사라져 공간 룰
+        # (E1/EDGE/CENTER/RING/SPOT)이 발화할 기회조차 없었다. 그 item 도 FAILTNO 는
+        # 채워져 있어 "어느 die 가 이 item 때문에 fail 났나" 를 알 수 있고, 공간 판정에
+        # 필요한 건 그 좌표뿐이다. 실제 증상은 "Yield 행은 있는데 AI Comment 만 없다".
+        # 측정값 기반 지표는 values 가 비면 L1/L2 가 알아서 None 으로 둔다(PF 와 같은 취급).
         if not values:
-            continue
+            empty_values += 1
         if fail_idx is None:
             fail_idx = [i for i, ft in enumerate(failtnos) if ft is not None]
 
@@ -425,6 +448,19 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
             for i in fail_idx:
                 if failtnos[i] == tno_i:
                     fail_mask[i] = True
+        # 공간 축은 **전체 die** 기준으로 따로 만든다 (2026-08-28) — 위 fail_mask 는
+        # values 와 정렬을 맞춘 측정값 축이라, 측정값이 빈 die 가 빠져 점유율 분모가
+        # 좁아진다(값이 전부 비면 아예 길이 0). 공간 룰은 FAILTNO 와 좌표만 보므로
+        # 측정 여부와 무관하게 전 die 를 모집단으로 써야 한다.
+        # 측정값이 전 die 유효한 흔한 경우엔 두 배열이 같은 내용이므로 재사용한다.
+        if x_pos is x_all and y_pos is y_all:
+            sp_mask = fail_mask
+        else:
+            sp_mask = [False] * len(x_all)
+            if tno_i is not None:
+                for i in fail_idx_all:
+                    if failtno_all[i] == tno_i:
+                        sp_mask[i] = True
         # 대표 bin = 최다 fail bin. 동률은 **작은 bin**(재실행마다 흔들리면 fail_case.bin
         # 이 요동쳐 트레이스 diff·표본함이 허위 변화를 보고한다 — 결정성이 필수다).
         bin_ = (min(fail_bin_counts, key=lambda b: (-fail_bin_counts[b], b))
@@ -436,10 +472,14 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         case = _case_dict(meta, case_id, item_id, item_canonical, cat,
                           value_type, bin_, revision, lsl, usl,
                           values, fail_mask, x_pos, y_pos, site,
-                          item_raw=item, unit=unit_row[item])
+                          item_raw=item, unit=unit_row[item],
+                          spatial_fail_mask=sp_mask,
+                          spatial_x_pos=x_all, spatial_y_pos=y_all)
         case["_shared"] = item_shared
-        if x_pos is x_all and y_pos is y_all:      # 좌표가 소스 공용 배열 그대로일 때만
-            case["_geom_shared"] = run_geom
+        # 좌표 전처리(_spatial_geometry) 공유통 — 공간 축은 **항상 소스 공용 좌표**
+        # (x_all/y_all)라 item 마다 같다. 그래서 종전의 "측정값 결측이 없을 때만" 조건이
+        # 필요 없어졌고, NaN 이 섞인 item 도 이제 전처리를 공유한다(값 동일·재계산만 제거).
+        case["_geom_shared"] = run_geom
         # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
         # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
         # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
@@ -450,9 +490,14 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         case["total_count"] = len(data)
         case["fail_count"] = sum(1 for i in fail_idx_all if failtno_all[i] == tno_i)
         cases.append(case)
-    if item_cols and len(data) > 0 and not cases:
-        logger.warning("raw_df: item %d개, 데이터 %d행이나 case 0 - item 셀 dtype 확인"
-                       "(문자열이면 파서가 무시, docs/EVALUATE_RETURN_SPEC 6절)",
+    # ⚠ 경고 조건이 "case 0" 이 아니라 "**측정값이 빈 case 가 전부**" 다 (2026-08-28).
+    # 값이 전부 빈 item 도 이제 case 를 만들므로(공간 룰 발화용) case 는 0 이 되지 않는다.
+    # 그래도 진단 가치는 그대로다 — item 셀이 문자열 dtype 이면 측정값을 통째로 못 읽어
+    # cpk·분포 룰이 전멸하는데, 그게 파서 무시인지 원래 값이 없는 것인지 여기서만 갈린다.
+    if item_cols and len(data) > 0 and cases and empty_values == len(cases):
+        logger.warning("raw_df: item %d개, 데이터 %d행이나 측정값이 읽힌 item 0 - "
+                       "item 셀 dtype 확인(문자열이면 파서가 무시, "
+                       "docs/EVALUATE_RETURN_SPEC 6절). 공간 룰만 평가된다.",
                        len(item_cols), len(data))
     return cases
 

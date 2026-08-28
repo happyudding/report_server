@@ -60,6 +60,28 @@ def _action_ko_for(verdict, case_ctx=None) -> str:
     primary = verdict.get("primary_signature")
     return (by_id[primary].get("action_ko") if primary in by_id else None) or _NO_PHENOMENON_FALLBACK
 
+def _fired_signature_lines(sig_result, case_ctx=None) -> str:
+    """LLM 프롬프트에 넣을 **발화 signature 전체** 목록 — 한 줄에 하나(현상+기본조치).
+
+    `_phenomenon_text`/`_action_ko_for` 가 primary 하나만 쓰는 것과 의도가 다르다:
+    [제안] 은 걸린 룰을 전부 종합해야 하므로 secondary 까지 재료로 준다. 문구는 같은
+    출처(`signatures_for` 의 phenomenon_ko/action_ko)를 쓰므로 표현이 갈리지 않는다.
+    yaml 에 문구가 없는 id 는 id 만 싣는다(발화 사실 자체를 잃지 않기 위해).
+    """
+    by_id = _signature_by_id(case_ctx)
+    out = []
+    for s in (sig_result or {}).get("signatures", []):
+        sid = s.get("id")
+        if not sid:
+            continue
+        meta = by_id.get(sid) or {}
+        parts = [x for x in (meta.get("phenomenon_ko"), meta.get("action_ko")) if x]
+        role = s.get("role") or ""
+        head = f"- {sid}" + (f"({role})" if role else "")
+        out.append(f"{head}: {' / '.join(parts)}" if parts else head)
+    return "\n".join(out)
+
+
 def _past_case_text(precedents) -> str:
     """[과거사례] 섹션 문구 — 관련도 1위 선례의 human_comment 를 제품명과 함께 인용.
 
@@ -75,6 +97,26 @@ def _past_case_text(precedents) -> str:
     return f"{prefix} 유사 사례가 확인 되었습니다 - {comments[0]}"
 
 
+def _precedent_lines(precedents) -> str:
+    """LLM 프롬프트에 넣을 **선례 전량** 목록 — 한 줄에 하나(제품/lot 출처 포함).
+
+    `_past_case_text` 가 1위 하나만 인용하는 것과 의도가 다르다: [제안] 은 발화한 룰
+    전부와 확보된 사례 전부를 종합해야 하므로, 프롬프트에는 회수된 코멘트를 모두 준다
+    (상한은 호출측 `config.EVAL_PRECEDENT_TOPK` 가 이미 걸어 둔다).
+    사람 코멘트가 있는 선례만 싣는다 — action/result 만 있는 행은 문장 재료가 안 된다.
+    """
+    lines = []
+    for p in precedents or ():
+        comment = str(p.get("human_comment") or "").strip()
+        if not comment:
+            continue
+        product = str(p.get("product_name") or "").strip()
+        lot = str(p.get("lot_id") or "").strip()
+        src = " / ".join(x for x in (product, lot) if x)
+        lines.append(f"- {src + ': ' if src else ''}{comment}")
+    return "\n".join(lines)
+
+
 
 
 def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_case, action_ko) -> str:
@@ -83,26 +125,42 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
     지시문의 목적은 **환각 억제**다: 원인 단정 금지, 입력이나 선례에 없는 수치·제품명·설비를
     지어내지 말 것, 섹션 제목 출력 금지(문장만) — LLM 출력이 [제안] 자리에만 들어가기
     때문이다.
-    ⚠ 지시문 8줄은 콤마 없는 암시적 문자열 연결로 한 덩어리다. 원본 의도일 수 있어 손대지
-    않았다(VERIFY_CHECKLIST §2-3).
+
+    2026-08-28 두 가지를 바꿨다.
+    ① **발화 signature 전체**(primary 뿐 아니라 secondary 와 각 룰의 기본 조치까지)와
+       **회수된 선례 전량**을 재료로 준다. 종전에는 primary 1개 + 선례 1위 인용문 하나만
+       들어가, 여러 축으로 걸린 case 도 한 축짜리 제안이 됐다.
+    ② 사례를 **버리지 말라**고 명시한다. 종전 지시문에는 "정답으로 단정하지 마라" 만
+       있어서, 사례가 실제로 2건 회수됐는데도 LLM 이 "직접 적용할 수 있는 사례는 없다"고
+       스스로 결론내 버리는 출력이 나왔다(사용자 신고). 조건이 완전히 같지 않아도 참고할
+       점을 살려 쓰는 것이 이 섹션의 목적이다.
+    분량은 최대 5줄 — 종합 재료가 늘어난 만큼 한 문장으로는 담기지 않는다.
     """
+    sig_lines = _fired_signature_lines(sig_result, case_ctx)
+    prec_lines = _precedent_lines(precedents)
     lines = [
-        "반도체 fail item 분석 이후 다음에 확인해야 할 점검 방향을 한국어로 한 문장"
-        "(최대 두 짧은 문장)만 제안하라."
+        "반도체 fail item 분석 이후 다음에 확인해야 할 점검 방향을 한국어로 제안하라."
+        "발화한 signature 전체와 아래 과거 사례를 종합해서 작성하라 - 하나만 보고 쓰지 마라."
+        "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라."
         "원인을 확정적으로 단정하지 마라"
         "현재 입력이나 과거 사례에 없는 수치 제품명 설비 사이트 원인을 만들지 마라."
         "과거 사례의 조치를 정답으로 단정하지마라"
-        "아래 [현상] / [과거사례] 문장을 반복하지 마라."
+        "다만 과거 사례가 주어졌다면 조건이 완전히 같지 않더라도 참고할 점을 최대한 살려서 반영하라."
+        "'적용할 수 있는 사례가 없다' 같이 주어진 사례를 버리는 문장은 쓰지 마라."
+        "아래 [현상] / [과거사례] 문장을 그대로 반복하지 마라."
         "점검 순서 또는 확인 대상을 중심으로 작성하라."
         "[현상], [과거사례], [점검 제안] 같은 섹션 제목은 출력하지 마라 - 문장만 출력하라",
         f"item: {case_ctx.get('item_canonical')} / class: {case_ctx.get('item_class')}",
         f"status: {verdict.get('status')} / primary: {verdict.get('primary_signature')}",
         f"secondary: {', '.join(verdict.get('secondary_signatures', []))}",
+        "[발화 signature 전체]",
+        sig_lines or "- (없음)",
         f"[현상] {phenomenon}",
-        f"[과거사례] {past_case}",
+        "[과거사례 목록]",
+        prec_lines or f"- {_NO_PRECEDENT_TEXT}",
         f"참고용 기본 조치(action_ko):{ action_ko}"
     ]
-    
+
     return "\n".join(lines)
 
 

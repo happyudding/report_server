@@ -146,10 +146,15 @@ function sigWhyBtnHtml() {
 
 function renderSignatureCell(ids, reviewed, edit) {
   // AI 평가 대기 중 + 이 행에 확정값이 없으면 "미분류"가 아니라 계산 중임을 알린다.
-  // ids 가 있으면(ENGR 확정값 — 편집 DB 유래라 AI 와 무관) 종전대로 그대로 보여준다.
-  // 편집 모드에서도 select 를 내지 않는다 — pending payload 의 signature_options 는
-  // 비어 있어 고를 항목이 없고, 그 상태로 저장하면 빈 값이 확정될 수 있다.
-  if (!ids.length && aiCommentState()) {
+  // ids 가 있으면(ENGR 확정값 또는 Signature 1단계가 먼저 도착한 엔진 제안값) 종전대로
+  // 그대로 보여준다.
+  // 편집 모드에서도 select 를 내지 않는다 — 그 payload 의 signature_options 가 비어
+  // 있으면 고를 항목이 없고, 그 상태로 저장하면 빈 값이 확정될 수 있다.
+  // ⚠ 2026-08-28: Signature 1단계 분리 후로는 **AI Comment 가 아직 pending 이어도
+  // signature_options 가 채워져 있을 수 있다**(판정만 먼저 끝난 상태). 그때는 대기 문구가
+  // 아니라 정상 렌더로 내려보내야 한다 — 안 그러면 Signature 를 먼저 띄우려고 만든
+  // 1단계가 화면에서 그대로 가려진다.
+  if (!ids.length && aiCommentState() && !signatureOptions().length) {
     return aiWaitHtml("sig-chip sig-none");
   }
   if (!edit) {
@@ -314,6 +319,11 @@ function renderAiComment(txt) {
   parts.forEach(p => {
     const t = String(p.body || "").trim();
     if (!p.tag) { if (t) out += `<div class="aic-lead">${linkifyComment(t)}</div>`; return; }
+    // [현상] 은 **화면에서만** 뺀다(2026-08-28 사용자 요청) — 셀에서 실제로 읽는 것은
+    // 사례와 제안이고, 현상은 Signature 컬럼이 이미 같은 내용을 담고 있다. 서버 문자열
+    // (recommend.make_comment)을 고치지 않는 이유는 이 함수 위 주석과 같다: payload 에
+    // 굳어 캐시에 남고 Excel·챗봇·eval export 가 같은 평문을 소비한다.
+    if (p.tag === "현상") return;
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
       `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
   });

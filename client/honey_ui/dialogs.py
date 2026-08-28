@@ -328,10 +328,11 @@ class GaugeSlider(QWidget):
         super().__init__(parent)
         self._value = eval_sensitivity.DEFAULT_LEVEL
         self._enabled = True
-        self.setFixedHeight(32)
+        self.setFixedHeight(36)
         # 눈금 6개 + '사용자설정' 라벨이 겹치지 않는 최소 폭. 고정폭인 이유는 행마다
         # 눈금 위치가 같아야 세로로 훑을 때 단계가 한눈에 비교되기 때문이다.
-        self.setFixedWidth(300)
+        # 라벨 10pt 로 키운 만큼 넓혔다 — 좁히면 '사용자설정' 이 이웃 눈금과 겹친다.
+        self.setFixedWidth(340)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def value(self):
@@ -402,10 +403,10 @@ class GaugeSlider(QWidget):
             else:
                 p.setPen(QPen(QColor("#98a2b0") if self._enabled else QColor("#c6ccd4")))
             f = p.font()
-            f.setPointSize(8)
+            f.setPointSize(10)
             f.setBold(on)
             p.setFont(f)
-            rect = QRect(x - 34, y + 9, 68, 14)
+            rect = QRect(x - 38, y + 9, 76, 18)
             p.drawText(rect, int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
                        label)
         p.end()
@@ -429,8 +430,8 @@ class EvalSensitivityDialog(QDialog):
     """
 
     LEVELS = 5
-    NAME_WIDTH = 150          # SIGNATURE 영문 원문이 안 잘리는 폭
-    KEY_WIDTH = 196           # 가장 긴 키(subpop_density_gap_strong) 기준
+    NAME_WIDTH = 190          # SIGNATURE 영문 원문이 안 잘리는 폭 (글자 13px 기준)
+    KEY_WIDTH = 240           # 가장 긴 키(subpop_density_gap_strong) 기준 (12px)
     _catalog_ready = pyqtSignal(object, bool)
 
     def __init__(self, parent=None):
@@ -440,7 +441,7 @@ class EvalSensitivityDialog(QDialog):
         # 모자라면 가로 스크롤바가 생겨 값 입력란이 화면 밖으로 밀린다.
         # 높이는 내용에 맞춰 `_fit_height()` 가 정한다(그룹 수·키 수는 카탈로그가 정하므로
         # 고정값으로 두면 아래가 텅 비거나 잘린다).
-        self.resize(880, 640)
+        self.resize(1060, 640)
         self._settings = eval_sensitivity.load_settings()
         self._catalog = eval_sensitivity.load_cached_catalog()
         self._rows = {}          # group_id → {"steps": [...], "inputs": {key: QLineEdit}}
@@ -451,15 +452,16 @@ class EvalSensitivityDialog(QDialog):
         info = QLabel(
             "AI Comment 가 이슈를 얼마나 민감하게 잡을지 정합니다. "
             "1 rough(굵직한 것만) ← 3 기본 → 5 tight(꼼꼼히). "
-            "값을 직접 입력하면 그 줄은 '사용자설정'이 됩니다.")
+            "값을 직접 입력하면 그 줄은 '사용자설정'이 됩니다.\n"
+            "(마우스를 가져가 대면 설명이 나옵니다.)")
         info.setWordWrap(True)
-        info.setStyleSheet("color:#555;")
+        info.setStyleSheet("color:#555; font-size:13px;")
         root.addWidget(info)
 
         all_row = QHBoxLayout()
         lbl_all = QLabel("ALL")
         lbl_all.setFixedWidth(self.NAME_WIDTH)
-        lbl_all.setStyleSheet("font-weight:700;")
+        lbl_all.setStyleSheet("font-weight:700; font-size:13px;")
         all_row.addWidget(lbl_all)
         self._all_gauge = GaugeSlider()
         self._all_gauge.changed.connect(self._on_all)
@@ -496,7 +498,7 @@ class EvalSensitivityDialog(QDialog):
         self._help.setWordWrap(True)
         self._help.setStyleSheet(
             "color:#445; background:#f4f7fb; border:1px solid #dfe6ef;"
-            "border-radius:6px; padding:6px 8px;")
+            "border-radius:6px; padding:6px 8px; font-size:13px;")
         root.addWidget(self._help)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -558,7 +560,7 @@ class EvalSensitivityDialog(QDialog):
 
             name = QLabel(self._signature_label(group))
             name.setFixedWidth(self.NAME_WIDTH)
-            name.setStyleSheet("font-weight:700; font-size:11px;")
+            name.setStyleSheet("font-weight:700; font-size:13px;")
             name.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
             name.setToolTip(str(group.get("label_ko") or gid))
             self._grid.addWidget(name, r, 0)
@@ -584,12 +586,13 @@ class EvalSensitivityDialog(QDialog):
                 one.setSpacing(6)
                 label = QLabel(key)
                 label.setFixedWidth(self.KEY_WIDTH)
-                label.setStyleSheet("font-family:Consolas,monospace; font-size:10px;"
+                label.setStyleSheet("font-family:Consolas,monospace; font-size:12px;"
                                     "color:#445;")
                 label.setToolTip(help_text)
                 edit = QLineEdit()
-                edit.setFixedWidth(76)
-                edit.setFixedHeight(20)
+                edit.setFixedWidth(90)
+                edit.setFixedHeight(24)
+                edit.setStyleSheet("font-size:13px;")
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight)
                 edit.setToolTip(help_text)
                 edit.editingFinished.connect(
@@ -604,7 +607,7 @@ class EvalSensitivityDialog(QDialog):
                 one.addWidget(edit)
                 default = entry.get("default")
                 hint = QLabel(f"기본 {default}" if default is not None else "")
-                hint.setStyleSheet("color:#8a95a3; font-size:10px;")
+                hint.setStyleSheet("color:#8a95a3; font-size:12px;")
                 one.addWidget(hint)
                 one.addStretch(1)
                 values.addLayout(one)
@@ -621,6 +624,9 @@ class EvalSensitivityDialog(QDialog):
 
         고정 높이로 두면 그룹·키 개수가 바뀔 때(카탈로그가 정한다) 아래가 텅 비거나
         잘린다. 실제로 첫 렌더에서 아래 1/3 이 빈 공간이었다.
+
+        cap 은 **화면 작업영역 전체**다(사용자 지정 — 모든 Signature 가 스크롤 없이
+        보여야 한다). 여백을 남기면 그룹 8개가 잘려 다시 스크롤이 생긴다.
         """
         inner = self._scroll.widget()
         if inner is None:
@@ -628,9 +634,16 @@ class EvalSensitivityDialog(QDialog):
         inner.adjustSize()
         need = inner.sizeHint().height() + 8
         screen = self.screen() if hasattr(self, "screen") else None
-        cap = int(screen.availableGeometry().height() * 0.86) if screen else 900
+        avail = screen.availableGeometry() if screen else None
+        cap = int(avail.height() * 0.97) if avail else 900
         chrome = self.height() - self._scroll.height()      # 안내문·ALL·설명바·버튼
         self.resize(self.width(), min(cap, need + max(chrome, 0)))
+        # 세로로 커진 창이 화면 아래로 삐져나가면 그만큼 다시 안 보인다 — 작업영역
+        # 안으로 끌어올린다(리사이즈만으로는 위치가 그대로다).
+        if avail is not None:
+            g = self.frameGeometry()
+            g.moveCenter(avail.center())
+            self.move(max(avail.left(), g.left()), max(avail.top(), g.top()))
         self._refresh()
 
     def _help_text(self, key) -> str:
@@ -732,7 +745,10 @@ class EvalSensitivityDialog(QDialog):
                 edit.blockSignals(True)
                 edit.setText("" if value is None else str(value))
                 edit.blockSignals(False)
-                edit.setStyleSheet("font-weight:600; color:#2f6fd0;" if key in manual else "")
+                # font-size 를 여기에도 넣는다 — setStyleSheet 는 덮어쓰기라
+                # 생성 시점 크기가 강조/해제 때마다 날아간다.
+                edit.setStyleSheet("font-size:13px;" + (
+                    "font-weight:600; color:#2f6fd0;" if key in manual else ""))
 
     def _on_ok(self):
         eval_sensitivity.save_settings(self._settings)

@@ -2469,7 +2469,7 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
   position: relative; display: inline-flex; flex-direction: column; align-items: center;
   width: 50px; cursor: pointer; user-select: none;
 }
-.esens-stop:last-child { width: 62px; cursor: default; }
+.esens-stop:last-child { width: 74px; cursor: default; }
 .esens-stop::before {                      /* 왼쪽 이웃과 잇는 선 */
   content: ""; position: absolute; top: 6px; right: 50%; left: -50%; height: 2px;
   background: #c3ccd8;
@@ -2480,7 +2480,7 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
   background: #fff; position: relative; z-index: 1;
 }
 .esens-stop em {
-  font-style: normal; font-size: 10px; color: #98a2b0; margin-top: 3px; white-space: nowrap;
+  font-style: normal; font-size: 12px; color: #98a2b0; margin-top: 3px; white-space: nowrap;
 }
 .esens-stop.on .esens-dot { background: #2f6fd0; border-color: #2559a8; transform: scale(1.25); }
 .esens-stop.on em { color: #2559a8; font-weight: 700; }
@@ -2493,19 +2493,41 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
 /* threshold 는 세로로 쌓는다 — 키 이름이 길어 가로로 늘어놓으면 줄이 접힌다. */
 .esens-kv { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
 .esens-val {
-  width: 80px; padding: 2px 5px; border: 1px solid #d8dee6; border-radius: 5px;
-  font-size: 12px; font-variant-numeric: tabular-nums; text-align: right;
+  width: 92px; padding: 3px 6px; border: 1px solid #d8dee6; border-radius: 5px;
+  font-size: 14px; font-variant-numeric: tabular-nums; text-align: right;
 }
 .esens-val.changed { border-color: #2f6fd0; background: #f0f6ff; font-weight: 600; }
 .esens-key {
-  font-family: ui-monospace, Consolas, monospace; font-size: 11px;
-  width: 200px; flex: none; color: #445;
+  font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+  width: 230px; flex: none; color: #445;
 }
-.esens-name { font-weight: 700; font-size: 11px; line-height: 1.5; vertical-align: top; }
+.esens-name { font-weight: 700; font-size: 13px; line-height: 1.5; vertical-align: top; }
 .esens-table td { vertical-align: top; padding: 4px 9px; }
+.esens-table th { font-size: 13px; }
+.esens-table .iinfo-sub { font-size: 12px; }
 .esens-help {
-  margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+  margin: 8px 0 0; padding: 7px 10px; border-radius: 8px; font-size: 13px;
   background: #f4f7fb; border: 1px solid #dfe6ef; color: #445; min-height: 18px;
+}
+/* 모든 Signature 가 스크롤 없이 한 화면에 보여야 한다(사용자 지정) — 세로·가로 둘 다
+   스크롤을 만들지 않고 창을 키워서 담는다. .iinfo-scroll(0.62vph + overflow-x:auto)을
+   그대로 쓰면 그룹 8개가 잘리고 키 이름이 길어 가로 스크롤이 생긴다. */
+.esens-scroll { overflow: visible; max-height: none; }
+#evalSensModal .modal-box {
+  width: min(1900px, 99vw); max-width: 99vw;
+  max-height: calc(var(--vph) * 0.98); padding: 16px 20px;
+}
+/* 남는 가로 폭은 threshold 칸이 가져간다 — 이름·게이지는 필요한 만큼만 쓴다. */
+.esens-table th:nth-child(1), .esens-table td:nth-child(1) { width: 1%; }
+.esens-table td:nth-child(3) { white-space: normal; }
+/* 세로가 짧은 화면(1366x768 등)에서는 내용이 화면보다 길어 스크롤을 피할 수 없다 —
+   여백을 줄여 스크롤 양을 최소화한다(글자 크기는 그대로 둔다). */
+@media (max-height: 900px) {
+  #evalSensModal .modal-box { padding: 10px 16px; }
+  #evalSensModal .modal-desc { margin-bottom: 6px; }
+  .esens-table td { padding: 2px 9px; }
+  .esens-help { margin-top: 5px; padding: 5px 10px; }
+  #evalSensModal .modal-actions { margin-top: 8px; }
 }
 
 /* ── Rawdata CSV 다운로드 (source 선택 메뉴) ───────────────────────────────── */
@@ -3206,7 +3228,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
       <!-- Input File 정보도 Rawdata 다운로드와 같은 조회 기능(권한 게이트 없음) -->
       <button class="btn-topbar-info" id="btnInputInfo" title="Input File Information — source 별 입력 파일·STDF 정보">ℹ</button>
       <!-- AI Comment 판정 기준(민감도) 조회 — AI Comment 세션에서만 eval_sensitivity_info.js 가 켠다 -->
-      <button class="btn-topbar-info" id="btnEvalSens" title="AI Comment 판정 기준 (민감도 설정)" style="display:none;">🎚</button>
+      <button class="btn-topbar-info" id="btnEvalSens" title="AI Comment 판정 기준 (민감도 설정)" style="display:none;">⚙</button>
       <!-- Rawdata 다운로드는 조회 기능이라 읽기 전용 사용자에게도 보인다(권한 게이트 없음) -->
       <span class="rawdl-wrap">
         <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (source별 CSV / 전체 zip)">⬇</button>
@@ -3456,8 +3478,9 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   <div class="modal-box modal-box-input-info">
     <p class="modal-title">AI Comment 판정 기준</p>
     <p class="modal-desc" id="esensDesc">이 세션의 AI Comment 가 어떤 기준으로 판정됐는지 보여줍니다.</p>
+    <p class="modal-desc" style="margin-top:-8px;">(마우스를 가져가 대면 설명이 나옵니다.)</p>
     <div id="esensNote"></div>
-    <div class="iinfo-scroll"><div id="esensBody"></div></div>
+    <div class="esens-scroll"><div id="esensBody"></div></div>
     <div class="modal-actions">
       <button class="modal-btn" id="esensSave" style="display:none;">저장</button>
       <button class="modal-btn primary" id="esensClose">닫기</button>

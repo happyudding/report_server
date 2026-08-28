@@ -474,7 +474,13 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 # v2 (2026-08-19): 엔진 case 가 item 당 1개가 되면서 row_key 채움 방식이 바뀌었다
 #   (대표 bin 1행 → 그 item 의 **모든 fail bin 행** fan-out). 반환 dict 의 키 구성이
 #   달라지므로 옛 캐시를 재사용하면 Yield 행 일부가 빈 채로 굳는다.
-AI_COMMENT_SCHEMA_VERSION = 2
+# v3 (2026-08-28): ⚠ **위 "구조 변경 때만" 규약의 의도적 예외**다. 공간 룰
+#   (E1/EDGE/CENTER/RING/SPOT)의 판정 모집단이 '측정된 die' → '전체 die' 로 바뀌고,
+#   측정값이 없는 item 도 평가 대상이 됐다(엔진 ingest.py/features.py 코드 변경).
+#   값 변화를 덮어 주는 rules_rev 는 **`/pe/eval` 저장 카운터라 코드 변경을 감지하지
+#   못한다** — 그래서 여기서 올린다. 배포 시 `.rules_rev` 도 함께 +1 해야 report payload
+#   안에 이미 구워진 AI Comment 셀까지 갈린다(이 상수는 ai_comment_key 에만 들어간다).
+AI_COMMENT_SCHEMA_VERSION = 3
 
 
 def _ai_meta_digest(session) -> str:
@@ -540,7 +546,7 @@ def compare_key(session, prep_digest: str = "") -> tuple:
                COMPARE_SCHEMA_VERSION))
 
 
-def ai_comment_key(session, prep_digest: str = "") -> tuple:
+def ai_comment_key(session, prep_digest: str = "", stage: str = "") -> tuple:
     """AI Comment 평가 결과 캐시 키 — report payload 캐시와 **분리** (2026-08-13).
 
     session_id·edits_rev 를 넣지 않는 것이 핵심이다: 평가 입력은 tables(= chash + prep)
@@ -549,11 +555,18 @@ def ai_comment_key(session, prep_digest: str = "") -> tuple:
     selected_items 는 analysis_key 산출에 이미 포함(모듈 docstring)이라 따로 넣지 않는다.
     ⚠ 선례검색이 실제 DB 를 갖게 되면(meta 의 session_id 자기제외로 세션마다 선례가
     달라질 수 있음) 이 전제가 흔들린다 — LLM/선례 활성화 시 세션 축 추가를 재검토할 것.
+
+    `stage` 는 2026-08-28 에 붙은 **2단계 분리** 축이다. LLM 이 켜지면 L5(코멘트 합성)가
+    케이스마다 HTTP 왕복이라 전체가 수십 초로 늘어나는데, Signature(L1~L4)는 그 전에
+    이미 확정돼 있다. `stage="sig"` 는 코멘트 없이 판정만 담은 중간 결과의 별도 캐시다.
+    기본값("")은 **종전 키 바이트 그대로** — 기존 디스크 캐시가 그대로 유효하다
+    (여기에 빈 튜플을 더하므로 최종본 키는 한 글자도 바뀌지 않는다).
     """
     return (_base(session, prep_digest) + (_mode(session), _ai_meta_digest(session))
             + _eval_rules_suffix()
             + _eval_sensitivity_suffix(session.get("webreport_options") or "")
-            + (AI_COMMENT_SCHEMA_VERSION,))
+            + (AI_COMMENT_SCHEMA_VERSION,)
+            + ((str(stage),) if stage else ()))
 
 
 def trim_key(session, session_id: str, edits_rev: int, source: str) -> tuple:

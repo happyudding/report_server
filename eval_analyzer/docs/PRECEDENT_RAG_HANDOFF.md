@@ -87,3 +87,31 @@ def _rag_search(case_ctx: dict, sig_result: dict) -> list: ...
 - eval_engine 이 report_server 모듈을 import 하지 않는다(의존 방향 단방향 유지).
 - RAG endpoint/모델 이름 하드코딩 금지 — `config.EVAL_PRECEDENT_RAG_*` 로만.
 - `_rag_search` 외 다른 파일(`recommend.py` / `api.py` / `present.py` / `store.py`) 수정 불필요.
+
+---
+
+## 9. 미구현 — RAG 선례 목록 UI (2026-08-28 사용자 요청, 보류)
+
+AI Comment 셀의 **[사례] 문장 끝에 클립(📎) 모양 버튼**을 달고, 누르면 RAG 가 검색한
+선례 목록을 펼쳐 보여 달라는 요청이 있었다. **아직 구현하지 않았다** — 이유는 선행
+의존이 비어 있기 때문이다:
+
+- `_rag_search()` 가 여전히 `NotImplementedError` 스텁이고, 기본 백엔드는 `sql` 이다.
+  현재 화면이 인용하는 선례는 SQL 검색 결과 **1건**(`recommend._past_case_text` 가
+  관련도 1위 하나만 인용)이라, "목록" 으로 펼칠 대상 자체가 payload 에 없다.
+- 목록을 화면에 주려면 `to_result` 의 `precedents`(§4 계약대로 전량 반환됨)를
+  report payload 까지 실어 보내는 배선이 추가로 필요하다. 지금은 `web_report/ai_comment.py`
+  `_cell_text` 가 **코멘트 평문 한 덩어리**만 셀에 넣고 선례 배열은 버린다.
+
+구현할 때 필요한 것 (순서):
+1. `_rag_search()` 구현 (§1~§6 — 이 문서의 본래 주제).
+2. `ai_comment._to_row_keys` 반환에 선례 배열을 담는 새 키 추가
+   (⚠ `cache_policy.AI_COMMENT_SCHEMA_VERSION` 을 올려야 옛 캐시가 무효화된다 —
+   **전역 `REPORT_SCHEMA_VERSION` 은 올리지 말 것**, 전 세션 콜드 폭풍이 된다).
+3. `sheets.js renderAiComment` 의 `.aic-past` 섹션 끝에 버튼 삽입 + 팝오버.
+   근거 팝업(`sig_reason.js`)이 같은 성격의 선례라 그 패턴을 재사용하면 된다.
+
+관련: 같은 날 `recommend._build_prompt` 를 고쳐 **선례 전량**(`_precedent_lines`)과
+**발화 signature 전체**(`_fired_signature_lines`)를 LLM 프롬프트에 넣도록 했다.
+LLM 이 선례 2건을 받고도 "직접 적용할 수 있는 사례는 없다" 고 스스로 버리는 출력을
+내던 문제의 대응이다(그 문장은 코드에 없는 LLM 생성문이었다).

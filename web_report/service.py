@@ -157,6 +157,95 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     return result, ("build" if ok else "fallback")
 
 
+def _ai_two_stage_wanted() -> bool:
+    """Signature 를 먼저 내는 2단계 분리를 **쓸 이유가 있는가** — LLM 이 켜져 있는가.
+
+    LLM 이 꺼져 있으면 엔진 L5 는 룰 템플릿 조립이라 비용이 거의 0 이고, Signature 와
+    코멘트가 **같은 순간** 완성된다. 그때 1단계를 따로 돌리면 같은 평가를 두 번 하는
+    순수 손해다(엔진 평가가 콜드 빌드의 80%였다 — 2026-08-13 실측).
+    판정을 여기 한 곳에 둬서 예약(request_build)과 실행(run_ai_signature_build)이 서로
+    다른 답을 내지 않게 한다 — 갈리면 잡이 큐에 들어갔다가 아무 일도 안 하고 끝난다.
+    실패는 False(= 종전 동작)로 흡수한다. 배선 점검이 목적이 아니라 최적화 스위치다.
+    """
+    try:
+        from . import ai_comment
+        return bool(ai_comment.llm_status().get("enabled"))
+    except Exception:
+        _log.debug("llm_status 조회 실패 — 2단계 분리 생략", exc_info=True)
+        return False
+
+
+def _ai_signature_cached(session, session_id: str, *, report_db,
+                         upload_root: Path) -> dict | None:
+    """Signature **만** 담은 1단계 결과 — 캐시(RAM→디스크) 조회, 없으면 None.
+
+    2026-08-28. LLM 이 켜지면 엔진 L5(코멘트 합성)가 케이스마다 HTTP 왕복이라 AI 잡
+    전체가 수십 초로 늘어난다. 그런데 Signature 는 L1~L4 에서 이미 확정돼 있어, 최종본을
+    기다리는 동안 Issue Table 의 Signature 컬럼만 빈 채로 두는 것은 순전한 손해다.
+    여기서는 **읽기만** 한다 — 실제 평가는 백그라운드 'aisig' 잡이 채운다. 사용자가
+    기다리는 경로에서 엔진을 돌리면(수 초 GIL 점유) 리포트가 즉시 열리는 이점이 사라진다.
+    """
+    key = cache_policy.ai_comment_key(
+        session, _preprocess.session_digest(report_db, session_id), stage="sig")
+    result = cache.cache_get(cache.AI_COMMENT_CACHE, key)
+    if result is not None:
+        return result
+    result = disk_cache.load_ai_comment(upload_root, key)
+    if result is not None and all(k in result for k in _AI_RESULT_KEYS):
+        cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
+                        cache.AI_COMMENT_CACHE_MAX)
+        return result
+    return None
+
+
+def build_ai_signatures(session, session_id: str, tables, manifest, *,
+                        report_db, upload_root: Path) -> dict | None:
+    """Signature 1단계 평가를 실제로 돌려 캐시에 넣는다 (백그라운드 'aisig' 잡 전용).
+
+    `_ai_signature_cached` 와 짝이며, 이쪽만 엔진을 호출한다. 최종본(comments 포함)이
+    이미 있으면 아무것도 하지 않는다 — 그 경우 1단계는 쓸모가 없다(화면은 최종본을 쓴다).
+    예외 폴백은 캐시하지 않는다(`_ai_comment_cached` 와 같은 이유 — 일시 오류의 빈 결과가
+    영구화되면 Signature 가 조용히 "미분류" 로 굳는다).
+    """
+    from . import ai_comment
+    if _ai_cache_ready(session, session_id, report_db=report_db,
+                       upload_root=upload_root):
+        return None
+    key = cache_policy.ai_comment_key(
+        session, _preprocess.session_digest(report_db, session_id), stage="sig")
+    result, ok = ai_comment.safe_build_ex(
+        tables, session, manifest.get("selected_items") or [],
+        generate_comment=False)
+    if not ok:
+        return None
+    cache.cache_put(cache.AI_COMMENT_CACHE, key, result, cache.AI_COMMENT_CACHE_MAX)
+    disk_cache.save_ai_comment(upload_root, key, result)
+    return result
+
+
+def run_ai_signature_build(session_id: str, *, report_db, upload_root: Path) -> bool:
+    """'aisig' 잡 진입점 — tables 를 열어 Signature 1단계를 계산·캐시한다.
+
+    `load_webreport` 를 타지 않는다: 목적이 payload 재빌드가 아니라 **분리 캐시 채우기**
+    하나뿐이고, payload 를 다시 만들면 그게 곧 콜드 빌드 1회다. 채운 뒤 재렌더는 프런트
+    폴링(/full)이 다음 tick 에 알아서 가져간다.
+    반환은 실제로 계산했는지 — False 는 "할 일 없음"(AI 옵션 아님·최종본 이미 있음).
+    """
+    if not _ai_two_stage_wanted():
+        return False
+    session = report_db.get_session(session_id)
+    if not session or not _webreport_ai_comment(session.get("webreport_options") or ""):
+        return False
+    if _ai_cache_ready(session, session_id, report_db=report_db,
+                       upload_root=upload_root):
+        return False
+    session, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                             upload_root=upload_root, session=session)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    return build_ai_signatures(session, session_id, tables, manifest,
+                               report_db=report_db, upload_root=upload_root) is not None
+
+
 def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -> bool:
     """AI 분리 캐시(RAM 또는 디스크)가 준비됐는가 — 값싼 판정(SELECT 1 + dict/stat).
 
@@ -258,7 +347,12 @@ def _pending_kinds(session, session_id: str, *, report_db, upload_root: Path,
     if (_webreport_ai_comment(session.get("webreport_options") or "")
             and not _ai_cache_ready(session, session_id, report_db=report_db,
                                     upload_root=upload_root)):
-        kinds.append("ai")
+        # Signature 1단계가 이미 들어간 본과 그렇지 않은 본은 **내용이 다르므로** 키를
+        # 갈라야 한다 (2026-08-28). 같은 키를 쓰면 Signature 가 비어 있던 본이 나중에
+        # 재사용되어, 1단계 평가가 끝났는데도 화면은 계속 "미분류" 로 남는다.
+        kinds.append("aisig" if (_ai_two_stage_wanted() and _ai_signature_cached(
+            session, session_id, report_db=report_db,
+            upload_root=upload_root) is not None) else "ai")
     if _compare_wanted(session) and not _compare_cache_ready(
             session, session_id, report_db=report_db, upload_root=upload_root):
         kinds.append("compare")
@@ -452,9 +546,23 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                     # 프런트가 ai_comment_pending 플래그로 "계산 중" 표시.
                                     ai_pending = True
                                     ai_how = "deferred"
-                                    ai_result = {"comments": {}, "etc_auto_items": [],
-                                                 "row_signatures": {},
-                                                 "signature_options": []}
+                                    # Signature 1단계(L1~L4)가 이미 끝나 있으면 그것만
+                                    # 먼저 싣는다 (2026-08-28). comments 는 여전히 비어
+                                    # 있어 AI Comment 셀은 "Loading 중…" 을 유지하고,
+                                    # Signature 컬럼만 확정값으로 채워진다.
+                                    sig_only = _ai_signature_cached(
+                                        session, session_id, report_db=report_db,
+                                        upload_root=upload_root) \
+                                        if _ai_two_stage_wanted() else None
+                                    if sig_only is not None:
+                                        ai_result = dict(sig_only)
+                                        ai_result["comments"] = {}
+                                        ai_how = "sig"
+                                    else:
+                                        ai_result = {"comments": {},
+                                                     "etc_auto_items": [],
+                                                     "row_signatures": {},
+                                                     "signature_options": []}
                                 ai_comments = ai_result["comments"]
                                 # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
                                 etc_auto_items = ai_result["etc_auto_items"]
@@ -559,8 +667,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                     # 회수한다(ai 단독·compare 단독·둘 다 = 3가지 키).
                                     # 한 가지만 지우면 나머지가 남아 다음 콜드에서
                                     # 이미 계산된 부분이 빠진 본이 되살아난다.
+                                    # aisig = Signature 1단계가 들어간 대기본(2026-08-28).
+                                    # 조합을 빠뜨리면 그 본이 남아 다음 콜드에서 코멘트가
+                                    # 빠진 본이 되살아난다.
                                     for kinds in (("ai",), ("compare",),
-                                                  ("ai", "compare")):
+                                                  ("ai", "compare"),
+                                                  ("aisig",), ("aisig", "compare")):
                                         disk_cache.drop_report(
                                             upload_root,
                                             cache_policy.report_pending_key(
@@ -616,6 +728,14 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
         # 예약하면 나머지도 함께 채워진다 — 두 잡을 겹쳐 돌리면 같은 콜드 빌드를 두 번
         # 하는 셈이라 ai 를 우선한다(엔진 평가가 더 무거워 먼저 시작하는 편이 낫다).
         if report.get("ai_comment_pending"):
+            # Signature 1단계를 **먼저** 예약한다 (2026-08-28). 'ai' 와 달리 payload 를
+            # 만들지 않아 콜드 빌드가 중복되지 않고, LLM 이 켜진 세션에서는 'ai' 보다
+            # 훨씬 먼저 끝나 Signature 컬럼이 앞당겨 채워진다. 이미 1단계 결과가 있으면
+            # run_ai_signature_build 가 즉시 빠지므로 중복 예약은 값싸다.
+            if _ai_two_stage_wanted() and not _ai_signature_cached(
+                    session, session_id, report_db=report_db,
+                    upload_root=upload_root):
+                compute.request_build(session_id, str(upload_root), "aisig")
             compute.request_build(session_id, str(upload_root), "ai")
         elif report.get("compare_pending"):
             compute.request_build(session_id, str(upload_root), "compare")

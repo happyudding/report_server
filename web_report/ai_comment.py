@@ -306,7 +306,7 @@ def fail_bins_by_item(tables) -> dict:
     return {k: sorted(v) for k, v in out.items()}
 
 
-def _to_row_keys(cases_by_item, fail_bins=None):
+def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True):
     """item 별 case → {"comments": row_key 사전, "etc_auto_items": [...]}.
 
     row_key 규약(tabs/issue_table.py): 그 item 이 걸리는 **모든 fail bin 행**
@@ -335,14 +335,18 @@ def _to_row_keys(cases_by_item, fail_bins=None):
         if not item:
             continue
         ids = _case_sig_ids(case)
-        text = _cell_text(case)
+        # with_comments=False = Signature 만 먼저 내는 1단계 빌드. 셀 텍스트를 빈 문자열로
+        # 두면 아래 대입이 전부 "" 를 쓰고 호출부가 그 dict 를 그대로 화면에 태울 때
+        # "Loading 중…" 이 유지된다 (build_ai_comments docstring 의 ⚠ 참조).
+        text = _cell_text(case) if with_comments else ""
         bins = (fail_bins or {}).get(item)
         if bins is None:
             # 폴백 — case 의 대표 bin 한 행만(구 호출부 호환).
             rep = case.get("bin")
             bins = [rep] if (rep is not None and rep != _PASS_BIN) else []
         for b in bins:
-            out[f"Yield|{b}|{item}"] = text
+            if with_comments:
+                out[f"Yield|{b}|{item}"] = text
             if ids:
                 sigs[f"Yield|{b}|{item}"] = ids
             fail_bin_items.add(item)
@@ -351,8 +355,9 @@ def _to_row_keys(cases_by_item, fail_bins=None):
         # 설명하지 못했다는 표시만으로 표를 늘리면 취지에 반한다.
         if any(str(s.get("id")) != UNKNOWN_SIGNATURE for s in (case.get("signatures") or [])):
             fired_items.add(item)
-        out.setdefault(f"CPK|{item}", text)
-        out.setdefault(f"ETC|{item}", text)
+        if with_comments:
+            out.setdefault(f"CPK|{item}", text)
+            out.setdefault(f"ETC|{item}", text)
         if ids:
             sigs.setdefault(f"CPK|{item}", ids)
             sigs.setdefault(f"ETC|{item}", ids)
@@ -360,7 +365,8 @@ def _to_row_keys(cases_by_item, fail_bins=None):
             "row_signatures": sigs, "signature_options": signature_catalog()}
 
 
-def build_ai_comments(tables, session, selected_items=None, fail_only=None):
+def build_ai_comments(tables, session, selected_items=None, fail_only=None,
+                      generate_comment: bool = True):
     """tables(모드 변형 후) 를 소스별로 evaluate 해 IssueTable 입력 dict 반환.
 
     반환 = {"comments": {row_key: 셀 텍스트}, "etc_auto_items": [item...],
@@ -380,6 +386,16 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
     `thresholds_override` 로 넘긴다 — 단계표 해석은 저장 시점에 끝나 있고 여기는 숫자만
     전달한다. 이 값은 `cache_policy.ai_comment_key` 에도 digest 로 들어가 있어야 한다
     (없으면 같은 rawdata·다른 민감도인 dedup 형제 세션이 캐시를 공유해 조용한 오답이 된다).
+
+    `generate_comment=False` (2026-08-28) 는 **Signature 만 먼저 내보내는 1단계 빌드**다.
+    엔진 L5(선례검색 + LLM 코멘트 합성)를 건너뛰므로 LLM 이 켜진 세션에서 판정(L1~L4)이
+    끝나는 즉시 Signature 컬럼을 채울 수 있다.
+    ⚠ 이 모드의 반환 `comments` 는 **항상 빈 dict** 다. 엔진이 `comment=None` 을 주므로
+    `_cell_text` 를 태우면 status 배지만 남은 껍데기 문자열이 나오는데, 그게 셀에 박히면
+    사용자에게는 "AI Comment 가 배지만 있고 내용이 없다"로 보인다(완성본이 도착하기 전까지
+    그 상태로 굳는다). 빈 dict 면 화면은 종전대로 "Loading 중…" 을 유지한다 — 이 함수를
+    호출하는 쪽이 최종본 캐시와 **다른 키**(ai_comment_key stage="sig")에 담아야 하는
+    이유이기도 하다.
     """
     evaluate = _evaluate_fn()
     th_override = webreport_eval_overrides(session.get("webreport_options") or "") or None
@@ -405,16 +421,19 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
             continue
         raw_df = _table_to_raw_df(table, items)
         result = evaluate({"meta": meta, "raw_df": raw_df}, persist=False,
+                          generate_comment=generate_comment,
                           thresholds_override=th_override)
         for case in result.get("cases") or []:
             key = str(case.get("item_raw") or "")
             prev = best.get(key)
             if prev is None or _rank(case) > _rank(prev):
                 best[key] = case
-    return _to_row_keys(best, fail_bins_by_item(tables))
+    return _to_row_keys(best, fail_bins_by_item(tables),
+                        with_comments=generate_comment)
 
 
-def safe_build_ex(tables, session, selected_items=None, fail_only=None):
+def safe_build_ex(tables, session, selected_items=None, fail_only=None,
+                  generate_comment: bool = True):
     """safe_build + 성공 여부 — (result dict, ok). ok=False 는 **예외 폴백**(빈 결과).
 
     캐시 경로(service)가 폴백을 캐시하지 않기 위한 구분이다 — 일시 오류(메모리·룰 파일
@@ -422,7 +441,8 @@ def safe_build_ex(tables, session, selected_items=None, fail_only=None):
     빈 결과'는 결정적이므로 ok=True 다(캐시해도 안전).
     """
     try:
-        return build_ai_comments(tables, session, selected_items, fail_only), True
+        return build_ai_comments(tables, session, selected_items, fail_only,
+                                 generate_comment=generate_comment), True
     except Exception:
         logger.warning("ai_comment 빌드 실패 — 빈 값으로 진행 (session=%s)",
                        session.get("session_id"), exc_info=True)

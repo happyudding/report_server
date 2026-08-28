@@ -245,14 +245,22 @@ def test_raw_df_rejects_duplicate_items():
 
 
 def test_raw_df_warns_on_nonnumeric_items(caplog):
-    """item 데이터셀이 전부 문자열 → 파서가 무시해 case 0. 하드에러 아님, warning 으로 legible."""
+    """item 데이터셀이 전부 문자열 → 파서가 무시해 측정값 0. 하드에러 아님, warning 으로 legible.
+
+    ⚠ case 자체는 **만들어진다** (2026-08-28) — 측정값이 없어도 FAILTNO+좌표만으로
+    공간 룰(E1/EDGE/CENTER/RING/SPOT)을 평가해야 하기 때문이다. 종전에는 여기서
+    case 를 통째로 버려 그 item 이 평가 대상에서 사라졌다.
+    """
     df = _new_df(n_pass=4, n_fail=0)
     for col in ("VREF_TRIM", "IDDQ"):
         df.loc[6:, col] = df.loc[6:, col].astype(str)   # 데이터행만 문자열화
     with caplog.at_level(logging.WARNING):
         ctx = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)
-    assert ctx["cases"] == []
-    assert "case 0" in caplog.text
+    assert len(ctx["cases"]) == 2, "측정값이 없어도 case 는 만들어져야 한다(공간 룰용)"
+    assert all(c["values"] == [] for c in ctx["cases"])
+    # 좌표·공간 mask 는 **전체 die** 기준으로 실린다(측정값 축이 비어도).
+    assert all(len(c["spatial_x_pos"]) == 4 for c in ctx["cases"])
+    assert "측정값이 읽힌 item 0" in caplog.text
 
 
 # --- meta 전파: 선례검색 자기 데이터 제외의 전제 -----------------------------------------
@@ -280,3 +288,138 @@ def test_meta_session_keys_default_to_none_on_degrade_path():
     cases = ingest.ingest(ri, persist=False)["cases"]
     assert cases
     assert all(c["session_id"] is None and c["analysis_key"] is None for c in cases)
+
+
+# --- 측정값 없는 item 의 공간 룰 발화 (2026-08-28) ---------------------------------
+# 사용자 요구: "공간 Fail 은 해당 Item 의 Rawdata 가 없어도 FAILTNO 는 있으니
+# FAILTNO 기준으로 Signature 발화하게 해달라". 이 부류가 깨지는 방식은 조용하다 —
+# 에러가 아니라 "Yield 행은 있는데 AI Comment 만 없다" 로 나타난다.
+
+def _edge_df(n_edge_fail=14, n_pass=60, blank_values=True):
+    """E1(최외곽 1열)에 fail 이 몰린 df. blank_values=True 면 측정 셀을 전부 비운다.
+
+    좌표는 격자 10x10 (XPOS/YPOS 는 항상 양수 — CLAUDE.md 불변규칙 9).
+    E1 = 각 행의 좌·우 끝 + 각 열의 위·아래 끝(features._e1_mask) 이므로
+    경계 좌표(1 또는 10)를 가진 die 를 fail 로 만든다.
+    """
+    nan = float("nan")
+    blank = "" if blank_values else None
+    meta_rows = [
+        ["TSEQ", None, None, None, None, None, None, 1, 2],
+        ["TNO", None, None, None, None, None, None, _VREF_TNO, _IDDQ_TNO],
+        ["STEP", None, None, None, None, None, None, "P2", "P1"],
+        # UNIT 을 비우면 엔진이 PF(양불)로 분류한다 — 측정값 없는 functional test 의 모습.
+        ["UNIT", None, None, None, None, None, None, "" if blank_values else "V", "A"],
+        ["HILIM", None, None, None, None, None, None, nan if blank_values else 1.4, 15.0],
+        ["LOLIM", None, None, None, None, None, None, nan if blank_values else 1.0, nan],
+    ]
+    edge, inner = [], []
+    for x in range(1, 11):
+        for y in range(1, 11):
+            (edge if x in (1, 10) or y in (1, 10) else inner).append((x, y))
+    rows, s = [], 1
+
+    def _cell(v):
+        return blank if blank_values else v
+
+    for x, y in edge[:n_edge_fail]:                    # E1 fail
+        rows.append([s, 1, s, x, y, 18, _VREF_TNO, _cell(1.55), 12.1]); s += 1
+    for x, y in inner[:n_pass]:                        # 내부 pass
+        rows.append([s, 1, s, x, y, 1, nan, _cell(1.20), 12.0]); s += 1
+    return pd.DataFrame(meta_rows + rows, columns=_COLS)
+
+
+def test_blank_value_item_still_makes_case_with_spatial_axis():
+    """측정값이 전부 빈 item 도 case 가 생기고, 공간 축이 **전체 die** 로 실린다."""
+    df = _edge_df()
+    cases = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)["cases"]
+    vref = next(c for c in cases if c["item_raw"] == "VREF_TRIM")
+    assert vref["values"] == [], "측정 셀이 비었으므로 측정값 축은 비어야 한다"
+    assert vref["fail_count"] == 14, "fail 은 FAILTNO 로 세므로 측정값과 무관하다"
+    # 공간 축은 전체 die(74행) 기준 — 측정값 축(0)과 길이가 다르다.
+    assert len(vref["spatial_x_pos"]) == 74
+    assert sum(1 for f in vref["spatial_fail_mask"] if f) == 14
+
+
+def test_blank_value_item_fires_spatial_signature():
+    """★ 핵심 회귀 — 측정값이 없어도 E1_FAIL 이 발화한다(FAILTNO+좌표만으로 판정).
+
+    종전에는 ingest 가 `if not values: continue` 로 case 를 버려 룰이 평가될 기회조차
+    없었다. 화면에서는 에러가 아니라 'AI Comment 만 비어 있음' 으로 보인다.
+    """
+    from eval_engine.pipeline import features as feat, metrics as met, signatures as sig
+    from eval_engine.pipeline._rules import thresholds_for
+
+    df = _edge_df()
+    cases = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)["cases"]
+    vref = next(c for c in cases if c["item_raw"] == "VREF_TRIM")
+    assert vref["value_type"] == "PF", "UNIT 이 비면 PF 로 분류된다"
+
+    rm = met.compute(vref)
+    assert rm["fail_count"] == 14, "fail 은 FAILTNO 로 센다"
+    assert rm["yield"] is not None, '측정값이 없어도 yield 는 FAILTNO 로 나와야 한다(PF trump 가 여기 의존)'
+    f = feat.compute(vref, rm, "test")
+    assert f["e1_fail_share"] is not None, "공간 feature 가 비면 룰이 평가되지 않는다"
+    assert f["e1_fail_share"] >= thresholds_for(vref)["region_fail_share_min"]
+
+    ids = {s["id"] for s in sig.evaluate(vref, f, rm)["signatures"]}
+    assert "E1_FAIL" in ids, f"측정값 없는 item 에서 공간 룰이 안 떴다: {ids}"
+
+
+def test_spatial_axis_uses_all_dies_not_just_measured():
+    """측정값이 **일부만** 있는 item 도 공간 판정 모집단은 전체 die 다.
+
+    사용자 결정(2026-08-28): 전체를 FAILTNO 기준으로 통일. 측정된 die 만 세면
+    fail 이 난 die 의 값이 비었을 때 그 fail 이 공간 판정에서 통째로 빠진다.
+    """
+    df = _edge_df(blank_values=False)
+    # fail die(앞 14행)의 측정값만 지운다 — 종전 규칙이면 이 fail 들이 전부 사라진다.
+    df.loc[6:19, "VREF_TRIM"] = float("nan")
+    cases = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)["cases"]
+    vref = next(c for c in cases if c["item_raw"] == "VREF_TRIM")
+    assert not any(vref["fail_mask"]), "측정값 축에는 fail 이 하나도 안 남는다(값이 지워짐)"
+    assert sum(1 for f in vref["spatial_fail_mask"] if f) == 14, \
+        "공간 축은 측정값과 무관하게 fail 14개를 그대로 본다"
+
+    from eval_engine.pipeline import features as feat, metrics as met
+    f = feat.compute(vref, met.compute(vref), "test")
+    assert f["e1_fail_share"] == pytest.approx(1.0), \
+        "공간 판정이 측정값 축을 타면 여기서 None 이 된다"
+
+
+def test_measured_axis_survives_partial_missing():
+    """★ 안전망 — 부분결측이 있어도 **측정값 기반 지표가 죽지 않는다**.
+
+    공간 축을 전체 die 로 돌리면서 측정값 축까지 함께 늘리면
+    `_fail_outlier_features`/`_fail_body_jump_ratio`/`_pass_limit_hit_ratio` 의 길이 가드
+    (`fm.size != v.size -> None`)에 걸려 OUTLIER 판정 2축이 **조용히** 사라진다.
+    두 축을 갈라 둔 이유가 이것이므로, 그 계약을 여기서 고정한다.
+    """
+    from eval_engine.pipeline import features as feat, metrics as met
+
+    df = _edge_df(blank_values=False)
+    df.loc[30:39, "VREF_TRIM"] = float("nan")     # pass die 일부만 측정 실패
+    cases = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)["cases"]
+    vref = next(c for c in cases if c["item_raw"] == "VREF_TRIM")
+
+    assert len(vref["values"]) == 64 and len(vref["fail_mask"]) == 64, "측정값 축"
+    assert len(vref["spatial_fail_mask"]) == 74, "공간 축은 전체 die"
+
+    f = feat.compute(vref, met.compute(vref), "test")
+    for key in ("fail_mad_min", "fail_body_jump_ratio", "pass_limit_hit_ratio"):
+        assert f[key] is not None, f"{key} 가 죽었다 - 길이 가드에 걸렸다는 뜻"
+    assert f["e1_fail_share"] == pytest.approx(1.0), "공간은 전체 die 기준"
+
+
+def test_geom_shared_attached_even_with_partial_missing():
+    """좌표 전처리 공유통은 이제 **항상** 붙는다 — 공간 축이 늘 소스 공용 좌표라서.
+
+    종전에는 부분결측 item 만 제외됐고, 그 item 들은 중심정렬·반경·E1 마스크를 매번
+    다시 만들었다(콜드 평가의 10%). 공유가 끊기면 조용히 느려질 뿐이라 테스트로 고정한다.
+    """
+    df = _edge_df(blank_values=False)
+    df.loc[30:39, "VREF_TRIM"] = float("nan")
+    cases = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)["cases"]
+    assert all("_geom_shared" in c for c in cases)
+    shared = {id(c["_geom_shared"]) for c in cases}
+    assert len(shared) == 1, "한 소스의 item 들은 같은 공유통을 봐야 한다"

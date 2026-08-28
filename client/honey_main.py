@@ -980,9 +980,12 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_comment.installEventFilter(self)
         # 민감도 설정 버튼 — AI Comment 를 **켠 상태에서만** 보인다. 꺼져 있으면 그 설정이
         # 이번 업로드에 실리지 않으므로 버튼이 있으면 설정해도 안 먹는 것처럼 보인다.
-        self.btn_ai_sens = QPushButton("⚙")
+        # U+2699 는 폰트에 따라 아주 작게 그려진다 — 변이 선택자(U+FE0F)로 이모지
+        # 톱니바퀴를 요청하고 크기를 키워 톱니 모양이 보이게 한다.
+        self.btn_ai_sens = QPushButton("⚙️")
         self.btn_ai_sens.setToolTip("AI Comment 민감도 설정 (판정 기준 조절)")
-        self.btn_ai_sens.setFixedWidth(28)
+        self.btn_ai_sens.setStyleSheet("font-size:15px;")
+        self.btn_ai_sens.setFixedWidth(32)
         self.btn_ai_sens.setVisible(False)
         self.btn_ai_sens.clicked.connect(self.on_ai_sensitivity)
         self.chk_ai_comment.toggled.connect(

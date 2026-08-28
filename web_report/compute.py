@@ -592,6 +592,23 @@ def report_job(session_id: str, upload_root_str: str, ai_inline: bool = False):
     return report, _stamp(t_start)
 
 
+@_job("report")
+def ai_signature_job(session_id: str, upload_root_str: str):
+    """Signature 1단계(L1~L4) 평가 잡 — LLM 코멘트를 기다리지 않고 판정만 채운다.
+
+    2026-08-28. LLM 이 켜진 세션에서 'ai' 잡은 케이스마다 HTTP 왕복이라 수십 초가 걸리는데,
+    Signature 는 그 전에 확정된다. 이 잡이 먼저 끝나 분리 캐시를 채우면 프런트 폴링이
+    Signature 만 담긴 pending payload 를 가져간다(AI Comment 셀은 계속 "Loading 중…").
+    payload 를 만들지 않으므로 'ai' 잡과 겹쳐도 같은 콜드 빌드를 두 번 하지 않는다.
+    """
+    from database import report_db
+    from . import service
+    t_start = time.time()
+    ok = service.run_ai_signature_build(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+    return ok, _stamp(t_start)
+
+
 @_job("dist")
 def dist_job(session_id: str, upload_root_str: str, bin1: bool = False,
              bin1_scope: str = ""):
@@ -853,6 +870,10 @@ _ONDEMAND_JOBS = {
     # RAM 의 pending 본이 최종본으로 덮인다. 실패는 build_status 의 (sid,"ai") 실패
     # 누적으로 차단된다 — 리포트 자체는 이미 열려 있어 사용자 화면은 죽지 않는다.
     "ai": lambda sid, root: report_job(sid, root, True),
+    # Signature 1단계 (2026-08-28) — 'ai' 와 **다른 잡**이다. payload 를 만들지 않고 분리
+    # 캐시만 채우므로 'ai' 와 동시에 돌아도 콜드 빌드가 중복되지 않는다. LLM 이 켜진
+    # 세션에서 'ai' 보다 훨씬 먼저 끝나 Signature 컬럼을 앞당겨 채우는 것이 목적.
+    "aisig": lambda sid, root: ai_signature_job(sid, root),
     # Compare 백그라운드 계산 (2026-08-19) — 'ai' 와 **같은 잡**이다(ai_inline=True 가
     # 미뤄진 부분을 전부 인라인으로 계산해 최종 payload 를 만든다). kind 를 나눠 두는
     # 이유는 ① build_status 실패 누적이 축별로 따로 세어지고 ② 관리자 화면·로그에서

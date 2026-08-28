@@ -116,6 +116,11 @@ def compute(case_ctx: dict) -> dict:
         fail = case_ctx.get("fail_count")
         total = case_ctx.get("total_count")
         yield_ = case_ctx.get("yield")
+        # 측정값이 전부 빈 raw_df item 도 여기로 온다 (2026-08-28) — degrade 와 달리
+        # `yield` 키가 없고 fail/total 만 있다. 그대로 두면 yield 가 None 이 되어
+        # PF trump(status.py, yield 단독 CRITICAL)와 GROSS_FAIL 이 조용히 죽는다.
+        if yield_ is None and fail is not None and total:
+            yield_ = 1 - fail / total
     if is_pf:
         return {
             "cpk": None, "cpl": None, "cpu": None,
