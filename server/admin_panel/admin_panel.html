@@ -250,6 +250,8 @@ body { position: relative; }
           title="사용자 문의(VOC) 게시글 현황 — 읽기 전용">VOC</button>
   <button class="tab" data-panel="pChatbot"
           title="웹 챗봇(관리자 전용) 사용 현황 · 서버 부하 · 질문/답변 이력">🤖 Chatbot</button>
+  <button class="tab" data-panel="pAiComment"
+          title="AI Comment [제안] 문장을 업로더 PC 의 Claude 가 대신 만들어 보내는 기능의 현황 — 실패해도 화면엔 룰 문장이 나오므로 여기서만 확인할 수 있다">✨ AI Comment</button>
   <button class="tab" data-panel="pDb"
           title="DB 백업 실행·백업 목록, 보존기간 세션 정리, 무결성 진단">DB</button>
   <button class="tab" data-panel="pLogs"
@@ -1005,6 +1007,70 @@ body { position: relative; }
   </div>
 </div>
 
+<!-- ═══ AI Comment (클라 Claude 대행 현황) ═══ -->
+<div id="pAiComment" class="panel">
+  <div class="tiles" id="aicTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div class="toolbar" style="margin:12px 0">
+    <label style="font-size:12px">기간
+      <select id="aicDays" class="sel">
+        <option value="7">최근 7일</option>
+        <option value="14" selected>최근 14일</option>
+        <option value="30">최근 30일</option>
+      </select>
+    </label>
+    <span class="grow"></span>
+    <button class="btn" id="btnAicRefresh">새로고침</button>
+  </div>
+  <div class="card" id="aicFailCard" style="margin-bottom:16px; display:none">
+    <h2>클라이언트 실패 <span class="hint">업로더 PC 에서 문장 생성이 안 된 이유 —
+      화면에는 에러가 아니라 룰 문장이 나오므로 여기가 유일한 신호다.
+      <b>생성 결과 0건</b>이 몰리면 현장 Claude 인증·정책을 먼저 의심한다</span></h2>
+    <div id="aicFailKinds" style="margin-bottom:10px"></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>종류</th><th>사용자</th><th>세션</th><th>내용</th><th>사건 ID</th>
+      </tr></thead>
+      <tbody id="aicFailBody"></tbody>
+    </table></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h2>대상 세션 <span class="hint">AI Model=claude 로 올린 세션 중 아직 문장이 반영되지
+      않은 것 — 행을 클릭하면 그 세션에 저장된 문장을 볼 수 있다</span></h2>
+    <div id="aicCovNote" class="note" style="margin-bottom:8px"></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>업로드</th><th>세션</th><th>파일</th><th>제품 / LOT</th><th>업로더</th><th>상태</th>
+      </tr></thead>
+      <tbody id="aicCovBody"><tr class="empty-row"><td colspan="6">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h2>저장된 문장 <span class="hint">위 표에서 세션을 클릭하면 그 세션의 항목별
+      [제안] 문장이 나온다. <b>폐기</b>는 룰이 바뀌어 sha 가 갈린 것 —
+      화면에는 룰 문장이 나가고 있다는 뜻이다</span></h2>
+    <div id="aicSugNote" class="note" style="margin-bottom:8px">세션을 선택하세요.</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>항목</th><th>[제안] 문장</th><th>보낸 사람</th><th>시각</th><th>상태</th>
+      </tr></thead>
+      <tbody id="aicSugBody"></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>서버가 받은 push <span class="hint">감사 기록(action=ai_suggest) —
+      수용은 프롬프트 sha 가 맞은 건, 스킵은 룰이 바뀌어 버려진 건이다</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>사용자</th><th>세션</th><th>제품 / LOT</th>
+        <th class="num">수용</th><th class="num">스킵</th>
+      </tr></thead>
+      <tbody id="aicPushBody"><tr class="empty-row"><td colspan="6">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+
 <!-- ═══ DB ═══ -->
 <div id="pDb" class="panel">
   <div class="row">
@@ -1092,6 +1158,7 @@ body { position: relative; }
         <option value="edit">수정</option>
         <option value="delete">삭제</option>
         <option value="client_error">클라이언트 오류</option>
+        <option value="ai_suggest">AI 제안 반영</option>
         <option value="note_conflict">Note 편집 충돌</option>
         <option value="login">로그인</option>
         <option value="login_fail">로그인 실패</option>
@@ -1201,7 +1268,7 @@ const TAB_LOADERS = {
   pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
   pStorage: loadStorageTab,
   pSessions: loadSessions, pUsers: loadUsersTab, pVoc: loadVocTab,
-  pChatbot: loadChatbotTab,
+  pChatbot: loadChatbotTab, pAiComment: loadAiCommentTab,
   pDb: loadDb, pLogs: () => { loadLogFileList(); loadLogs(); }, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
@@ -3392,6 +3459,132 @@ function showDiagTab(severity) {
   loadDiagTab();
 }
 
+// ── AI Comment (클라 Claude 대행 현황) ──────────────────────────────────────
+// 이 기능은 실패해도 화면에 에러가 안 뜬다(룰 폴백 문장이 그대로 나간다). 그래서
+// "대상 세션 대비 반영률" 과 "클라 실패 사유" 를 나란히 두는 것이 이 탭의 요점이다.
+let aicSelectedSid = "";
+
+async function loadAiCommentTab() {
+  const days = $("aicDays").value || "14";
+  let o;
+  try {
+    o = await getJSON("api/ai_comment?days=" + encodeURIComponent(days));
+  } catch (e) {
+    $("aicTiles").innerHTML =
+      `<div class="tile"><div class="lbl">조회 실패</div><div class="det">${esc(e)}</div></div>`;
+    return;
+  }
+  const cov = o.coverage || {}, push = o.push || {}, fail = o.failures || {};
+  const pending = Number(cov.pending || 0), failed = Number(fail.total || 0);
+  const rate = cov.total ? Math.round((cov.covered || 0) * 100 / cov.total) : null;
+  $("aicTiles").innerHTML = `
+    <div class="tile"><div class="lbl">대상 세션</div><div class="val">${cov.total == null ? "-" : cov.total}건</div>
+      <div class="det">AI Model=claude 로 업로드된 세션</div></div>
+    <div class="tile"><div class="lbl">문장 반영</div>
+      <div class="val"${pending > 0 ? ` style="color:#d97706"` : ""}>${rate == null ? "-" : rate + "%"}</div>
+      <div class="det">${cov.covered || 0} / ${cov.total || 0} · 미반영 ${pending}건</div></div>
+    <div class="tile"><div class="lbl">최근 ${o.days}일 push</div><div class="val">${push.pushes == null ? "-" : push.pushes}회</div>
+      <div class="det">수용 ${push.accepted || 0}건 · 스킵 ${push.skipped || 0}건${
+        push.unparsed ? ` · 형식불명 ${push.unparsed}` : ""}</div></div>
+    <div class="tile"><div class="lbl">클라이언트 실패</div>
+      <div class="val"${failed > 0 ? ` style="color:#dc2626"` : ""}>${failed}건</div>
+      <div class="det">${failed > 0 ? "아래 실패 표 참고" : `최근 ${o.days}일`}</div></div>`;
+  renderAicFailures(fail);
+  renderAicCoverage(cov);
+  renderAicPush(push);
+}
+
+function renderAicFailures(fail) {
+  const card = $("aicFailCard"), rows = fail.rows || [];
+  if (!rows.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  $("aicFailKinds").innerHTML = (fail.by_kind || []).map(k =>
+    `<span class="chip">${esc(k.label || k.kind)} <b>${k.cnt}</b></span>`).join(" ");
+  $("aicFailBody").innerHTML = rows.map(r => `<tr>
+    <td>${esc(r.ts).replace("T", " ")}</td>
+    <td style="color:#dc2626">${esc(r.label || r.event)}</td>
+    <td>${whoLabel(r.user, r.name)}</td>
+    <td>${r.session_id ? `<code>${esc(r.session_id)}</code>` : "-"}</td>
+    <td class="detail-cell"><div class="clamp">${esc(r.message || "-")}</div></td>
+    <td><code style="font-size:11px">${esc(r.event_id || "-")}</code></td>
+  </tr>`).join("");
+}
+$("aicFailBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+
+function renderAicCoverage(cov) {
+  $("aicCovNote").textContent = cov.error ? `조회 실패: ${cov.error}` : (cov.note || "");
+  // 미반영이 먼저, 그 뒤에 반영 완료 — 볼 일이 있는 쪽이 위로 온다.
+  const rows = (cov.rows || []).concat(cov.covered_rows || []);
+  const tb = $("aicCovBody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="6">${esc(cov.note || "대상 세션이 없습니다.")}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => `<tr data-sid="${esc(r.session_id)}" style="cursor:pointer${
+    r.session_id === aicSelectedSid ? ";font-weight:600" : ""}">
+    <td>${fmtDate(r.created_at)}</td>
+    <td><code>${esc(r.session_id)}</code></td>
+    <td>${esc(r.file_name || "-")}</td>
+    <td>${esc(r.product || "-")}${r.lot_id ? " / " + esc(r.lot_id) : ""}</td>
+    <td>${whoLabel(r.uploaded_by, r.name)}</td>
+    <td>${r.covered
+      ? `<span style="color:#16a34a">반영 ${r.push_count == null ? "" : r.push_count + "건"}</span>`
+      : `<span style="color:#d97706">미반영</span>`}</td>
+  </tr>`).join("");
+}
+$("aicCovBody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-sid]");
+  if (tr) { aicSelectedSid = tr.dataset.sid; loadAicSuggestions(aicSelectedSid); }
+});
+
+function renderAicPush(push) {
+  const tb = $("aicPushBody"), rows = push.rows || [];
+  if (!rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="6">${
+      esc(push.error || "기간 내 push 기록이 없습니다.")}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => `<tr>
+    <td>${fmtDate(r.created_at)}</td>
+    <td>${whoLabel(r.user, r.name)}</td>
+    <td><code>${esc(r.session_id)}</code></td>
+    <td>${esc(r.product || "-")}${r.lot_id ? " / " + esc(r.lot_id) : ""}</td>
+    <td class="num">${r.accepted == null ? "?" : r.accepted}</td>
+    <td class="num">${r.skipped == null ? "?" : r.skipped}</td>
+  </tr>`).join("");
+}
+
+async function loadAicSuggestions(sid) {
+  const tb = $("aicSugBody");
+  $("aicSugNote").textContent = `세션 ${sid} 조회 중…`;
+  tb.innerHTML = "";
+  let o;
+  try { o = await getJSON("api/ai_comment/session/" + encodeURIComponent(sid)); }
+  catch (e) { $("aicSugNote").textContent = `조회 실패: ${e}`; return; }
+  const items = o.items || [];
+  $("aicSugNote").textContent = `세션 ${sid}${o.session && o.session.file_name
+    ? ` (${o.session.file_name})` : ""} — ${items.length}건. ${o.note || ""}`;
+  if (!items.length) return;
+  tb.innerHTML = items.map(r => `<tr>
+    <td>${esc(r.item)}</td>
+    <td class="detail-cell"><div class="clamp">${esc(r.suggestion)}</div></td>
+    <td>${esc(r.by || "-")}</td>
+    <td>${fmtDate(r.ts)}</td>
+    <td>${r.stale === null ? '<span style="color:var(--ink-3)">확인불가</span>'
+      : r.stale ? '<span style="color:#dc2626">폐기(룰 변경)</span>'
+      : '<span style="color:#16a34a">사용 중</span>'}</td>
+  </tr>`).join("");
+}
+$("aicSugBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnAicRefresh").onclick = loadAiCommentTab;
+$("aicDays").onchange = loadAiCommentTab;
+
 async function loadChatbotTab() {
   try {
     const o = await getJSON("api/chatbot?hours=24");
@@ -3667,7 +3860,8 @@ const AUDIT_PAGE = 50;
 let auditPage = 0, auditHasMore = false;
 const ACTION_LABEL = {
   upload: "업로드", view: "세션 열람", edit: "수정", delete: "삭제",
-  client_error: "클라이언트 오류", note_conflict: "Note 편집 충돌",
+  client_error: "클라이언트 오류", ai_suggest: "AI 제안 반영",
+  note_conflict: "Note 편집 충돌",
   login: "로그인", login_fail: "로그인 실패", logout: "로그아웃",
   signup: "가입", password_set: "비밀번호 변경",
   eval_export: "Eval export", eval_snapshot: "Eval 스냅샷",

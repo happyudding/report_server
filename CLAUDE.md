@@ -103,6 +103,9 @@ report_server/
 │   ├── embedded_browser.py     HoneyUser UA 삽입 내장 브라우저
 │   ├── client_identity.py      PC 계정/호스트 신고값
 │   └── config.py               SERVER_BASE_URL, CURRENT_VERSION
+├── call_claude/                로컬 Claude Code CLI(`claude -p`) subprocess 호출 단일 진입점
+│                                (표준 lib 만·무의존 — 타 프로젝트 재사용 대상. AI Comment
+│                                클라 대행이 첫 사용처 → [call_claude/README.md](call_claude/README.md), docs/23)
 ├── eval_analyzer/              독립 fail-item 평가 엔진 (자유 수정 — **이 repo 가 원본**, 외부 사본 동기화 없음)
 │                                서버 연결은 web_report/ai_comment.py + eval_export.py + eval_debug.py
 │                                3곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
@@ -628,6 +631,8 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | **클라 빌드 lib 을 바꿨다 / 빌드 파일 머지 충돌이 났다** | 정본 [client/LIB_HANDOFF.md](client/LIB_HANDOFF.md) — lib 정의처는 `requirements.txt` + `build_honey.spec`(+`build_honeyapp.spec` 은 이걸 읽는 래퍼) + `build_launcher.spec` **4개뿐**. **바꾸면 같은 커밋에서 이력에 남긴다**(외부 담당자와 공유하는 단일 기록). 충돌 시 코드보다 이 문서를 먼저 보고 양쪽 의도를 합칠 것. §3 "빼면 안 되는 것"은 전부 실제로 깨졌던 항목 |
 | eval_analyzer 연결 (AI Comment / 코멘트 export / 룰 트레이스) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) + [web_report/eval_debug.py](web_report/eval_debug.py) — eval_engine import **3곳** → [docs/13](docs/13_eval_analyzer_integration.md) |
+| **AI Comment [제안] 클라 Claude CLI 대행** (서버 무자격증명) | 정본 [docs/23](docs/23_ai_comment_client_llm.md) — CLI 호출 [call_claude/](call_claude/README.md) · 프롬프트 재구성/병합 [web_report/ai_prompt.py](web_report/ai_prompt.py) · 영구 저장 [ai_suggest_store.py](web_report/ai_suggest_store.py) · 클라 워커 [transport/ai_suggest.py](client/transport/ai_suggest.py). ⚠ 프롬프트는 서버가 조립(sha 게이트 자기완결) — `ai_prompt.py` 는 규칙 #8 때문에 eval_engine 을 import 하지 않는다. 선례 상세는 엔진이 실어 준다([store.search_precedents](eval_analyzer/eval_engine/store.py)+[present._precedent_result](eval_analyzer/eval_engine/pipeline/present.py)). 현장(Enterprise) 검증만 잔여 |
+| **"AI Comment 대행이 실제로 도는가"** (실패해도 화면엔 룰 문장) | 관리자 `✨ AI Comment` 탭 = [admin_panel/ai_comment_admin.py](server/admin_panel/ai_comment_admin.py) — 커버리지·push(`action=ai_suggest` 감사)·클라 실패(진단 `component=honey`, `ai_suggest*`)·문장 검수. 새 테이블 없이 조회 시점 합산 → [docs/23 §운영 모니터링](docs/23_ai_comment_client_llm.md). ⚠ 보고 배선은 `call_claude/` **밖**(범용 모듈 경계 유지) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) (CLI) + [server/eval_panel/golden_io.py](server/eval_panel/golden_io.py) (패널 추가/실행) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
 | **LLM 배선 (붙이는 곳·나가는 곳)** | 정본 [docs/19](docs/19_llm_wiring.md) — 설정은 [server/env/server.env](server/env/server.env) `EVAL_LLM_*` 5줄, 확인은 `python tools/llm_check.py --ping`. 소비자 2개(AI Comment [제안] = [llm_client.complete](eval_analyzer/eval_engine/llm_client.py) / 챗봇 질문해석 = [planner._call_llm](server/chatbot/planner.py)), 둘 다 꺼져도 폴백 동작. **외부 담당자 전달용**은 [eval_analyzer/docs/LLM_WIRING_HANDOFF.md](eval_analyzer/docs/LLM_WIRING_HANDOFF.md) |

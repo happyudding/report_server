@@ -794,13 +794,26 @@ def search_precedents(value_type, item_canonical, family_product=None,
     까지는 case 당 1행이라 bin 별로 쪼개진 옛 case 가 같은 item 을 여러 줄로 채웠다.
     limit=None 이면 전체 반환(store 계약 — 상한은 호출측 precedent_client 가 건다).
     DB 파일이 없으면(preview 모드 등) 빈 목록 — 빈 파일 생성/크래시 방지.
+
+    **당시 수치 동반**(2026-08-28): 선례 행에 `unit`·`status` 와 최신 run 의 L1
+    (`raw_metrics`)·L2(`features` 대표 10축)를 함께 싣는다. 코멘트만으로는 "그때와 지금이
+    얼마나 닮았나"를 판단할 수 없어, 소비자(AI Comment 프롬프트)가 과거/현재를 같은 자로
+    대조할 수 있게 하기 위해서다. 전부 LEFT JOIN 이라 통계가 없는 선례(CSV 적재분 등)는
+    그 컬럼만 None 이고 행은 그대로 남는다 — 매칭·정렬·dedup 규칙은 종전과 동일하다.
     """
     if conn is None and not config.DB_PATH.exists():
         return []
     sql = """SELECT fc.case_id, im.item_canonical, fc.bin, im.value_type, fc.product_name,
                     fc.lot_id, pm.family_product, cs.signature, l.label_id,
                     l.root_cause_category, l.human_comment,
-                    co.action, co.condition, co.result
+                    co.action, co.condition, co.result,
+                    im.unit, ev.status,
+                    m.cpk, m.cpl, m.cpu, m.cp, m.mean, m.stdev, m.min, m.max,
+                    m."yield", m.fail_count, m.total_count, m.bimodality,
+                    f.spread_norm, f.outlier_ratio, f.bimodality_score,
+                    f.limit_hit_ratio, f.edge_fail_ratio, f.center_fail_ratio,
+                    f.ring_fail_ratio, f.fail_spread_norm, f.tail_mass_3s,
+                    f.value_gap_ratio
              FROM fail_case fc
              JOIN item_master im ON im.item_id = fc.item_id
              JOIN product_master pm ON pm.product_name = fc.product_name
@@ -809,6 +822,15 @@ def search_precedents(value_type, item_canonical, family_product=None,
              LEFT JOIN label l ON l.case_id = fc.case_id
              LEFT JOIN case_outcome co ON co.case_id = fc.case_id
                   AND (co.label_id IS NULL OR co.label_id = l.label_id)
+             -- 당시 수치(L1/L2) — "그때 vs 지금" 대조용으로 코멘트와 함께 나간다.
+             -- case 당 여러 run 이 쌓이므로 **가장 최근 run 1건**만 붙인다(안 그러면
+             -- 같은 case 가 run 수만큼 복제돼 아래 dedup 이 대표행을 잘못 고른다).
+             LEFT JOIN raw_metrics m ON m.case_id = fc.case_id
+                  AND m.run_id = (SELECT MAX(run_id) FROM raw_metrics
+                                   WHERE case_id = fc.case_id)
+             LEFT JOIN features f ON f.case_id = fc.case_id
+                  AND f.run_id = (SELECT MAX(run_id) FROM features
+                                   WHERE case_id = fc.case_id)
              WHERE im.value_type = ?
                AND (? IS NULL OR pm.family_product = ?)
                AND NOT EXISTS (

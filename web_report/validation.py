@@ -55,6 +55,26 @@ def webreport_ai_comment(opts_raw: str) -> bool:
     return bool(opts.get("ai_comment")) and bool(opts.get("ai_comment_optin"))
 
 
+def webreport_ai_model(opts_raw: str) -> str:
+    """세션의 webreport_options JSON → AI Comment 생성 모델 ("default" | "claude").
+
+    "claude" = 업로더 PC 의 Honey 가 로컬 Claude CLI 로 [제안] 문장을 대행 생성해
+    push 하는 옵트인 흐름 (docs/23). 없음/파싱 실패/미지값 = "default"(현행 폴백 문장).
+    클라는 default 일 때 **키 자체를 싣지 않는다** — options 원문이 report_key 의
+    원소라 키가 없어야 기존 세션 캐시 키가 바이트 그대로 유지된다(콜드 폭풍 회피).
+    """
+    if not opts_raw:
+        return "default"
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return "default"
+    if not isinstance(opts, dict):
+        return "default"
+    value = str(opts.get("ai_model") or "").strip()
+    return value if value in ("default", "claude") else "default"
+
+
 def webreport_step(opts_raw: str) -> str:
     """세션의 webreport_options JSON → 업로드 때 지정한 STEP 표시값 (없으면 "").
 

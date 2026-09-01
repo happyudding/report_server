@@ -102,15 +102,24 @@ YIELD_BASIS_GROSS = "gross"
 YIELD_BASIS_TEST = "test"
 YIELD_BASIS_AUTO = "auto"
 
+# 2026-08-28 추가 — 클라 LLM 대행 suggestion push 표식 (docs/23 핵심 결정 ③).
+# item_key='push' 고정, value=소형 JSON({"ts","count"}) — suggestion 본문은 여기가 아니라
+# ai_suggest_store(영구 파일)에 있다. 이 marker 의 존재 이유는 payload_rev +1 하나뿐이다
+# (병합된 코멘트가 report payload 캐시에 반영되도록 기존 rev 채널을 재사용).
+# ⚠ PAYLOAD_NEUTRAL_KINDS 에 **넣지 않는다** — suggestion 병합은 payload 의 AI Comment
+# 셀 값을 실제로 바꾼다(규칙 16 판단: payload 를 바꾸는 kind 는 rev 를 올려야 맞다).
+KIND_AI_SUGGEST = "ai_suggest"
+
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 10MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
 # compare_note 도 표 payload 빌드와 무관하다 — /full extras 로 별도 조회한다.
 # dist_composite / gap_chart 도 마찬가지 — /full extras 로 별도 조회한다.
+# ai_suggest 는 rev bump 전용 marker 라 어떤 조회에도 실을 필요가 없다.
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
                          KIND_YIELD_BASIS, KIND_COMPARE_NOTE, KIND_DIST_COMPOSITE,
-                         KIND_GAP_CHART)
+                         KIND_GAP_CHART, KIND_AI_SUGGEST)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"

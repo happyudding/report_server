@@ -480,7 +480,13 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   값 변화를 덮어 주는 rules_rev 는 **`/pe/eval` 저장 카운터라 코드 변경을 감지하지
 #   못한다** — 그래서 여기서 올린다. 배포 시 `.rules_rev` 도 함께 +1 해야 report payload
 #   안에 이미 구워진 AI Comment 셀까지 갈린다(이 상수는 ai_comment_key 에만 들어간다).
-AI_COMMENT_SCHEMA_VERSION = 3
+# v4 (2026-08-28): 반환 dict 에 `prompts`(클라 LLM 대행 프롬프트 — docs/23) 키 추가.
+#   구조 변경이라 규약 그대로다. ai 옵션 세션만 1회 재평가 — 전역 프리웜 불필요.
+# v5 (2026-08-28): `prompts` 안의 **프롬프트 본문** 확장(선례 상세 + 현재 통계 — docs/23).
+#   dict 키 구조는 그대로지만 캐시에 굳은 옛 prompt/sha 를 갈지 않으면 클라가 계속 옛
+#   프롬프트로 대행한다(sha 가 저장분과 맞아 폴백조차 안 걸린다). 여기만 올린다 —
+#   report payload 는 무관하므로 전역 bump 금지(규칙 14).
+AI_COMMENT_SCHEMA_VERSION = 5
 
 
 def _ai_meta_digest(session) -> str:

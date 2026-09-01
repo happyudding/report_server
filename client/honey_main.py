@@ -811,6 +811,11 @@ class HoneyMainWindow(QMainWindow):
                         self.lbl_ai_comment.setStyleSheet("color: #4A3B1A;")
                         self._status("AI Comment 사용 가능")
                 return True
+        elif obj is getattr(self, "lbl_ai_health", None):
+            # 신호등 클릭 = 재확인 (경로를 고치거나 gateway 로그인 후 눌러 본다).
+            if event.type() == QEvent.Type.MouseButtonPress:
+                self._check_ai_health()
+                return True
         elif obj is getattr(self, "progress_status", None):
             # 진행바가 보이면 하단 dock 을 펴고, 숨겨지면 접는다 (관찰만 — 이벤트 통과).
             dock = getattr(self, "dock_log", None)
@@ -988,15 +993,48 @@ class HoneyMainWindow(QMainWindow):
         self.btn_ai_sens.setFixedWidth(32)
         self.btn_ai_sens.setVisible(False)
         self.btn_ai_sens.clicked.connect(self.on_ai_sensitivity)
-        self.chk_ai_comment.toggled.connect(
-            lambda on: self.btn_ai_sens.setVisible(bool(on)))
+        # Claude 연결 신호등 — AI Comment 를 켜는 순간 이 PC 에서 Claude 호출이 되는지
+        # 실호출 1회로 확인한다(회색=확인중, 초록=성공, 빨강=실패). 바이너리 존재만으로는
+        # 인증·게이트웨이·정책을 알 수 없어 거짓 초록이 되므로 실제로 한 번 불러 본다.
+        # 클릭하면 재확인, 툴팁에 사유가 뜬다.
+        self.lbl_ai_health = QLabel("●")
+        self.lbl_ai_health.setVisible(False)
+        self.lbl_ai_health.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.lbl_ai_health.installEventFilter(self)
+        self._ai_health_busy = False
+        self._set_ai_health(None, "확인 전")
+        self.chk_ai_comment.toggled.connect(self._on_ai_comment_toggled)
         ai_row = QHBoxLayout()
         ai_row.setSpacing(6)
         ai_row.addWidget(self.chk_ai_comment)
         ai_row.addWidget(self.lbl_ai_comment)
         ai_row.addWidget(self.btn_ai_sens)
+        ai_row.addWidget(self.lbl_ai_health)
         ai_row.addStretch(1)
         web_v.addLayout(ai_row)
+
+        # AI Model — [제안] 문장 생성 경로 (docs/23). default=서버 룰 폴백 문장(현행),
+        # claude=업로드 직후 이 PC 의 로컬 Claude CLI 가 대행 생성해 서버에 push.
+        # AI Comment 가 꺼져 있으면 의미가 없어 함께 비활성. **모델 선택만** settings.json
+        # 에 영속한다 — AI Comment on/off 비영속(위 2026-08-04 이력)은 그대로다.
+        from PyQt6.QtWidgets import QComboBox
+        self.cbo_ai_model = QComboBox()
+        self.cbo_ai_model.addItems(["default", "claude"])
+        saved_model = str(app_settings.get_setting("ai_model") or "")
+        if saved_model in ("default", "claude"):
+            self.cbo_ai_model.setCurrentText(saved_model)
+        self.cbo_ai_model.currentTextChanged.connect(
+            lambda v: app_settings.set_setting("ai_model", str(v)))
+        self.cbo_ai_model.setEnabled(False)
+        self.chk_ai_comment.toggled.connect(
+            lambda on: self.cbo_ai_model.setEnabled(bool(on)))
+        self.lbl_ai_model = QLabel("AI Model")
+        model_row = QHBoxLayout()
+        model_row.setSpacing(6)
+        model_row.addWidget(self.lbl_ai_model)
+        model_row.addWidget(self.cbo_ai_model)
+        model_row.addStretch(1)
+        web_v.addLayout(model_row)
         web_v.addWidget(self.btn_web_report)
 
         # Excel Report — 로컬 xlsx 생성/분석 (기존 Start 버튼).
@@ -2243,6 +2281,64 @@ class HoneyMainWindow(QMainWindow):
         if EvalSensitivityDialog(self).exec():
             self._status("AI Comment 민감도 저장됨")
 
+    # ── Claude 연결 신호등 (AI Comment 대행 가능 여부) ───────────────────────
+    # 대행은 실패해도 화면에 "룰 문장"이 나올 뿐이라 사용자가 눈치채기 어렵다.
+    # 켜는 시점에 미리 알려 주는 것이 이 신호등의 목적이다.
+
+    def _set_ai_health(self, ok, detail):
+        """신호등 색·툴팁 갱신 — ok: True 초록 / False 빨강 / None 회색(확인 중)."""
+        color = {True: "#2E7D32", False: "#C62828"}.get(ok, "#9E9E9E")
+        state = {True: "사용 가능", False: "사용 불가"}.get(ok, "확인 중")
+        self.lbl_ai_health.setStyleSheet(f"color:{color}; font-size:15px;")
+        self.lbl_ai_health.setToolTip(
+            f"Claude 연결 {state}\n{detail}\n\n클릭하면 다시 확인합니다.")
+
+    def _on_ai_comment_toggled(self, on):
+        """AI Comment 체크 변화 — ⚙·신호등 표시 + 켤 때 연결 확인 1회."""
+        on = bool(on)
+        self.btn_ai_sens.setVisible(on)
+        self.lbl_ai_health.setVisible(on)
+        if on:
+            self._check_ai_health()
+
+    def _check_ai_health(self):
+        """Claude 실호출 1회로 연결 확인 — 워커 스레드에서 돌리고 결과만 UI 에 반영.
+
+        실호출인 이유: 바이너리 존재만 보면 인증·게이트웨이·정책 실패를 못 잡아
+        '초록인데 실제로는 안 되는' 거짓 신호가 된다. 수 초 걸리므로 UI 를 막지 않는다.
+        """
+        if self._ai_health_busy:
+            return
+        self._ai_health_busy = True
+        self._set_ai_health(None, "Claude 호출을 확인하는 중입니다…")
+
+        def work():
+            try:
+                from transport import ai_suggest
+                return ai_suggest.check_status()
+            except Exception as exc:                     # noqa: BLE001
+                return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+
+        def done(fut):
+            try:
+                res = fut.result()
+            except Exception as exc:                     # noqa: BLE001
+                res = {"ok": False, "detail": str(exc)}
+            self._ai_health_busy = False
+            # 위젯이 이미 파괴됐을 수 있다(창 종료 중) — 그 경우 조용히 버린다.
+            try:
+                self._set_ai_health(bool(res.get("ok")), res.get("detail") or "")
+                if not res.get("ok"):
+                    self._status("Claude 연결 확인 실패 — 신호등에 마우스를 올려 보세요")
+            except RuntimeError:
+                pass
+
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(work)
+        # 결과 반영은 Qt 시그널을 거쳐 UI 스레드에서 실행한다(위젯 직접 접근 금지 규약).
+        fut.add_done_callback(
+            lambda f: QTimer.singleShot(0, lambda: (done(f), ex.shutdown(wait=False))))
+
     def on_options(self):
         """Options — 기본 Product Type + Distribution 색.
 
@@ -2800,6 +2896,11 @@ class HoneyMainWindow(QMainWindow):
         ai_on = bool(self.chk_ai_comment.isEnabled() and self.chk_ai_comment.isChecked())
         options = {"colors": chart_colors.load_colors(),
                    "ai_comment": ai_on, "ai_comment_optin": ai_on}
+        # AI Model (docs/23) — claude 를 고른 업로드만 키를 싣는다. **default 는 키 자체를
+        # 넣지 않는다** — 옵션 원문이 서버 report_key 의 원소라, 키가 없어야 기존 세션과
+        # 캐시 키가 바이트 그대로 유지된다(위 eval_sensitivity 와 같은 규약).
+        if ai_on and str(self.cbo_ai_model.currentText()) == "claude":
+            options["ai_model"] = "claude"
         # AI Comment 민감도 — 게이지 단계를 **구체적인 임계값으로 굳혀서** 싣는다. 세션이
         # "그때 무슨 기준으로 판정됐나"를 자기 안에 갖게 하기 위해서다(단계표를 나중에
         # 튜닝해도 기존 세션의 기준은 안 변한다).
@@ -3355,6 +3456,15 @@ class HoneyMainWindow(QMainWindow):
 
         progress.success(f"Web Report 완료: session_id {sid}", value=100)
         self._append_run_log(_upload_timing_line(timing, "완료"))
+        # AI Comment [제안] 클라 대행 (docs/23) — ai_comment optin + AI Model=claude 업로드만
+        # 백그라운드 기동. 로컬 Claude CLI 로 문장을 만들어 서버에 push 하며, 실패는 전부
+        # 조용히 폴백(서버 룰 문장)이라 업로드 완료 흐름을 절대 막지 않는다.
+        try:
+            from transport import ai_suggest
+            if ai_suggest.start_background(str(sid), options or {}):
+                self._append_run_log("AI Comment 대행 시작 (로컬 Claude)")
+        except Exception:      # noqa: BLE001 — 부가 기능
+            pass
         dist_note = self._note_dist_precompute(result, dist_pack)
         # 성공했어도 서버 대기가 길었으면 알린다 — 그게 다음 번 타임아웃의 예보다.
         # (실패만 보고하면 임계 직전 상태를 영영 못 본다.)

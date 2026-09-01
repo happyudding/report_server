@@ -183,6 +183,7 @@ teardown                   → 단계 회수        _emit_slow_event() → slow_
 | `honey_upload_fail` / `honey_crash` | warning | Honey → `/api/client_diagnostic`. 업로드 실패에는 `mb`/`body_sec`/`wait_sec` 가 함께 실린다(§3-1) |
 | `honey_upload_slow` | warning | Honey → 같은 곳. **성공했는데도** 서버 응답 대기가 60초를 넘긴 업로드. 실패만 보고하면 임계 직전 상태(=다음 타임아웃의 예보)를 영영 못 본다 |
 | `honey_render_crash` | warning | Honey 내장 브라우저의 렌더러(QtWebEngineProcess) 비정상 종료 — [embedded_browser.py](../client/embedded_browser.py) `_on_render_terminated`. GPU/드라이버가 흔한 원인이라 `status`/`exit_code`/`url` 을 context 로 싣는다. 클라 로그(`log/<날짜>.txt`)에는 `--disable-gpu` 조치 힌트도 남는다 |
+| `ai_suggest_no_cli` / `ai_suggest_no_prompts` / `ai_suggest_empty` / `ai_suggest_push_failed` / `ai_suggest_worker_error` | warning | AI Comment `[제안]` 클라 대행([ai_suggest.py](../client/transport/ai_suggest.py) `_report_failure`) — **실패해도 화면엔 룰 폴백 문장이 나와** 이 사건이 유일한 신호다. 전용 화면은 관리자 `✨ AI Comment` 탭. `ai_suggest_empty`(CLI 는 있는데 생성 0건)가 현장 Claude 인증·정책 실패의 1순위 신호이고, context `cli_log` 에 call_claude 단계별 사유가 실린다 → [docs/23](23_ai_comment_client_llm.md) |
 
 **의도된 4xx(404·403 등)는 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
 못 쓸 물건이 된다. 5xx `abort` 만 `http_error` 로 남긴다(§4-2).

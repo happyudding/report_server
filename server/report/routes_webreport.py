@@ -1060,6 +1060,76 @@ def web_report_rawdata_replace(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/ai_comment/prompts")
+def web_report_ai_prompts(session_id):
+    """클라 LLM 대행용 프롬프트 목록 (docs/23) — Honey 전용(X-Honey-Agent).
+
+    ai_comment 옵션 + ai_model=claude 옵트인 세션이 아니면 404(구 클라/미대상 세션은
+    조용히 포기). aicmt 캐시 미스면 'ai' 잡 예약 후 202 — 클라 워커가 재폴링한다.
+    조회지만 프롬프트에 판정 요약이 실리므로 rawdata_replace 와 같은 가드를 건다."""
+    if request.headers.get("X-Honey-Agent") != "1":
+        return jsonify({"error": "Honey 앱 전용 API 입니다."}), 403
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    try:
+        result = web_report_service.get_ai_comment_prompts(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report ai prompts failed for session %s", session_id)
+        abort(500, "ai prompts failed")
+    if result is None:
+        abort(404, "ai_comment claude 대행 대상 세션이 아닙니다")
+    if result.get("pending"):
+        return jsonify(result), 202
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/ai_comment/suggestions")
+def web_report_ai_suggestions(session_id):
+    """클라가 생성한 [제안] suggestion push (docs/23) — Honey 전용(X-Honey-Agent).
+
+    body: {"items": [{"key","sha","suggestion"}...]} (≤2MB, ≤500건).
+    서버가 만든 prompts 의 item+sha 일치 건만 수용 — 불일치는 조용히 skip+카운트.
+    aicmt 캐시가 없으면(sha 대조 기준 부재) 202 — 클라가 잠시 후 1회 재시도한다."""
+    if request.headers.get("X-Honey-Agent") != "1":
+        return jsonify({"error": "Honey 앱 전용 API 입니다."}), 403
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    if (request.content_length or 0) > 2 * 1024 * 1024:
+        abort(413, "suggestions payload is too large")
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "본문 형식 오류"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.apply_ai_suggestions(
+            session_id, body.get("items"), report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR), client_ip=ip, user_agent=ua,
+            client_user=_current_user() or "")
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report ai suggestions failed for session %s", session_id)
+        abort(500, "ai suggestions failed")
+    if result is None:
+        abort(404, "ai_comment claude 대행 대상 세션이 아닙니다")
+    if result.get("pending"):
+        return jsonify(result), 202
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/issue_table/etc")
 def web_report_issue_table_etc(session_id):
     """Issue Table ETC 섹션 item 추가/삭제 — 세션 편집 DB 갱신 (Bin/TNO/Distribution

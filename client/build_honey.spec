@@ -64,6 +64,9 @@ a = Analysis(
     + collect_submodules('excel_edit')
     + collect_submodules('excel_download')
     + collect_submodules('xlsxwriter')   # Excel Download 기본 엔진(Excel 없이 xlsx 생성)
+    + collect_submodules('call_claude')  # AI Comment 클라 대행 — 로컬 Claude CLI 호출
+                                         # (repo 최상위 패키지, transport/ai_suggest.py 가
+                                         # try/except import 라 명시 수집 필요. docs/23)
     ),
     hookspath=[],
     hooksconfig={},

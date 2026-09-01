@@ -138,7 +138,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | `TEMPERATURE_SCHEMA_VERSION` | 1 | Temperature 세션 payload | Temp 시트 구조 변경 |
 | `COMPARE_REPORT_SCHEMA_VERSION` | 1 | Compare 세션 payload **적재 방식** | payload 에 compare 결과를 싣는 방식 변경 |
 | `COMPARE_SCHEMA_VERSION` | 2 | compare **계산 결과**(`compare_key`) | dist_shift·equivalence 등 계산 변경 |
-| `AI_COMMENT_SCHEMA_VERSION` | 2 | ai comment 반환 dict | 반환 키 구조 변경 (룰 변경은 `.rules_rev` 몫) |
+| `AI_COMMENT_SCHEMA_VERSION` | 5 | ai comment 반환 dict | 반환 키 구조 변경 + **`prompts` 프롬프트 본문 변경**(v5, docs/23 — 본문이 바뀌면 옛 sha 가 저장분과 맞아 폴백조차 안 걸린다). 룰 변경은 `.rules_rev` 몫 |
 | `MAP_SCHEMA_VERSION` | 2 | map rows 값 | die/bin 집계 결과 변경 |
 | `TEMP_MAP_SCHEMA_VERSION` | 1 | temp_map 응답 구조 | fail die 인덱스 응답 변경 |
 | `DIST_SEQ_SCHEMA_VERSION` | 1 | Serial 순 배치 응답 | `seq-columnar-v1` 페이로드 변경 |

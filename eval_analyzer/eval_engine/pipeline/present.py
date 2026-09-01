@@ -64,12 +64,52 @@ def persist(run_ctx, case_ctx, raw_metrics, features, verdict, sig_result, comme
         store.save_eval_precedents(eval_id, precedents or [], conn=conn)
 
 
+# 선례 1건에 실어 보내는 **당시 수치** — store.search_precedents 가 최신 run 기준으로
+# 붙여 준 컬럼들. 코멘트만 주면 "그때와 지금이 얼마나 닮았나"를 소비자가 판단할 수 없어
+# 2026-08-28 에 함께 내보내기로 했다(AI Comment 프롬프트가 과거/현재를 대조한다).
+# 값이 없는 선례(CSV 적재분 등)는 키가 None 이다 — 키 자체는 항상 있다(계약 안정).
+_PRECEDENT_METRIC_KEYS = ("cpk", "cpl", "cpu", "cp", "mean", "stdev", "min", "max",
+                          "yield", "fail_count", "total_count", "bimodality")
+_PRECEDENT_FEATURE_KEYS = ("spread_norm", "outlier_ratio", "bimodality_score",
+                           "limit_hit_ratio", "edge_fail_ratio", "center_fail_ratio",
+                           "ring_fail_ratio", "fail_spread_norm", "tail_mass_3s",
+                           "value_gap_ratio")
+
+
+def _precedent_result(p: dict) -> dict:
+    """선례 1건 → 계약 dict. 종전 5키 + 식별/당시 수치.
+
+    종전 키(action/result/comment/product_name/family_product)는 **이름·의미 불변**이다 —
+    기존 소비자(testbench, report_server)가 그대로 동작한다. 뒤의 키들은 추가분이다.
+    """
+    out = {
+        "action": p.get("action"), "result": p.get("result"),
+        "comment": p.get("human_comment"),
+        "product_name": p.get("product_name"),
+        "family_product": p.get("family_product"),
+        # 식별 — 어느 lot/item 의 사례인지 알아야 현재와 대조가 된다
+        "case_id": p.get("case_id"), "lot_id": p.get("lot_id"),
+        "item_canonical": p.get("item_canonical"), "bin": p.get("bin"),
+        "unit": p.get("unit"), "value_type": p.get("value_type"),
+        # 당시 판정
+        "status": p.get("status"), "signature": p.get("signature"),
+        "similarity": p.get("similarity"),
+    }
+    out["metrics"] = {k: p.get(k) for k in _PRECEDENT_METRIC_KEYS
+                      if p.get(k) is not None}
+    out["features"] = {k: p.get(k) for k in _PRECEDENT_FEATURE_KEYS
+                       if p.get(k) is not None}
+    return out
+
+
 def to_result(case_ctx, verdict, sig_result, comment, precedents) -> dict:
     """L6 직렬화 — RunResult.cases[i] dict 조립 (docs/INTEGRATION_CONTRACT §4).
 
     DB 적재분과 별개로 **호출자에게 돌려주는 계약 형태**다. `item_raw` 는 report_server
     Issue Table join 키이고, `issue_category` 는 signature 택소노미를 모르는 호출자를 위한
     편의 버킷(YIELD|CPK|ETC).
+
+    `precedents[]` 는 `_precedent_result` 계약 — 종전 5키에 식별·당시 수치가 더해졌다.
     """
     primary_id = verdict["primary_signature"]
     sig_breakdown = [
@@ -94,8 +134,5 @@ def to_result(case_ctx, verdict, sig_result, comment, precedents) -> dict:
         "evidence": [{"signal_code": e["signal_code"], "value": e.get("value"),
                       "weight": e.get("weight")} for e in verdict.get("evidence", [])],
         "signatures": sig_breakdown,
-        "precedents": [{"action": p.get("action"), "result": p.get("result"),
-                        "comment": p.get("human_comment"),
-                        "product_name": p.get("product_name"),
-                        "family_product": p.get("family_product")} for p in precedents],
+        "precedents": [_precedent_result(p) for p in precedents],
     }

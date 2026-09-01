@@ -90,6 +90,18 @@ lib 정리·다이어트를 할 때 후보로 올라오기 쉬운데 **빼면 �
 
 ---
 
+### 2026-08-28 — call_claude 최상위 패키지 수집 추가 (AI Comment 클라 대행)  (담당: 이 저장소)
+- 파일: `build_honey.spec`
+- 무엇: `hiddenimports` 에 `collect_submodules('call_claude')` 추가 (repo 최상위 신규
+  패키지 — 표준 라이브러리만 사용, 서드파티 의존 0, requirements.txt 변경 없음).
+- 왜: AI Comment [제안] 클라 대행(docs/23) — `transport/ai_suggest.py` 가 로컬 Claude
+  CLI 를 subprocess 로 부르는 `call_claude` 를 **try/except 안에서** import 한다.
+  pathex 에 repo 루트가 있어도 조건부 import 는 PyInstaller 정적 분석이 놓칠 수 있어
+  명시 수집이 필요하다. 빠지면 배포본에서 AI Model=claude 업로드의 대행이 조용히
+  안 돈다(에러 없이 폴백 문장 유지 — 발견이 늦는 유형).
+- 확인: 표준 lib 만 쓰는 순수 파이썬 3파일이라 빌드 산출물 크기 영향 무시 가능.
+  tests/test_call_claude.py + tests/test_ai_suggest.py self-run 통과.
+
 ### 2026-08-27 — 인수인계 문서 신설, 현재 구성을 기준선으로 고정  (담당: 이 저장소)
 - 파일: `client/LIB_HANDOFF.md`(신규), `requirements.txt`·`build_honey.spec`·
   `build_launcher.spec`·`build_honeyapp.spec` 상단에 배너 주석 추가

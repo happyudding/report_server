@@ -52,8 +52,9 @@ _FAIL_ONLY = (os.getenv("WEB_REPORT_EVAL_FAIL_ONLY", "1") or "1").strip().lower(
 
 # 평가 스킵/실패 시 반환 형태 — 키 구성은 정상 반환과 동일해야 한다(호출부 분기 없음).
 # 키를 늘릴 때 여기도 같이 늘려야 예외 폴백에서 KeyError 로 빌드가 죽지 않는다.
+# prompts (2026-08-28): 클라 LLM 대행용 {item_raw: {"prompt","sha"}} — docs/23.
 _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
-                 "signature_options": []}
+                 "signature_options": [], "prompts": {}}
 
 # ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값.
 # 2026-08-12 부터 **엔진도 같은 id 로 자동 발화한다** — fail 인데 어떤 룰도 안 뜨면
@@ -365,6 +366,44 @@ def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True):
             "row_signatures": sigs, "signature_options": signature_catalog()}
 
 
+def _prompt_enrich(best: dict, tables) -> dict:
+    """클라 대행 프롬프트의 **현재 케이스 재료** — {item_raw: ai_prompt 의 enrich}.
+
+    unit/limit 과 L1 통계를 담는다. 계산은 `eval_export` 의 것을 그대로 쓴다 — 선례의
+    `raw_metrics` 를 만든 바로 그 산식이라 "그때 cpk vs 지금 cpk" 가 같은 자로 잰 값이
+    된다(CLAUDE.md 규칙 13, 재계산 금지).
+
+    여기서 채우지 않는 것 2가지:
+    - 현재 L2 — 발화 signature 의 evidence 값이 이미 case dict 에 있다(ai_prompt 가 쓴다).
+    - **과거 선례 상세** — 엔진이 case["precedents"][] 에 실어 준다
+      (store.search_precedents JOIN → present._precedent_result).
+
+    프롬프트 보강은 부가 기능이라 **실패해도 코멘트 생성은 계속돼야 한다** — 어떤
+    예외도 밖으로 내보내지 않고 빈 dict(= 현재 통계 줄 없는 프롬프트)로 떨어진다.
+    """
+    try:
+        from . import eval_export
+        out = {}
+        for item, case in best.items():
+            entry = {}
+            meta = eval_export._find_item_meta(tables, item)
+            if meta:
+                entry.update(unit=meta.get("unit"), lsl=meta.get("lsl"),
+                             usl=meta.get("usl"))
+            stats = dict(eval_export._dist_metrics(tables, item))
+            rep_bin = case.get("bin")
+            if rep_bin is not None:
+                stats.update(eval_export._yield_metrics(tables, item, rep_bin))
+            if stats:
+                entry["stats"] = stats
+            out[item] = entry
+        return out
+    except Exception:
+        logger.warning("ai_comment: 프롬프트 보강 재료 조립 실패 — 기본 프롬프트로 진행",
+                       exc_info=True)
+        return {}
+
+
 def build_ai_comments(tables, session, selected_items=None, fail_only=None,
                       generate_comment: bool = True):
     """tables(모드 변형 후) 를 소스별로 evaluate 해 IssueTable 입력 dict 반환.
@@ -428,8 +467,17 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
             prev = best.get(key)
             if prev is None or _rank(case) > _rank(prev):
                 best[key] = case
-    return _to_row_keys(best, fail_bins_by_item(tables),
-                        with_comments=generate_comment)
+    out = _to_row_keys(best, fail_bins_by_item(tables),
+                       with_comments=generate_comment)
+    # 클라 LLM 대행용 프롬프트(docs/23) — 대표 case 기준, 키는 item_raw(comments 의
+    # row_key 꼬리와 동일). Signature 1단계 빌드(generate_comment=False)는 comment 가
+    # None 이라 재료가 없다 — 빈 dict 로 계약 키만 유지한다.
+    if generate_comment:
+        from .ai_prompt import build_prompts
+        out["prompts"] = build_prompts(best, _prompt_enrich(best, tables))
+    else:
+        out["prompts"] = {}
+    return out
 
 
 def safe_build_ex(tables, session, selected_items=None, fail_only=None,

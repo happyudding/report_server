@@ -51,6 +51,17 @@ def _env_file_value(name):
     return None
 
 
+def env_value(name, default=None):
+    """이 PC 환경변수 > env 파일(honey.env/server.env) > default.
+
+    HONEY_CLAUDE_* 같은 선택 키를 읽는 공용 진입점 (SERVER_BASE_URL 과 같은 우선순위).
+    """
+    value = os.environ.get(name)
+    if value:
+        return value
+    return _env_file_value(name) or default
+
+
 SERVER_BASE_URL = (
     os.environ.get("HONEY_SERVER_URL")
     or _env_file_value("SERVER_BASE_URL")

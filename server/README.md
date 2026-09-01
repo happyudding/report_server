@@ -439,6 +439,12 @@ webreport/build_action 등).
 identity_merge 병합 후 센다 — 한쪽만 병합하면 같은 사람이 둘로 세어져 표와 그래프가 어긋난다.
 **Peak 동시 접속자·시간대 데이터는 2026-08-13 배포분부터 쌓인다**(그 이전 기간은 빈 것이 정상 —
 `peak_users`는 수집 이전 날짜에서 `0` 이 아니라 `null`).
+**AI Comment 대행 현황**(`✨ AI Comment` 탭): `GET /api/ai_comment?days=`(대상 세션 커버리지 +
+push 집계 + 클라 실패) · `GET /api/ai_comment/session/<sid>`(그 세션에 저장된 `[제안]` 문장).
+구현 [admin_panel/ai_comment_admin.py](admin_panel/ai_comment_admin.py) — **새 테이블 없이**
+세션 옵션 + push marker(`report_webreport_edit`) + 감사(`action=ai_suggest`) + 진단 사건
+(`component=honey`, `ai_suggest*`) + 저장 파일을 조회 시점에 합친다. 이 기능은 실패해도
+화면에 룰 폴백 문장이 나가 발견이 늦으므로 이 탭이 유일한 신호다 → [docs/23](../docs/23_ai_comment_client_llm.md).
 **Eval DB 탭·`/api/eval/*` 라우트는 2026-08-03 `/pe/eval` 로 이관**했다(아래 절) — 구현 모듈
 `admin_panel/eval_admin.py` 는 그대로 남아 eval_panel 이 import 한다.
 **세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고

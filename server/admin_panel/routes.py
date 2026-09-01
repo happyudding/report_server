@@ -634,6 +634,33 @@ def api_chatbot_log():
     return jsonify(out)
 
 
+# ── AI Comment 클라 대행 현황 (docs/23) ──────────────────────────────────────
+# 실패해도 화면에는 룰 폴백 문장이 나와 발견이 늦는 기능이라, "도는가"를 볼 화면이 필요하다.
+
+@admin_panel_bp.get("/api/ai_comment")
+def api_ai_comment_overview():
+    from admin_panel import ai_comment_admin
+    out = ai_comment_admin.overview(request.args.get("days", 14))
+    for key in ("push", "failures"):
+        rows = (out.get(key) or {}).get("rows")
+        if rows:
+            users_admin.attach_names(rows, "user")
+    cov = out.get("coverage") or {}
+    for key in ("rows", "covered_rows"):
+        if cov.get(key):
+            users_admin.attach_names(cov[key], "uploaded_by")
+    return jsonify(out)
+
+
+@admin_panel_bp.get("/api/ai_comment/session/<session_id>")
+def api_ai_comment_session(session_id):
+    from admin_panel import ai_comment_admin
+    try:
+        return jsonify(ai_comment_admin.session_suggestions(session_id))
+    except KeyError:
+        return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
+
+
 # ── 세션 컨트롤 ──────────────────────────────────────────────────────────────
 
 @admin_panel_bp.get("/api/sessions")

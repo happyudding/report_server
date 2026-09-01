@@ -48,6 +48,7 @@ from .validation import (
     mode_tables as _mode_tables,
     validate_mode as _validate_mode,
     webreport_ai_comment as _webreport_ai_comment,
+    webreport_ai_model as _webreport_ai_model,
     webreport_colors as _webreport_colors,
     webreport_compare_groups as _webreport_compare_groups,
     webreport_step as _webreport_step,
@@ -118,7 +119,9 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
 # _ai_comment_cached 가 디스크 캐시에서 읽은 dict 의 최소 형태 검증용 — build_ai_comments
 # 반환 계약(ai_comment._EMPTY_RESULT 와 동일 키). 손상/구버전 파일이 KeyError 로 빌드를
 # 죽이지 않게 키가 모자라면 미스로 취급한다.
-_AI_RESULT_KEYS = ("comments", "etc_auto_items", "row_signatures", "signature_options")
+# prompts (2026-08-28, aicmt v4): 클라 LLM 대행 프롬프트 — docs/23.
+_AI_RESULT_KEYS = ("comments", "etc_auto_items", "row_signatures",
+                   "signature_options", "prompts")
 
 
 def _ai_comment_cached(session, session_id: str, tables, manifest, *,
@@ -151,6 +154,11 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     result, ok = ai_comment.safe_build_ex(tables, session,
                                           manifest.get("selected_items") or [])
     if ok:
+        # 클라가 push 해 둔 [제안] suggestion 재병합 — **재빌드 생존 지점**(docs/23 핵심
+        # 결정 ①). suggestion 은 캐시가 아니라 영구 파일이라, aicmt 캐시가 비워져 콜드
+        # 재빌드가 돌아도 프롬프트 sha 가 같으면 여기서 다시 붙는다.
+        result = _merge_ai_suggestions(session, session_id, result,
+                                       report_db=report_db, upload_root=upload_root)
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
         disk_cache.save_ai_comment(upload_root, key, result)
@@ -257,6 +265,161 @@ def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -
         if key in cache.AI_COMMENT_CACHE:
             return True
     return disk_cache.ai_comment_exists(upload_root, key)
+
+
+# ── AI Comment [제안] 클라 LLM 대행 (docs/23) ────────────────────────────────
+# 서버에 LLM 자격증명이 없어, 업로더 PC 의 Honey 가 로컬 Claude CLI(call_claude 패키지)로
+# [제안] 문장을 생성해 push 한다. 서버 몫: 프롬프트 서빙(GET) + suggestion 수용·병합(POST).
+
+
+def _ai_suggest_wanted(session) -> bool:
+    """이 세션이 클라 LLM 대행 대상인가 — ai_comment 옵션 + ai_model=claude 옵트인."""
+    opts = session.get("webreport_options") or ""
+    return (_webreport_ai_comment(opts)
+            and _webreport_ai_model(opts) == "claude")
+
+
+def _ai_suggest_coords(session, session_id: str, *, report_db) -> tuple:
+    """ai_suggest_store 파일 좌표 — (akey, chash, mode, prep_digest).
+
+    ai_comment_key 와 같은 데이터 세대 축이다(session_id 없음 — dedup 형제 공유가 의도,
+    perf_guard S10 취지). 민감도가 다른 형제는 프롬프트 sha 가 갈려 게이트가 차단한다.
+    """
+    return (session.get("analysis_key"), str(session.get("content_hash") or ""),
+            cache_policy._mode(session),
+            _preprocess.session_digest(report_db, session_id))
+
+
+def _merge_ai_suggestions(session, session_id: str, result: dict, *,
+                          report_db, upload_root: Path) -> dict:
+    """영구 저장된 suggestion 을 AI 결과에 재병합 — 실패는 조용히 원본 유지(빌드 불사)."""
+    try:
+        from . import ai_prompt, ai_suggest_store
+        akey, chash, mode, prep = _ai_suggest_coords(session, session_id,
+                                                     report_db=report_db)
+        stored = ai_suggest_store.load(upload_root, akey, chash, mode, prep)
+        if not stored:
+            return result
+        merged, patched = ai_prompt.apply_suggestions(result, stored)
+        if patched:
+            _log.info("ai_suggest 재병합 %d행 (session=%s)", patched, session_id)
+        return merged
+    except Exception:
+        _log.warning("ai_suggest 재병합 실패 — 원본 유지 (session=%s)",
+                     session_id, exc_info=True)
+        return result
+
+
+def get_ai_comment_prompts(session_id: str, *, report_db,
+                           upload_root: Path) -> dict | None:
+    """클라 대행용 프롬프트 목록 — None=대상 아님(404) / {"pending":True}=202 / items=200.
+
+    캐시 미스에 **여기서 평가하지 않는다**(동기 대기 금지) — 'ai' 백그라운드 잡을 예약하고
+    202 를 돌려주면 클라 워커가 재폴링한다(boot.js pending 폴링과 같은 규약).
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not _ai_suggest_wanted(session):
+        return None
+    result, _how = _ai_comment_cached(session, session_id, None, None,
+                                      report_db=report_db, upload_root=upload_root,
+                                      allow_build=False)   # tables 불필요(빌드 안 함)
+    if result is None:
+        compute.request_build(session_id, str(upload_root), "ai")
+        return {"pending": True}
+    prompts = result.get("prompts") or {}
+    items = [{"key": str(k), "sha": str(v.get("sha") or ""),
+              "prompt": str(v.get("prompt") or "")}
+             for k, v in prompts.items()
+             if isinstance(v, dict) and v.get("sha") and v.get("prompt")]
+    return {"items": items}
+
+
+def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path,
+                         client_ip: str = "", user_agent: str = "",
+                         client_user: str = "") -> dict | None:
+    """클라가 생성한 [제안] suggestion 수용 — None=대상 아님(404) / {"pending":True}=202.
+
+    수용 원칙(docs/23 §반드시 4): **서버가 만든 prompts 의 item+sha 일치 건만** 받는다
+    (임의 row_key 제출 불가). 불일치·불합격은 에러가 아니라 조용히 skip+카운트.
+    반영: 영구 store 저장(save_merge — 멱등 upsert) → aicmt RAM+디스크 캐시 패치 →
+    KIND_AI_SUGGEST marker 로 payload_rev +1(기존 rev 채널 재사용 — 표적 캐시 삭제 API
+    없음, docs/23 핵심 결정 ③) → report 선빌드 예약.
+    """
+    from . import ai_prompt, ai_suggest_store
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not _ai_suggest_wanted(session):
+        return None
+    if not isinstance(items, list):
+        raise ValueError("items 는 배열이어야 합니다")
+    if len(items) > 500:
+        raise ValueError("items 가 너무 많습니다 (≤500)")
+    skipped = 0
+    cleaned = {}
+    for row in items:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        key = str(row.get("key") or "").strip()
+        sha = str(row.get("sha") or "").strip()
+        text = ai_prompt.sanitize_suggestion(row.get("suggestion"))
+        if not key or not re.fullmatch(r"[0-9a-f]{12}", sha) or not text:
+            skipped += 1
+            continue
+        cleaned[key] = {"sha": sha, "suggestion": text}
+    if not cleaned:
+        return {"accepted": 0, "skipped": skipped}
+    result, _how = _ai_comment_cached(session, session_id, None, None,
+                                      report_db=report_db, upload_root=upload_root,
+                                      allow_build=False)
+    if result is None:
+        # aicmt 캐시가 (축출 등으로) 없으면 sha 대조 기준이 없다 — 재빌드를 예약하고
+        # 202. 클라는 잠시 후 1회 재시도한다(merge 가 멱등이라 중복 push 무해).
+        compute.request_build(session_id, str(upload_root), "ai")
+        return {"pending": True}
+    prompts = result.get("prompts") or {}
+    accepted = {}
+    for key, row in cleaned.items():
+        meta = prompts.get(key)
+        if not isinstance(meta, dict) or str(meta.get("sha") or "") != row["sha"]:
+            skipped += 1
+            continue
+        accepted[key] = row
+    if accepted:
+        akey, chash, mode, prep = _ai_suggest_coords(session, session_id,
+                                                     report_db=report_db)
+        with cache.keyed_lock_ctx(("ai_suggest", akey, chash, mode, prep)):
+            ai_suggest_store.save_merge(upload_root, akey, chash, mode, accepted,
+                                        by=client_user, prep_digest=prep)
+            merged, _patched = ai_prompt.apply_suggestions(result, accepted)
+            cache_key = cache_policy.ai_comment_key(session, prep)
+            cache.cache_put(cache.AI_COMMENT_CACHE, cache_key, merged,
+                            cache.AI_COMMENT_CACHE_MAX)
+            disk_cache.save_ai_comment(upload_root, cache_key, merged)
+        marker = json.dumps({"ts": int(time.time()), "count": len(accepted)},
+                            ensure_ascii=False)
+        report_db.apply_webreport_edits(
+            session_id, [(edits.KIND_AI_SUGGEST, "push", marker)],
+            updated_by=client_user or None)
+        compute.request_build(session_id, str(upload_root), "report")
+    try:
+        # action 을 'edit' 과 분리한다(2026-08-28) — 관리자 화면에서 다른 편집에 묻히면
+        # "이 기능이 실제로 도는가"를 셀 수 없다. 인덱스(idx_report_audit_action)와
+        # 드롭다운 필터가 그대로 먹고, changed_fields 형식은 파싱 대상이라 불변이다.
+        report_db.log_audit(
+            "ai_suggest", session_id=session_id,
+            analysis_key=session.get("analysis_key"),
+            product_type=session.get("product_type", ""),
+            product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"ai_suggest(accepted={len(accepted)},skipped={skipped})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"accepted": len(accepted), "skipped": skipped}
 
 
 def _compare_groups_of(session, tables):

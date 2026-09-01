@@ -512,6 +512,11 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         from . import dist_pack_store
 
         dist_pack_store.delete_stale(Path(upload_root), analysis_key, content_hash)
+        # 구 세대 AI suggestion 도 같은 이유로 회수 — 파일명에 chash 가 있어 새 세대로는
+        # 조회되지 않고, 룰/데이터가 바뀌면 프롬프트 sha 도 갈려 어차피 폴백된다(docs/23).
+        from . import ai_suggest_store
+
+        ai_suggest_store.delete_stale(Path(upload_root), analysis_key, content_hash)
         # 클라가 새 parquet 으로 만들어 보낸 pack 을 새 chash 로 저장 — 있으면 이후 조회가
         # 정렬 없이 덧셈만 한다(업로드 직후와 같은 상태). delete_stale 뒤에 저장할 것.
         pack_saved = _save_dist_pack(dist_pack, analysis_key, content_hash,
