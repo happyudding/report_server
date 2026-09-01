@@ -4,7 +4,8 @@
 > 전부를 검증했고, **남은 것은 현장(Enterprise gateway) 검증뿐**이다
 > (→ §현장 검증 항목, [call_claude/README.md §7](../call_claude/README.md)).
 > **2026-09-01 보강**: 배치 구조화 출력(`--json-schema` 자동 게이팅) · 지시문 확장
-> (근거 없는 줄 채우기 차단, `AI_COMMENT_SCHEMA_VERSION` v6) · 관리자 흐름 디버깅 3종
+> (근거 없는 줄 채우기 차단, `AI_COMMENT_SCHEMA_VERSION` v6 → **발화 signature 커버리지
+> v8**) · 관리자 흐름 디버깅 3종
 > (프롬프트 본문·타임라인·skip 사유) · **사용자에게 보이는 실패 알림**(종전엔 워커가
 > 전부 조용해 사용자가 실패를 인지할 방법이 없었다).
 > **저장소**: `f:\COINAPI\report_server` — **서비스 중인 서버**라 기존 세션 조회에 지장을
@@ -127,6 +128,50 @@ base 지시문의 "최대 5줄"은 **상한**인데, 상한만 주면 근거가 
 **반드시 함께 올린다**(v5→v6) — 안 올리면 캐시에 굳은 옛 prompt/sha 가 그대로 나가
 클라가 옛 지시문으로 계속 대행한다. 전역 bump 는 금지(규칙 14).
 
+### 발화 signature 커버리지 — 위 축소 지시의 대상 한정 (2026-09-01, v8)
+
+**증상**: Issue Table Signature 컬럼에는 여러 개가 뜨는데 [제안]은 **그 중 하나**(사실상
+primary)에 대한 얘기만 나온다.
+
+**원인은 재료가 아니라 지시 충돌이었다.** `_sig_lines` 는 `case["signatures"]` 를 상한·
+슬라이스·primary 필터 **없이** 전량 싣고, Signature 컬럼의 정본 `ai_comment._case_sig_ids`
+도 **같은 배열**을 읽는다 — 화면에 N개가 보이면 프롬프트에도 N줄이 들어가 있었다.
+(엔진 관계 선언 `exclusive`/`hidden_by`/`replaces` 가 목록을 지웠다면 화면 컬럼도 함께
+줄었을 것이므로 그 경우와 구분된다.) 문제는 그 아래였다:
+
+| 위치 | 방향 |
+|---|---|
+| `_INSTRUCTION` "발화한 signature 전체와 … 종합해서 작성하라 - 하나만 보고 쓰지 마라" | 확장 |
+| `_INSTRUCTION_EXTRA` 선례 대조 4줄 | 5줄 예산을 선례로 소진 |
+| `_INSTRUCTION_EXTRA` 위 축소 2줄 (v6) | **축소** |
+
+축소 지시가 **더 뒤에·더 구체적**이라 모델이 그쪽을 따랐다. 게다가 "전체를 종합하라"는
+*"여러 개를 보고 판단하라"* 로도 읽혀, primary 하나만 서술하고도 "종합했다"가 성립한다.
+
+**조치는 줄 수 늘리기가 아니라 5줄 예산의 배분 순서 뒤집기다** (5줄 상한은 유지):
+
+1. `rules/ai_prompt.yaml` `instructions` 에 2개 추가 — `cover_all_signatures`(목록의 각
+   항목이 최소 한 줄에서 다뤄지게, 원인이 이어지면 묶어도 되지만 빠뜨리지는 마라) ·
+   `signature_budget_first`(예산은 signature 를 먼저 덮는 데 쓰고 남는 줄로 선례 대조).
+   **yaml 에 둔 이유**: 이 부류는 문구 튜닝이 필연이라 `/pe/eval` AI 지시문 탭에서 코드
+   배포 없이 고칠 수 있어야 하고, yaml 은 서버 사본과 엔진 `recommend._build_prompt`
+   **양쪽에** 자동 합류한다(코드 하드코딩은 서버 전용이라 두 경로가 갈린다).
+2. `_INSTRUCTION_EXTRA` 축소 2줄의 **대상을 "발화 목록 밖"으로 한정**(삭제 아님 — v6 의
+   일반론 오염 차단 의도는 유효하다). 발화한 signature 는 발화 사실 + `[근거: …]` 가 이미
+   재료라 "근거 부족"에 해당하지 않는다. 3번째 줄("판단할 수 없는 부분은 … 무엇을 더
+   확인해야 하는지로 써라")은 **커버리지의 탈출구**라 그대로 둔다.
+3. `[발화 signature 전체]` 헤더에 **발화 건수** 표기(`_sig_count`) — 지시문만으로는 모델이
+   목록 개수를 세다 틀린다. ⚠ `_sig_count` 는 `_sig_lines` 와 **문자 그대로 같은 기준**
+   (id 빈 행 스킵)이어야 한다. 갈리면 "3건이라 써놓고 2줄만 있는" 프롬프트가 나간다
+   (`_precedent_count` ↔ `_precedent_lines` 와 같은 규약).
+
+회귀 가드는 `tests/test_ai_prompt_determinism.py` (l)(m) — 헤더 건수 == `_sig_lines` 줄 수
+== `_case_sig_ids` 길이 3자 일치 + 배포 yaml 에 두 지시가 켜져 있는지 + 축소 지시가
+무조건형으로 되돌아가지 않았는지.
+
+⚠ 튜닝 시: 일반론이 늘었으면(v6 역효과 재발) **yaml 쪽**을 강화한다 — 코드 배포가 필요
+없다. 단 `/pe/eval` 저장은 rules_rev 를 올려 또 sha 가 갈리므로 몰아서 할 것.
+
 ### 지시문·금지 문구를 관리자 화면에서 (2026-09-02)
 
 **문제**: 사례가 회수됐는데도 [제안]이 "직접 적용할 수 있는 사례는 확인되지 않았습니다"로
@@ -196,8 +241,9 @@ item: <canonical> / class: <class> / unit: V / LSL=0.5 / USL=1.5
 status: MAJOR / primary: LOW_CPK
 secondary: ...
 [현재 통계] cpk=0.42, mean=1.01, yield=0.98, fail_count=30, total_count=1500
-[발화 signature 전체]
+[발화 signature 전체] 2건 - 아래 2개 항목을 모두 다뤄라   ← 건수는 _sig_count (0건이면 표기 없음)
 - LOW_CPK(primary): <action_ko> [근거: CPK=0.42]
+- OUTLIER(secondary): <action_ko> [근거: fail_mad_min=6.1]
 [현상] ...
 [과거사례 목록]
 - 사례1 / 제품 P1 / lot L1 / item itema / unit V / 당시 status MAJOR / 당시 signature LOW_CPK

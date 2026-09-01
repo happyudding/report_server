@@ -22,6 +22,16 @@ instructions:
   enabled: true
   text: 과거사례 목록이 실제로 비어 있을 때만 사례를 언급하지 말고 발화 signature 와 현재
     수치만으로 써라.
+- id: cover_all_signatures
+  enabled: true
+  text: 발화한 signature 는 위 [발화 signature 전체] 목록에 있는 것이 전부다 - primary 하나만
+    다루지 말고 목록의 각 항목이 최소 한 줄에서 다뤄지게 써라. 서로 원인이 이어지는 항목은
+    한 줄에 묶어 써도 되지만 그냥 빠뜨리지는 마라.
+- id: signature_budget_first
+  enabled: true
+  text: 5줄 예산은 발화 signature 를 먼저 덮는 데 쓰고 남는 줄로 과거 사례 대조를 써라 -
+    signature 가 목록에 있는데 근거가 약하면 빼는 것이 아니라 무엇을 더 확인해야 판단할 수
+    있는지로 한 줄 써라. 목록에 없는 항목을 새로 만들어 줄을 채우지는 마라.
 deny_patterns:
 - id: precedent_denial
   enabled: true

@@ -101,8 +101,14 @@ _INSTRUCTION_EXTRA = (
     # 아래 3줄은 "5줄을 채우려고 억지 문장을 만드는" 부류를 막는다 (2026-09-01).
     # 최대 5줄은 상한이지 목표가 아닌데, 상한만 주면 근거가 2개뿐이어도 5줄을 채우려고
     # 재료에 없는 점검 항목이 나온다 — 지어낸 수치보다 잡아내기 어려운 오염이다.
-    "5줄은 상한이지 채워야 하는 목표가 아니다 - 근거가 있는 만큼만 쓰고 재료가 부족하면 줄 수를 줄여라."
-    "확인할 근거가 부족한 항목은 쓰지 말고 아예 빼라 - 줄 수를 맞추려고 일반론을 넣지 마라."
+    # ⚠ 단 축소의 **대상은 "발화 목록 밖"** 이다 (2026-09-01 같은 날 한정). 무조건형으로
+    # 두면 signature 가 여러 개 걸려도 primary 하나만 쓰고 끝낸다 — 뒤에 있고 더 구체적인
+    # 이 지시가 _INSTRUCTION 의 "전체를 종합하라" 를 눌러 버린다(실제 증상).
+    # 발화한 signature 는 발화 사실 + [근거: …] 가 이미 재료로 주어져 "근거 부족" 이 아니다.
+    "5줄은 상한이지 채워야 하는 목표가 아니다 - 발화 signature 를 전부 덮고 나서도 쓸 근거가 없으면 줄 수를 줄여라."
+    "발화 목록에 없는 항목을 지어내 줄을 채우지 마라 - 줄 수를 맞추려고 일반론을 넣지 마라."
+    # 아래 1줄은 커버리지의 탈출구다 — 발화했지만 재료가 얕은 signature 를 빼지 않고
+    # "무엇을 더 확인해야 하는지" 로 한 줄 쓰게 해 준다. 지우지 말 것.
     "주어진 재료로 판단할 수 없는 부분은 단정하지 말고 무엇을 더 확인해야 하는지로 써라."
 )
 
@@ -242,6 +248,16 @@ def _sig_lines(case: dict) -> str:
     return "\n".join(out)
 
 
+def _sig_count(case: dict) -> int:
+    """프롬프트에 실제로 실리는 발화 signature 건수 — `_sig_lines` 와 **같은 기준**.
+
+    헤더에 "N건 - N개 항목을 모두 다뤄라" 로 박히는 수라, 기준이 갈리면 "3건이라 써놓고
+    2줄만 있는" 프롬프트가 나가 모델을 혼란시킨다(`_precedent_count` 와 같은 규약).
+    id 가 빈 행을 건너뛰는 조건은 `_sig_lines` L230-233 과 문자 그대로 같아야 한다.
+    """
+    return sum(1 for s in (case.get("signatures") or []) if str(s.get("id") or ""))
+
+
 def _precedent_block(idx: int, p: dict, comment: str) -> str:
     """선례 1건의 다행 블록.
 
@@ -372,6 +388,7 @@ def build_prompt(case: dict, enrich: dict | None = None,
         return None
     enrich = enrich or {}
     sig_lines = _sig_lines(case)
+    sig_count = _sig_count(case)
     prec_lines = _precedent_lines(case)
     secondary = case.get("secondary_signatures") or []
     stats_line = _kv_line(enrich.get("stats") or {}, _PRECEDENT_METRIC_ORDER)
@@ -386,7 +403,11 @@ def build_prompt(case: dict, enrich: dict | None = None,
     if stats_line:
         lines.append(f"[현재 통계] {stats_line}")
     lines += [
-        "[발화 signature 전체]",
+        # 건수를 재료 옆에 박아 "각 항목을 모두 다뤄라"(rules/ai_prompt.yaml
+        # cover_all_signatures)를 검증 가능한 형태로 만든다 — 지시문만 주면 모델이
+        # 목록 개수를 세다 틀린다. 0건이면 종전 헤더 그대로(셀 수가 없으니 요구도 없다).
+        (f"[발화 signature 전체] {sig_count}건 - 아래 {sig_count}개 항목을 모두 다뤄라"
+         if sig_count else "[발화 signature 전체]"),
         sig_lines or "- (없음)",
         f"[현상] {phenomenon}",
         "[과거사례 목록]",

@@ -504,7 +504,15 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   운영자 지시문(rules/ai_prompt.yaml)이 프롬프트에 합류. 지시문 **편집**은 rules_rev 가
 #   갈아 주지만, **코드 배포로 처음 들어가는 기본 지시**는 rules_rev 가 감지하지 못한다
 #   (그건 /pe/eval 저장 카운터다) — v5·v6 과 같은 이유로 여기만 올린다(전역 bump 금지).
-AI_COMMENT_SCHEMA_VERSION = 7
+# v8 (2026-09-01): 발화 signature **커버리지** 요구. signature 가 여러 개 걸려도 [제안]이
+#   primary 하나만 다루던 문제 — 재료는 이미 전량 실렸고(_sig_lines 무제한) 원인은 지시
+#   충돌이었다: v6 에서 넣은 축소 지시가 뒤에·더 구체적이라 _INSTRUCTION 의 "전체를
+#   종합하라" 를 눌렀다. ① rules/ai_prompt.yaml 에 기본 지시 2개(cover_all_signatures /
+#   signature_budget_first) ② _INSTRUCTION_EXTRA 축소 지시의 대상을 "발화 목록 밖" 으로
+#   한정 ③ [발화 signature 전체] 헤더에 발화 건수 표기. ②③ 은 코드이고 ① 도 코드 배포로
+#   처음 들어가는 기본 지시라 rules_rev 가 감지하지 못한다 — v5·v6·v7 과 같은 이유로
+#   여기만 올린다(전역 bump 금지).
+AI_COMMENT_SCHEMA_VERSION = 8
 
 
 def _ai_meta_digest(session) -> str:

@@ -25,6 +25,12 @@ ai_comment/eval_export/eval_debug 3곳 고정)이라 ai_prompt.py 는 엔진을 
   (k) **운영자 지시문·금지 문구**(2026-09-02, `/pe/eval` AI 지시문 탭) — rules 인자가
       프롬프트에 붙는 위치·결정성, `precedents` 건수, `strip_denied_lines` 가 사례를
       버리는 줄만 지우고 비교문("사례와 달리")은 남기는지. rules 없으면 종전 바이트 동일.
+  (l) **발화 signature 커버리지 재료**(2026-09-01) — 헤더 건수 == `_sig_lines` 줄 수 ==
+      `ai_comment._case_sig_ids` 길이. 셋이 갈리면 화면 Signature 컬럼과 프롬프트가
+      어긋난다("N건" 이라 써놓고 목록은 N-1줄).
+  (m) **커버리지 지시 배포 확인**(2026-09-01) — 배포 yaml 에 cover_all_signatures /
+      signature_budget_first 가 켜져 있고 프롬프트로 나가는지 + `_INSTRUCTION_EXTRA` 의
+      축소 지시가 무조건형으로 되돌아가지 않았는지(그러면 커버리지 요구를 눌러 버린다).
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert). 서버 불필요. (j)만 임시 sqlite 를 만든다.
 """
@@ -366,12 +372,16 @@ _RULES = {
 }
 
 
-def _load_shipped_deny_regex() -> str:
-    """rules/ai_prompt.yaml 의 precedent_denial 정규식(배포값)."""
+def _load_shipped_rules() -> dict:
+    """rules/ai_prompt.yaml 배포 원문 — 손으로 베낀 사본을 쓰지 않기 위한 단일 창구."""
     import yaml
     path = _ROOT / "eval_analyzer" / "eval_engine" / "rules" / "ai_prompt.yaml"
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    for row in doc.get("deny_patterns") or []:
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _load_shipped_deny_regex() -> str:
+    """rules/ai_prompt.yaml 의 precedent_denial 정규식(배포값)."""
+    for row in _load_shipped_rules().get("deny_patterns") or []:
         if row.get("id") == "precedent_denial":
             return str(row.get("regex") or "")
     raise AssertionError("배포 yaml 에 precedent_denial 패턴이 없습니다")
@@ -446,6 +456,73 @@ def test_strip_denied_lines():
     print("  (k3) strip_denied_lines 양성/음성/줄단위/선례게이트 OK")
 
 
+def test_signature_coverage_materials():
+    """(l) 발화 signature 가 전부·건수와 함께 실린다 (2026-09-01).
+
+    증상은 "signature 는 여러 개 걸렸는데 [제안]은 하나만 다룬다" 였다. 재료는 원래
+    전량 실렸으므로 이 테스트가 고정하는 것은 **화면 Signature 컬럼과 프롬프트가
+    갈리지 않는다**는 쪽이다 — 헤더 건수 == _sig_lines 줄 수 == _case_sig_ids 길이.
+    셋이 어긋나면 "3건이라 써놓고 2줄만 있는" 프롬프트가 나가 모델을 혼란시킨다.
+    """
+    from web_report import ai_comment as AC       # Signature 컬럼의 정본(같은 case 를 읽는다)
+
+    case = _case_with_precedent([_PRECEDENT])     # signatures 2건
+    p = P.build_prompt(case, _ENRICH)
+    n = P._sig_count(case)
+    assert n == 2
+    assert len(P._sig_lines(case).split("\n")) == n
+    assert len(AC._case_sig_ids(case)) == n, "화면 Signature 컬럼과 프롬프트 기준이 갈렸다"
+    assert f"[발화 signature 전체] {n}건 - 아래 {n}개 항목을 모두 다뤄라" in p
+    assert "- EDGE_FAIL(primary)" in p and "- LOW_CPK(secondary)" in p
+
+    # id 가 빈 행이 섞여도 건수와 줄 수가 **함께** 줄어야 한다(_sig_lines 와 같은 기준)
+    case3 = dict(case)
+    case3["signatures"] = list(case["signatures"]) + [{"id": "", "action_ko": "무시"}]
+    assert P._sig_count(case3) == 2
+    assert len(P._sig_lines(case3).split("\n")) == 2
+    assert "[발화 signature 전체] 2건" in P.build_prompt(case3, _ENRICH)
+
+    # 3건이면 헤더도 3건 — 커버리지 요구가 실제 발화 수를 따라간다
+    case_n = dict(case)
+    case_n["signatures"] = list(case["signatures"]) + [
+        {"id": "OUTLIER", "role": "secondary", "action_ko": "튄 값을 확인하세요."}]
+    p_n = P.build_prompt(case_n, _ENRICH)
+    assert "[발화 signature 전체] 3건 - 아래 3개 항목을 모두 다뤄라" in p_n
+    assert "- OUTLIER(secondary)" in p_n
+
+    # 0건이면 종전 헤더 그대로 — 셀 수가 없으니 요구도 하지 않는다
+    case0 = dict(_CASE)
+    case0["signatures"] = []
+    p0 = P.build_prompt(case0)          # action_ko 는 [제안] 섹션 폴백으로 살아 있다
+    assert p0 is not None
+    assert "[발화 signature 전체]\n- (없음)" in p0 and "모두 다뤄라" not in p0
+    print("  (l) 발화 signature 커버리지 재료(건수·목록·화면 일치) OK")
+
+
+def test_coverage_instruction_shipped():
+    """(m) 커버리지 지시가 **배포 yaml** 에 실제로 있고 프롬프트로 나간다 (2026-09-01)."""
+    rules = _load_shipped_rules()
+    by_id = {str(r.get("id") or ""): r for r in rules.get("instructions") or []}
+    for rid in ("cover_all_signatures", "signature_budget_first"):
+        assert rid in by_id, f"배포 yaml 에 {rid} 지시문이 없습니다"
+        assert by_id[rid].get("enabled") is True, f"{rid} 가 꺼져 있습니다"
+
+    p = P.build_prompt(_CASE, None, rules)
+    for rid in ("cover_all_signatures", "signature_budget_first"):
+        text = str(by_id[rid].get("text") or "").strip()
+        assert text and text in p, f"{rid} 문장이 프롬프트에 없습니다"
+        # 위치: 고정 지시문 **뒤**, 재료(item:) **앞** — 재료 뒤면 지시로 안 읽힌다
+        assert (p.index(P._INSTRUCTION_EXTRA) < p.index(text) < p.index("item: VDD_LEAK"))
+
+    # 축소 지시가 **무조건형**으로 되돌아가는 회귀를 잡는다. 대상이 "발화 목록 밖" 으로
+    # 한정돼 있지 않으면, 뒤에 있고 더 구체적인 이 문장이 커버리지 요구를 눌러 버린다.
+    assert "발화 목록에 없는 항목을 지어내" in P._INSTRUCTION_EXTRA, (
+        "_INSTRUCTION_EXTRA 의 축소 지시가 커버리지와 충돌하는 무조건형으로 되돌아갔다 — "
+        "대상을 '발화 목록 밖' 으로 한정할 것 (cache_policy v8 사유 참조)")
+    assert "발화 signature 를 전부 덮고 나서도" in P._INSTRUCTION_EXTRA
+    print("  (m) 배포 yaml 커버리지 지시 + 축소 지시 한정 OK")
+
+
 def main():
     _RULES["deny_patterns"][0]["regex"] = _load_shipped_deny_regex()
     test_determinism()
@@ -461,6 +538,8 @@ def main():
     test_operator_rules()
     test_precedent_count()
     test_strip_denied_lines()
+    test_signature_coverage_materials()
+    test_coverage_instruction_shipped()
     print("test_ai_prompt_determinism: 전부 통과")
 
 
