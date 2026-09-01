@@ -7,6 +7,7 @@ from PyQt6 import uic
 from PyQt6.QtCore import Qt, QPoint, QRect, QStringListModel, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QCompleter,
@@ -527,6 +528,17 @@ class EvalSensitivityDialog(QDialog):
             "border-radius:6px; padding:3px 8px; font-size:12px;")
         root.addWidget(self._help)
 
+        # "제안 제외" — 2026-09-02 사용자 요청으로 메인 창 AI Comment 줄에서 이리로 옮겼다
+        # (민감도와 함께 "AI Comment 를 어떻게 뽑을지" 설정이라 한자리에 모은다).
+        # 저장 키는 종전 그대로 `ai_no_suggest` 다 — 키를 바꾸면 이미 켜 둔 PC 의 설정이
+        # 조용히 풀린다. 저장은 OK 시점(`_on_ok`)에만 한다(취소하면 되돌아가야 한다).
+        self.chk_no_suggest = QCheckBox("제안 제외 — [제안] 문장을 만들지 않는다")
+        self.chk_no_suggest.setToolTip(
+            "체크하면 [제안] 문장을 만들지 않고 과거 사례만 AI Comment 에 표시합니다.\n"
+            "LLM 을 호출하지 않아 업로드 후 대기 시간이 없습니다.")
+        self.chk_no_suggest.setChecked(bool(app_settings.get_setting("ai_no_suggest")))
+        root.addWidget(self.chk_no_suggest)
+
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                               | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self._on_ok)
@@ -857,6 +869,18 @@ class EvalSensitivityDialog(QDialog):
             QMessageBox.warning(self, "값 오류", f"{key} 는 숫자여야 합니다.")
             self._refresh()
             return
+        # 서버가 받아주지 않을 값이면 **여기서** 알린다(2026-09-02 사용자 요청) — 그냥
+        # 두면 나중에 업로드가 400 으로 거절돼 세션 자체가 안 만들어진다. 판정 재료는
+        # 서버 카탈로그가 준다(클라에 규칙 사본 없음 — eval_sensitivity.check_value).
+        problem = eval_sensitivity.check_value(
+            self._catalog, key, value, self._effective_values())
+        if problem:
+            QMessageBox.warning(
+                self, "적용할 수 없는 값",
+                f"{problem}\n\n이대로 두면 이 설정으로는 Web Report 세션을 만들 수 없습니다.\n"
+                "값을 고치거나, 비워 두면 게이지 값으로 되돌아갑니다.")
+            self._refresh()      # 입력란을 직전 유효값으로 되돌린다
+            return
         # 게이지 값과 같아지면 직접 입력을 해제한다 — 같은 값을 두 방식으로 들고 있을
         # 이유가 없고, 남기면 저장 payload 만 커진다.
         if gauge_val is not None and value == float(gauge_val):
@@ -865,6 +889,22 @@ class EvalSensitivityDialog(QDialog):
             self._settings.setdefault("manual", {})[key] = value
         self._sync_global()
         self._refresh()
+
+    def _effective_values(self) -> dict:
+        """지금 화면이 적용 중인 값 전체 {key: value} — 관계식 검증의 상대편 재료.
+
+        직접 입력(manual)이 있으면 그 값, 없으면 그 그룹 게이지 단계의 값이다. 서버
+        `_check_values` 가 기본값에 overrides 를 덮어 보는 것과 같은 그림이라, 여기서
+        통과한 값은 서버에서도 통과한다(기본값은 게이지 3단계와 같다).
+        """
+        manual = self._settings.get("manual") or {}
+        out = {}
+        for gid, row in self._rows.items():
+            for key in row.get("inputs") or {}:
+                value = manual.get(key, self._gauge_value(gid, key))
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    out[key] = value
+        return out
 
     def _sync_global(self):
         """그룹 단계가 제각각이거나 직접 입력이 있으면 전체는 '사용자설정'(0)."""
@@ -908,7 +948,22 @@ class EvalSensitivityDialog(QDialog):
                     "font-weight:600; color:#2f6fd0;" if key in manual else ""))
 
     def _on_ok(self):
+        # 저장 직전 **전체를 한 번 더** 본다. 값을 하나씩 고칠 때는 각각 성립했어도,
+        # 나중에 고친 값이 앞선 값과의 관계식(cpk_bad <= cpk_warn 등)을 깨뜨릴 수 있다.
+        effective = self._effective_values()
+        manual = self._settings.get("manual") or {}
+        for key in sorted(manual):
+            problem = eval_sensitivity.check_value(
+                self._catalog, key, manual[key], effective)
+            if problem:
+                QMessageBox.warning(
+                    self, "적용할 수 없는 값",
+                    f"{problem}\n\n이대로 저장하면 이 설정으로는 Web Report 세션을 만들 수 "
+                    "없습니다.\n값을 고친 뒤 다시 확인해 주세요.")
+                return                       # 창을 닫지 않는다 — 고칠 자리를 남긴다
         eval_sensitivity.save_settings(self._settings)
+        # "제안 제외" 는 민감도 spec 이 아니라 별도 설정 키다(업로드 옵션에서도 따로 실린다).
+        app_settings.set_setting("ai_no_suggest", bool(self.chk_no_suggest.isChecked()))
         self.accept()
 
 

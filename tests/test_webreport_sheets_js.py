@@ -131,9 +131,10 @@ def test_ai_comment_render():
         # @[..]→@.. / *r[..]→본문 변환은 종전부터 의도된 표시 규약이라 원문과 직접
         # 비교하면 영원히 실패한다. renderAiComment 는 선두 배지를 맨 끝으로 옮기므로
         # 기준 텍스트도 같은 재배열 후 비교한다(공백 무시).
-        # 섹션 **라벨**도 같은 성격의 표시 규약이다(AIC_SEC_LABEL — 화면은 [사례]/[제안]
-        # 으로 짧게 찍고 서버 문자열·파싱 키는 [과거사례]/[점검제안] 그대로). 기준 텍스트에
-        # 같은 치환을 적용해 **본문** 글자 손실만 잡는다.
+        # 섹션 **태그 라벨**은 2026-09-02 부터 화면에 아예 찍지 않는다(사용자 요청) —
+        # 어느 섹션인지는 색(aic-past/aic-act)이 구분하고, 좁은 셀에서 라벨이 본문 첫
+        # 줄을 밀어냈다. 서버 문자열·파싱 토큰은 그대로이므로 기준 텍스트에서도 라벨만
+        # 지우고 비교해 **본문** 글자 손실은 계속 잡는다.
         # 심각도 배지([MAJOR] 등 영문)는 2026-08-28 부터 **화면에서만** 숨기므로 기준
         # 텍스트에서도 뺀다 — 서버 문자열은 그대로라 본문 손실 검사 취지는 유지된다.
         # [현상] 섹션도 같은 성격이다(2026-08-28 사용자 요청 — 화면에서만 생략, 서버
@@ -142,8 +143,7 @@ def test_ai_comment_render():
         "var ref=document.createElement('div');ref.innerHTML=linkifyComment(SAMPLE);"
         "var rt=ref.textContent;"
         "rt=rt.replace(/\\[현상\\][\\s\\S]*?(?=\\[(?:과거사례|점검제안|제안)\\]|$)/,'');"
-        "Object.keys(AIC_SEC_LABEL).forEach(function(k){"
-        "  rt=rt.split('['+k+']').join('['+AIC_SEC_LABEL[k]+']'); });"
+        "rt=rt.replace(/\\[(?:과거사례|사례|점검제안|제안)\\]/g,'');"
         "var mm=rt.match(/^\\s*((?:\\[[^\\]\\s]{1,12}\\])+)\\s*([\\s\\S]*)$/);"
         "var keptBadges=mm?(mm[1].match(/\\[[^\\]\\s]{1,12}\\]/g)||[]).filter(function(b){"
         "  return !aicIsSeverityBadge(b.slice(1,-1)); }).join(''):'';"
@@ -295,7 +295,11 @@ def test_aic_parses_old_and_new_section_tokens():
     assert '"사례": "aic-past"' in src, "새 파싱 키(사례)가 없습니다 (서버 문자열과 갈립니다)"
     for tok in ("현상", "과거사례", "사례", "점검제안", "제안"):
         assert f'"{tok}"' in src, f"AIC_SECTIONS 에 {tok} 토큰이 없습니다"
-    assert "AIC_SEC_LABEL" in src, "표시 라벨 매핑(AIC_SEC_LABEL)이 사라졌습니다"
+    # 태그 라벨은 2026-09-02 부터 화면에 찍지 않는다(사용자 요청) — 섹션 구분은 색이
+    # 한다. **파싱 토큰은 그대로 남아야** 하므로(위 검사) 라벨 표만 사라진 것이다.
+    # 라벨을 다시 넣으면 그때 이 검사도 함께 되살릴 것.
+    assert "aic-tag" not in src, \
+        "섹션 태그 라벨이 되살아났습니다 — 2026-09-02 사용자 요청으로 화면에서 뺀 것입니다"
     # 정규식 교대는 왼쪽 우선 — **긴 옛 토큰**이 신 토큰보다 앞에 와야 "[점검"·"[과거" 가
     # 본문으로 새지 않는다.
     m = re.search(r"\[\((현상\|[^)]*)\)\\\]", src)
@@ -397,16 +401,18 @@ def test_prec_link_render():
         # 새 토큰도 [사례] 섹션(보라)으로 그려진다
         "out.newSecs=[].map.call(b1.querySelectorAll('.aic-sec'),"
         "  function(d){return d.className.replace('aic-sec ','');}).join(',');"
-        "out.newLabels=[].map.call(b1.querySelectorAll('.aic-tag'),"
-        "  function(d){return d.textContent;}).join(',');"
+        # 태그 라벨은 2026-09-02 부터 안 찍는다 — 신·구 토큰 동일성은 **섹션 클래스**로
+        # 본다(색이 곧 섹션 구분이라 비교 취지는 종전과 같다).
+        "out.newTags=b1.querySelectorAll('.aic-tag').length;"
         # 건수 0 / 미상 → 링크 없음
         "out.noBtnZero=!box(renderAiComment(NEW,0,'CPK|ItemA')).querySelector('.aic-prec-btn');"
         "out.noBtnUndef=!box(renderAiComment(NEW,undefined,'CPK|ItemA'))"
         "  .querySelector('.aic-prec-btn');"
         # 옛 토큰 셀도 같은 라벨·같은 링크
         "var b2=box(renderAiComment(OLD,1,'CPK|ItemA'));"
-        "out.oldLabels=[].map.call(b2.querySelectorAll('.aic-tag'),"
-        "  function(d){return d.textContent;}).join(',');"
+        "out.oldSecs=[].map.call(b2.querySelectorAll('.aic-sec'),"
+        "  function(d){return d.className.replace('aic-sec ','');}).join(',');"
+        "out.oldTags=b2.querySelectorAll('.aic-tag').length;"
         "out.oldHasBtn=!!b2.querySelector('.aic-prec-btn');"
         "var pre=document.createElement('pre');pre.id='res';"
         "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
@@ -418,7 +424,9 @@ def test_prec_link_render():
     # 사례+제안이 다 있으면 [사례] 는 숨고 [제안]만 남는다(상세는 링크로) — 아래 (j) 참조.
     assert r["newSecs"] == "aic-act", r["newSecs"]
     # 신·구 토큰이 **같은 화면**을 내야 옛/새 세션이 갈리지 않는다(둘 다 사례 숨김).
-    assert r["newLabels"] == r["oldLabels"] == "[제안]", (r["newLabels"], r["oldLabels"])
+    assert r["newSecs"] == r["oldSecs"] == "aic-act", (r["newSecs"], r["oldSecs"])
+    # 태그 라벨은 화면에 없다(2026-09-02) — 신·구 어느 쪽에서도 되살아나면 안 된다.
+    assert r["newTags"] == r["oldTags"] == 0, (r["newTags"], r["oldTags"])
     assert r["noBtnZero"] and r["noBtnUndef"], \
         f"건수가 없는데 링크가 붙었습니다(눌러도 빈 목록): {r}"
     assert r["oldHasBtn"], "옛 토큰 셀에는 링크가 안 붙습니다"

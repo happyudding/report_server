@@ -848,6 +848,53 @@ function applyCmpStatsFold(panel) {
   }
   afterIssueRowsToggled(panel);
 }
+// ── Signature / AI Comment 열 접기 (2026-09-02 사용자 요청) ──────────────────
+// 두 열은 Issue Table 에서 가장 넓은 축이라 다른 숫자 열을 화면 밖으로 민다. 위
+// applyCmpStatsFold 와 **같은 장치**(패널 클래스 + CSS)를 쓰되 열 하나씩이고, 토글은
+// 그 열 헤더의 화살표(sheets.js foldBtn → data-issue-act="col-fold")다.
+//
+// 상태는 **세션 단위로 기억**한다(사용자 요청). 저장 위치는 브라우저 localStorage 이며
+// 서버 편집 DB(report_webreport_edit)를 쓰지 않는다 — 이건 사용자가 입력한 내용이 아니라
+// "내 화면에서 이 열을 접어 두겠다"는 개인 표시 설정이고, 편집 kind 를 늘리면 저장할
+// 때마다 payload_rev·캐시를 건드리게 된다(CLAUDE.md §5 규칙 14·16). 테마·폰트·확대율이
+// 이미 같은 방식으로 localStorage 에 있다(core.js).
+const COL_FOLD_IDS = ["sig", "aic"];
+function colFoldKey(id) { return `report_colfold_${SESSION_ID}_${id}`; }
+function colFoldGet(id) {
+  try { return localStorage.getItem(colFoldKey(id)) === "1"; } catch (e) { return false; }
+}
+function colFoldSet(id, on) {
+  // 접힘만 저장하고 펼침은 키를 지운다 — 기본값(펼침)이 바뀌어도 따라오게 한다.
+  try {
+    if (on) localStorage.setItem(colFoldKey(id), "1");
+    else localStorage.removeItem(colFoldKey(id));
+  } catch (e) {}
+}
+// 저장된 접힘 상태를 패널에 바른다. 표를 다시 그린 뒤에도 불러야 한다(클래스는 패널에
+// 있지만 화살표 방향은 새로 그려진 th 안에 있다).
+function applyColFold(panel) {
+  panel = panel || activeIssuePanel();
+  if (!panel) return;
+  COL_FOLD_IDS.forEach(id => {
+    const on = colFoldGet(id);
+    panel.classList.toggle("fold-" + id, on);
+    panel.querySelectorAll(`.col-fold-btn[data-fold="${id}"]`).forEach(btn => {
+      btn.textContent = on ? "▶" : "◀";
+      btn.title = on ? "이 열 펼치기" : "이 열 접기";
+    });
+  });
+}
+// 모든 Issue 패널에 한 번에 — 열 접기는 패널마다 따로 기억하지 않는다(같은 열이 세 표에
+// 다 있고, 한쪽만 접히면 오히려 혼란스럽다).
+function applyColFoldAll() { issuePanels().forEach(applyColFold); }
+function toggleColFold(id) {
+  if (COL_FOLD_IDS.indexOf(id) < 0) return;
+  colFoldSet(id, !colFoldGet(id));
+  applyColFoldAll();
+  // 열이 사라지면 좌측 고정열 오프셋·가로 스크롤 폭이 달라진다(통계 접기와 같은 재실측).
+  issuePanels().forEach(afterIssueRowsToggled);
+}
+
 // 체크 상태를 행 강조(tr.issue-row-sel)에 반영 — 체크박스가 작아 행 전체로 선택을 보인다.
 function markIssueRowSelected(chk) {
   const tr = chk && chk.closest("tr");
@@ -1106,6 +1153,7 @@ function renderIssueTableInto(panel, rows, opts) {
     markAicClamped(panel);      // AI Comment [과거사례] 가 잘렸을 때만 펼침 커서·"더보기"
     applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
     applyCmpStatsFold(panel);   // Compare 통계 접기 상태 유지 (Compare 패널만 동작)
+    applyColFold(panel);        // Signature/AI Comment 열 접기 상태 유지 (세션 단위 기억)
     const ui = issueUi(panel);
     if (ui.search.trim()) applyIssueSearch(ui.search, panel);   // 검색어 유지
     if (ui.hideClose || ui.hideOpen) applyIssueStatusFilter(panel);   // Status 필터 유지

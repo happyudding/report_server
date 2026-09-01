@@ -195,9 +195,20 @@ function aicPrecRowHtml(p) {
   const stats = ["cpk", "yield", "mean", "stdev", "fail_count", "total_count"]
     .filter(k => m[k] !== undefined && m[k] !== null)
     .map(k => `${k}=${sigrNum(m[k])}`).join(", ");
+  // 출처 세션으로 바로 가는 링크(2026-09-02 사용자 요청). session_id 는 선례 행이
+  // 실어 온다(eval_engine store.search_precedents → present._precedent_result).
+  // 없는 선례(CSV 로 적재된 과거 사례 등)도 있으므로 **있을 때만** 그린다.
+  // 자기 세션은 애초에 선례에서 제외되므로(exclude_session_id) 자기 자신으로 가는
+  // 링크는 생기지 않는다. 새 탭으로 여는 이유는 지금 보던 표를 잃지 않기 위해서다.
+  const sid = String(p.session_id || "").trim();
+  const link = sid
+    ? `<a class="sigr-src-link" href="/pe/report/view/${encodeURIComponent(sid)}"` +
+      ` target="_blank" rel="noopener"` +
+      ` title="이 사례가 나온 세션을 새 탭으로 엽니다">세션 열기 ↗</a>`
+    : "";
   return `<div class="sigr-rule"><div class="sigr-rule-head">` +
     `<b>${head.join(" / ") || "(출처 미상)"}</b>` +
-    tags.map(t => `<span class="sigr-tag">${t}</span>`).join("") + `</div>` +
+    tags.map(t => `<span class="sigr-tag">${t}</span>`).join("") + link + `</div>` +
     (stats ? `<div class="sigr-desc">당시 통계: ${esc(stats)}</div>` : "") +
     `<div class="sigr-act">${linkifyComment(String(p.comment || ""))}</div></div>`;
 }

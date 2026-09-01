@@ -726,6 +726,38 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 /* Before/After 통계 9컬럼 접기 (툴바 '통계 접기' → yield_issue.applyCmpStatsFold) */
 #panel-issue-cmp-table.cmp-stats-folded .sheet-table.kind-issue .cmp-stat-col { display: none; }
 #panel-issue-cmp-table.cmp-stats-folded .sheet-table.kind-issue col.cmp-stat-col { width: 0 !important; }
+
+/* Signature / AI Comment 열 개별 접기 (2026-09-02 사용자 요청 — 두 열이 넓어 다른 숫자
+   열을 화면 밖으로 민다). 위 Compare 통계 접기와 같은 장치이되 열 하나씩이고, 토글이
+   그 열 헤더의 화살표(.col-fold-btn)다.
+   ⚠ td 는 감추되 **th 는 남긴다** — 통째로 display:none 하면 다시 펼칠 화살표까지
+   사라져 되돌릴 방법이 없어진다. 헤더만 아주 좁게(폭 0 + 화살표만) 남긴다. */
+#panel-issues.fold-sig .sheet-table, #panel-issue-temp.fold-sig .sheet-table, #panel-issue-cmp-table.fold-sig .sheet-table.kind-issue td.fold-col-sig,
+#panel-issues.fold-aic .sheet-table, #panel-issue-temp.fold-aic .sheet-table, #panel-issue-cmp-table.fold-aic .sheet-table.kind-issue td.fold-col-aic { display: none; }
+#panel-issues.fold-sig .sheet-table, #panel-issue-temp.fold-sig .sheet-table, #panel-issue-cmp-table.fold-sig .sheet-table.kind-issue col.fold-col-sig,
+#panel-issues.fold-aic .sheet-table, #panel-issue-temp.fold-aic .sheet-table, #panel-issue-cmp-table.fold-aic .sheet-table.kind-issue col.fold-col-aic { width: 22px !important; }
+/* 접힌 열의 헤더 — 라벨·안내문·리사이즈 핸들은 감추고 화살표만 남긴다. */
+#panel-issues.fold-sig .sheet-table, #panel-issue-temp.fold-sig .sheet-table, #panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig,
+#panel-issues.fold-aic .sheet-table, #panel-issue-temp.fold-aic .sheet-table, #panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic {
+  width: 22px; min-width: 22px; max-width: 22px; padding: 4px 1px; overflow: hidden;
+}
+#panel-issues.fold-sig .sheet-table, #panel-issue-temp.fold-sig .sheet-table, #panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig > *:not(.col-fold-btn),
+#panel-issues.fold-aic .sheet-table, #panel-issue-temp.fold-aic .sheet-table, #panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic > *:not(.col-fold-btn) {
+  display: none;
+}
+/* 접힌 헤더는 라벨 텍스트(요소가 아닌 텍스트 노드)도 지워야 폭 22px 가 유지된다. */
+#panel-issues.fold-sig .sheet-table, #panel-issue-temp.fold-sig .sheet-table, #panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig,
+#panel-issues.fold-aic .sheet-table, #panel-issue-temp.fold-aic .sheet-table, #panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic { font-size: 0; }
+.col-fold-btn {
+  font-size: 10px; line-height: 14px; padding: 0 3px; margin-right: 3px;
+  border: 1px solid #d0d5dd; border-radius: 3px; background: #fff; color: #667085;
+  cursor: pointer; vertical-align: middle;
+}
+.col-fold-btn:hover { background: #eef2f7; color: #1f2937; }
+#panel-issues.fold-sig th.fold-col-sig .col-fold-btn, #panel-issue-temp.fold-sig th.fold-col-sig .col-fold-btn, #panel-issue-cmp-table.fold-sig th.fold-col-sig .col-fold-btn,
+#panel-issues.fold-aic th.fold-col-aic .col-fold-btn, #panel-issue-temp.fold-aic th.fold-col-aic .col-fold-btn, #panel-issue-cmp-table.fold-aic th.fold-col-aic .col-fold-btn { margin-right: 0; }
+html[data-theme="dark"] .col-fold-btn { background: #1f2733; border-color: #3a3f4b; color: #9aa3b0; }
+html[data-theme="dark"] .col-fold-btn:hover { background: #26303f; color: #e6e8eb; }
 /* Compare 표에는 Map 컬럼이 없어 4·5·6번째가 Map/Distribution 이 아니라 통계 컬럼이다 —
    위쪽 공용 규칙(:nth-child(5)/(6))의 좌측 고정(sticky)·최소폭 144px 를 이 패널에서만
    무효화한다. (안 풀면 통계 컬럼이 왼쪽에 고정된 채 144px 로 벌어져 가로폭이 더 커진다.)
@@ -2144,6 +2176,10 @@ html[data-theme="dark"] .issue-menu-sep { background: #3a3f4b; }
 .sigr-rule:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
 .sigr-rule-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 3px; }
 .sigr-tag { font-size: 10px; padding: 0 5px; border-radius: 8px; background: #eef2f7; color: #475467; }
+/* 사례 → 그 사례가 나온 세션으로 가는 링크 (2026-09-02). 태그들 뒤 오른쪽 끝에 붙인다. */
+.sigr-src-link { margin-left: auto; font-size: 10px; color: #1a56db; text-decoration: none;
+  white-space: nowrap; }
+.sigr-src-link:hover { text-decoration: underline; }
 .sigr-desc { color: #475467; margin-bottom: 3px; }
 .sigr-crit { margin-bottom: 4px; }
 .sigr-crit code { font-size: 11px; background: #f2f4f7; border-radius: 3px; padding: 0 4px; }
@@ -2160,6 +2196,7 @@ html[data-theme="dark"] .sigr-pop { background: #1e2128; border-color: #3a3f4b; 
 html[data-theme="dark"] .sigr-head { border-bottom-color: #3a3f4b; }
 html[data-theme="dark"] .sigr-stamp,
 html[data-theme="dark"] .sigr-tag { background: #26303f; color: #9aa3b0; }
+html[data-theme="dark"] .sigr-src-link { color: #7aa7ff; }
 html[data-theme="dark"] .sigr-close { color: #9aa3b0; }
 html[data-theme="dark"] .sigr-note { background: #26303f; color: #9aa3b0; }
 html[data-theme="dark"] .sigr-warn { background: rgba(245,181,68,.15); color: #f5b544; }
@@ -2218,7 +2255,10 @@ td.issue-sig-cell { text-align: left; vertical-align: top; padding: 2px 3px; }
   display: inline-block; margin: 1px 2px 1px 0; padding: 1px 5px; border-radius: 9px;
   font-size: 10px; background: #eef2f7; color: #1f2937; white-space: nowrap;
 }
-.sig-chip.sig-suggest { background: #f5f6f8; color: #98a2b3; font-style: italic; }
+/* 엔진이 **발화한** signature 는 파란색으로 강조한다(2026-09-02 사용자 요청) — 종전
+   회색 이탤릭은 "흐린 제안"으로 읽혀 정작 눈에 띄어야 할 발화가 묻혔다. 이탤릭은 남겨
+   ENGR 확정값(진한 회색 정자체)과의 구분은 유지한다. */
+.sig-chip.sig-suggest { background: #e8f0fe; color: #1a56db; font-style: italic; }
 .sig-chip.sig-none { background: #fff1f0; color: #b42318; }
 /* 열을 좁혔으므로(sheets.js colWidth "signature") 목록에 없는 legacy 장문 id 는 하드
    클리핑 대신 말줄임으로 무너뜨린다 — 선택된 값 전체는 select 의 title 로 확인한다. */

@@ -89,6 +89,9 @@ def _precedent_result(p: dict) -> dict:
         "family_product": p.get("family_product"),
         # 식별 — 어느 lot/item 의 사례인지 알아야 현재와 대조가 된다
         "case_id": p.get("case_id"), "lot_id": p.get("lot_id"),
+        # 출처 세션(report_server session_id) — 화면에서 "그 세션으로 가기" 링크를 만든다
+        # (2026-09-02). 표시 전용이라 없으면(CSV 적재 선례 등) None 이고 링크만 안 생긴다.
+        "session_id": p.get("session_id"),
         "item_canonical": p.get("item_canonical"), "bin": p.get("bin"),
         "unit": p.get("unit"), "value_type": p.get("value_type"),
         # 당시 판정

@@ -724,16 +724,28 @@ def eval_sensitivity_catalog():
         return jsonify({"version": 0, "groups": [], "allowed_keys": [], "help": {},
                         "usage": {}})
     help_map, usage = {}, {}
+    kinds, relations = {}, []
     try:
         from eval_panel import rules_io
         allowed = set(catalog.get("allowed_keys") or [])
         help_map = {k: v for k, v in rules_io.threshold_help().items() if k in allowed}
         usage = {k: v for k, v in rules_io.threshold_usage().items() if k in allowed}
+        # 값 검증 규칙 — 클라가 **입력 시점에 미리** 경고하기 위한 재료(2026-09-02
+        # 사용자 요청). 종전에는 성립하지 않는 값도 설정 창에서 그대로 저장돼, 몇 분 뒤
+        # 업로드가 400(SensitivityError)으로 거절돼야 비로소 알 수 있었다.
+        # ⚠ 클라에 규칙을 **복제하지 않는다** — 사본을 두면 서버가 거부하는 값을 클라가
+        # 통과시키거나 그 반대가 되고, 그건 검증이 없는 것보다 나쁘다. 정본은 계속
+        # rules_io(THRESHOLD_KINDS / THRESHOLD_RELATIONS) 하나다.
+        kinds = {k: v for k, v in rules_io.THRESHOLD_KINDS.items() if k in allowed}
+        relations = [[a, op, b] for a, op, b in rules_io.THRESHOLD_RELATIONS
+                     if a in allowed or b in allowed]
     except Exception:
         # 설명이 없어도 게이지는 동작한다 — 문구는 부가 정보다.
         _log.warning("threshold 설명/사용처 조회 실패 — 문구 없이 응답", exc_info=True)
     catalog["help"] = help_map
     catalog["usage"] = usage
+    catalog["kinds"] = kinds
+    catalog["relations"] = relations
     return jsonify(catalog)
 
 

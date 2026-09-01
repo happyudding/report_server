@@ -70,6 +70,50 @@ def gauge_value(group: dict, key: str, level: int):
     return None
 
 
+def check_value(catalog, key, value, effective=None) -> str:
+    """직접 입력한 값 1개가 **서버 검증을 통과할지** 미리 본다. 통과면 "".
+
+    2026-09-02 사용자 요청: 종전에는 성립하지 않는 값도 설정 창이 그대로 받아 두었다가,
+    한참 뒤 업로드가 400(server/report/eval_sensitivity.SensitivityError)으로 거절돼야
+    비로소 알 수 있었다 — 그 시점엔 분석이 이미 끝나 있어 되돌리는 비용이 크다.
+
+    ⚠ 규칙을 여기 **복제하지 않는다**. 판정 재료(`kinds`/`relations`)는 서버가 카탈로그에
+    실어 준다(routes_misc.eval_sensitivity_catalog). 정본은 서버
+    `eval_panel.rules_io` 의 THRESHOLD_KINDS / THRESHOLD_RELATIONS 하나이며, 사본을 두면
+    클라가 통과시킨 값을 서버가 거부하는(또는 그 반대) 구멍이 생긴다.
+    옛 서버가 준 카탈로그에는 두 키가 없다 — 그때는 "" 를 돌려 종전대로 통과시킨다.
+    """
+    if not isinstance(catalog, dict):
+        return ""
+    kind = (catalog.get("kinds") or {}).get(key)
+    if kind == "ratio" and not 0 <= value <= 1:
+        return f"{key} 는 0~1 사이 비율이어야 합니다 (입력값 {value})."
+    if kind == "count" and (value <= 0 or float(value) != int(value)):
+        return f"{key} 는 1 이상 정수여야 합니다 (입력값 {value})."
+    if kind == "positive" and value <= 0:
+        return f"{key} 는 0 보다 커야 합니다 (입력값 {value})."
+    # 키 사이 관계식 — 상대 키의 **현재 적용값**과 비교한다(상대도 직접 입력했을 수 있다).
+    values = dict(effective or {})
+    values[key] = value
+    for rel in catalog.get("relations") or []:
+        if not isinstance(rel, (list, tuple)) or len(rel) != 3:
+            continue
+        left, op, right = str(rel[0]), str(rel[1]), str(rel[2])
+        if key not in (left, right):
+            continue
+        a, b = values.get(left), values.get(right)
+        if not _is_num(a) or not _is_num(b):
+            continue
+        if (op == "<=" and not a <= b) or (op == "<" and not a < b):
+            return f"{left} 는 {right} 보다 {'작거나 같아야' if op == '<=' else '작아야'} 합니다 " \
+                   f"(현재 {left}={a}, {right}={b})."
+    return ""
+
+
+def _is_num(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def resolve(catalog, settings) -> dict | None:
     """카탈로그 + 설정 → 업로드에 실을 spec. 전부 기본이면 None.
 

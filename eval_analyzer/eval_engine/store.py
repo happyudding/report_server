@@ -830,7 +830,17 @@ def search_precedents(value_type, item_canonical, family_product=None,
                     f.spread_norm, f.outlier_ratio, f.bimodality_score,
                     f.limit_hit_ratio, f.edge_fail_ratio, f.center_fail_ratio,
                     f.ring_fail_ratio, f.fail_spread_norm, f.tail_mass_3s,
-                    f.value_gap_ratio
+                    f.value_gap_ratio,
+                    -- 이 선례가 **어느 report_server 세션에서 왔나** (2026-09-02). 화면
+                    -- 「📋 사례 N건 상세」에서 그 세션으로 바로 갈 수 있게 하기 위한 것으로,
+                    -- 판정·정렬·dedup 에는 전혀 쓰이지 않는 표시용 컬럼이다.
+                    -- 스키마 변경 없음(기존 run_case⨝ingest_run 을 읽기만 한다).
+                    -- 한 case 가 여러 run 에 걸치므로 **가장 최근 것 1건**만 붙인다 —
+                    -- 안 그러면 행이 복제돼 아래 dedup 대표행 선정이 흔들린다.
+                    (SELECT ir2.session_id FROM run_case rc2
+                       JOIN ingest_run ir2 ON ir2.run_id = rc2.run_id
+                      WHERE rc2.case_id = fc.case_id AND ir2.session_id IS NOT NULL
+                      ORDER BY rc2.run_id DESC LIMIT 1) AS session_id
              FROM fail_case fc
              JOIN item_master im ON im.item_id = fc.item_id
              JOIN product_master pm ON pm.product_name = fc.product_name

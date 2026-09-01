@@ -62,24 +62,39 @@ def test_client_options_wiring():
 # ── (c) 클라 위젯 배선 ───────────────────────────────────────────────────────
 
 def test_client_widget_wiring():
-    assert "self.chk_ai_no_suggest = QCheckBox(\"제안 제외\")" in _MAIN, \
-        "'제안 제외' 체크박스가 없습니다"
-    assert "ai_row.addWidget(self.chk_ai_no_suggest)" in _MAIN, \
+    """체크박스는 **AI Comment 민감도 설정창** 안에 있다 (2026-09-02 사용자 요청으로 이동).
+
+    메인 창(honey_main)은 위젯을 갖지 않고 설정값 `ai_no_suggest` 만 읽는다 — 그래야
+    창을 닫아도 값이 하나뿐이고, 두 곳에 체크박스가 생겨 서로 어긋나지 않는다.
+    저장 키는 옮기기 전과 같아야 한다(바꾸면 이미 켜 둔 PC 의 설정이 조용히 풀린다).
+    """
+    dlg = (_ROOT / "client" / "honey_ui" / "dialogs.py").read_text(encoding="utf-8")
+    assert "self.chk_no_suggest = QCheckBox(" in dlg, \
+        "'제안 제외' 체크박스가 민감도 설정창에 없습니다"
+    assert "root.addWidget(self.chk_no_suggest)" in dlg, \
         "체크박스가 레이아웃에 안 붙어 화면에 안 보입니다"
-    # AI Comment 를 켠 동안만 보인다
-    assert "self.chk_ai_no_suggest.setVisible(on)" in _MAIN, \
-        "AI Comment 토글이 제안 제외 체크박스를 표시/숨김하지 않습니다"
-    assert "self.chk_ai_no_suggest.setVisible(False)" in _MAIN, "초기 상태가 숨김이 아닙니다"
-    # 설정 영속 + 토글 핸들러 연결
-    assert "self.chk_ai_no_suggest.toggled.connect(self._on_ai_no_suggest_toggled)" in _MAIN
-    assert 'app_settings.set_setting("ai_no_suggest"' in _MAIN, "설정이 저장되지 않습니다"
-    assert 'app_settings.get_setting("ai_no_suggest")' in _MAIN, "저장된 설정을 안 읽습니다"
+    assert 'self.chk_no_suggest.setChecked(bool(app_settings.get_setting("ai_no_suggest")))' in dlg, \
+        "창을 열 때 저장된 설정을 안 읽습니다"
+    # 저장은 OK 시점에만 — 취소하면 되돌아가야 한다.
+    assert re.search(r'def _on_ok\(self\):[\s\S]*?'
+                     r'app_settings\.set_setting\("ai_no_suggest"', dlg), \
+        "OK 시점에 설정이 저장되지 않습니다"
+    # 메인 창은 설정값만 읽는다(위젯 없음).
+    assert "chk_ai_no_suggest" not in _MAIN, \
+        "메인 창에 옛 체크박스가 남아 있습니다 — 설정이 두 곳으로 갈립니다"
+    assert 'def _ai_no_suggest(self)' in _MAIN and \
+        'app_settings.get_setting("ai_no_suggest")' in _MAIN, \
+        "메인 창이 저장된 설정을 안 읽습니다"
     # 제안 제외면 LLM 위젯(신호등·AI Model)을 숨기고 연결 확인도 하지 않는다
     assert "_sync_ai_suggest_widgets" in _MAIN
-    assert re.search(r"if on and not self\.chk_ai_no_suggest\.isChecked\(\):\s*\n\s*"
+    assert re.search(r"if on and not self\._ai_no_suggest\(\):\s*\n\s*"
                      r"self\._check_ai_health\(\)", _MAIN), \
         "제안 제외인데 Claude 연결 확인을 돕니다(LLM 을 안 쓰는 세션입니다)"
-    print("  (c) 클라 위젯(생성·레이아웃·표시토글·영속) OK")
+    # 민감도 창을 닫은 뒤 표시 상태가 따라와야 한다(그 창 안에서 껐다 켤 수 있으므로).
+    assert re.search(r"EvalSensitivityDialog\(self\)\.exec\(\):[\s\S]{0,400}?"
+                     r"self\._sync_ai_suggest_widgets\(\)", _MAIN), \
+        "민감도 창을 닫아도 신호등·AI Model 표시가 갱신되지 않습니다"
+    print("  (c) 클라 위젯(민감도 창 이동·영속·표시토글) OK")
 
 
 # ── (d) 서버 소비 ────────────────────────────────────────────────────────────

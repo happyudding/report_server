@@ -33,6 +33,18 @@ function isCmpFoldCol(c) { return CMP_FOLD_COL_RE.test(String(c || "").trim()); 
 // 접기에서 살아남는 비교지표 2종 — 표시만 소수 1자리로 줄인다(원값은 title 툴팁).
 const CMP_PCT_COL_RE = /^(stdev_delta_pct|cpk_ratio_pct)$/i;
 
+// ── Signature / AI Comment 열 개별 접기 (2026-09-02 사용자 요청) ─────────────
+// 두 열은 Issue Table 에서 가장 넓은 축에 속해(AI Comment 330px 고정 + Signature) 다른
+// 숫자 열을 화면 밖으로 밀어낸다. 위 Compare '통계 접기' 와 **같은 장치**를 쓴다:
+// 렌더 시 col/th/td 에 클래스를 붙여 두고 패널 클래스가 CSS 로 통째로 감춘다.
+// 다른 점은 접기 대상이 열 **하나씩**이고, 토글이 툴바가 아니라 그 열 헤더에 붙는다는 것.
+// 열 이름 자체는 저장 키가 아니다(행 키만 저장 키다 — CLAUDE.md §5 규칙 12).
+const FOLDABLE_COLS = [
+  { id: "sig", cls: "fold-col-sig", test: c => String(c || "").trim().toLowerCase() === "signature" },
+  { id: "aic", cls: "fold-col-aic", test: c => isAiCommentCol(c) },
+];
+function foldableColOf(c) { return FOLDABLE_COLS.find(f => f.test(c)) || null; }
+
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
 // narrowSrc: source 컬럼이 SRC_NARROW_MIN 이상일 때 — {src}_yield/_count 폭 힌트를 숫자(xx.xx)
@@ -260,10 +272,8 @@ function linkifyComment(txt) {
 const AIC_SECTIONS = ["현상", "과거사례", "사례", "점검제안", "제안"];
 const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "사례": "aic-past",
   "점검제안": "aic-act", "제안": "aic-act" };
-// 화면에 찍는 라벨. 옛 "과거사례"/"점검제안" 도 신 토큰과 같은 라벨로 찍어 옛/새 세션이
-// 같은 화면을 낸다.
-const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "사례": "사례",
-  "점검제안": "제안", "제안": "제안" };
+// 라벨 표(AIC_SEC_LABEL)는 2026-09-02 태그 라벨 제거로 사라졌다 — 섹션 구분은 색
+// (AIC_SEC_CLASS)만 한다. 파싱 토큰(AIC_SECTIONS)은 서버 문자열을 가르는 데 계속 쓴다.
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 // 사례 섹션 토큰인가 — 신/구 토큰 둘 다. 화면에서 숨길지 판단하는 데 쓴다.
 function aicIsCaseTag(tag) { return tag === "사례" || tag === "과거사례"; }
@@ -346,8 +356,11 @@ function renderAiComment(txt, precCount, rowKey) {
     // 「📋 사례 N건 상세」에서 본다. 서버 문자열은 그대로다(Excel·챗봇·eval export 가
     // 같은 평문을 소비 — 위 주석과 같은 이유).
     if (aicIsCaseTag(p.tag) && hideCase) return;
-    out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
-      `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
+    // 태그 라벨("[사례]"/"[제안]")은 **글자만** 뺀다(2026-09-02 사용자 요청) — 셀 폭이
+    // 좁아 라벨이 본문 첫 줄을 밀어내는데, 어느 섹션인지는 색(aic-past/aic-act)으로 이미
+    // 구분된다. 섹션 div·클래스는 그대로라 색·줄바꿈·4줄 clamp(markAicClamped)가 유지되고,
+    // 서버 문자열은 손대지 않으므로 캐시 무효화(콜드 폭풍)도 없다.
+    out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">${linkifyComment(t)}</div>`;
   });
   out += precLink;
   const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));
@@ -928,7 +941,20 @@ function issueSectionHeadRowsHtml(cols, sec) {
     const parts = [];
     if (isCommentCol(c)) parts.push("st-comment");
     if (isCmpFoldCol(c)) parts.push("cmp-stat-col");
+    const f = foldableColOf(c);
+    if (f) parts.push(f.cls);
     return parts.length ? ` class="${parts.join(" ")}"` : "";
+  };
+  // Signature / AI Comment 헤더의 접기·펼치기 화살표(2026-09-02 사용자 요청).
+  // 접힌 상태에서도 눌러서 되돌릴 수 있어야 하므로 **버튼만은 감추지 않는다**
+  // (CSS: 접힘 시 그 열은 폭 0 이지만 .col-fold-btn 은 남는다 — 실제 배치는
+  //  yield_issue.js 가 표 밖 툴바 자리에 미러 버튼을 두는 방식이 아니라, 접힌 열의
+  //  좁은 헤더에 화살표만 남기는 방식이다).
+  const foldBtn = c => {
+    const f = foldableColOf(c);
+    if (!f) return "";
+    return `<button type="button" class="col-fold-btn" data-issue-act="col-fold"` +
+      ` data-fold="${f.id}" title="이 열 접기/펼치기">◀</button>`;
   };
   // AI Comment 헤더 밑 참고 안내(2026-08-20 사용자 요청). 열 폭은 .st-comment(330px 고정)가
   // 잡고 있어 안내문은 그 안에서 줄바꿈만 한다 — 열이 넓어지지 않는다(.th-note CSS).
@@ -948,12 +974,13 @@ function issueSectionHeadRowsHtml(cols, sec) {
           return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
             `${esc(s.short)}${resizeHandle(k)}</th>`;
         }
-        return `<th${commentCls(c)}>${esc(displayLabel(c))}${aiNote(c)}${mergeNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
+        return `<th${commentCls(c)}>${foldBtn(c)}${esc(displayLabel(c))}${aiNote(c)}${mergeNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
       }).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
-    : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}` +
+    : `<th rowspan="2"${commentCls(cols[r.start])}>${foldBtn(cols[r.start])}` +
+      `${esc(displayLabel(cols[r.start]))}` +
       `${aiNote(cols[r.start])}${mergeNote(cols[r.start])}${resizeHandle(r.start)}${toggleAllBtn(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
@@ -1093,10 +1120,18 @@ function renderSheetTable(rows, opts) {
   const narrowSrc = sourceColCount(cols) >= SRC_NARROW_MIN;
   // cmp-stat-col = Compare 통계 9종(툴바 '통계 접기' 대상). col/th/td 세 곳에 같은 클래스를
   // 달아 CSS 한 줄로 컬럼을 통째 감춘다 — colgroup 인덱스는 그대로라 컬럼 리사이즈에 무영향.
-  const foldCls = c => (opts.kind === "issue" && isCmpFoldCol(c)) ? " cmp-stat-col" : "";
-  const colgroup = "<colgroup>" + cols.map(c =>
-    `<col${foldCls(c) ? ` class="cmp-stat-col"` : ""} style="width:${colWidth(c, opts.kind, narrowSrc)}">`
-  ).join("") + "</colgroup>";
+  // Signature/AI Comment 개별 접기(2026-09-02)도 **같은 자리**에서 클래스를 단다 —
+  // 두 접기가 한 컬럼에 겹치는 일은 없다(Compare 통계 ↔ Signature/AI Comment 는 별개 열).
+  const foldCls = c => {
+    if (opts.kind !== "issue") return "";
+    if (isCmpFoldCol(c)) return " cmp-stat-col";
+    const f = foldableColOf(c);
+    return f ? " " + f.cls : "";
+  };
+  const colgroup = "<colgroup>" + cols.map(c => {
+    const fc = foldCls(c).trim();
+    return `<col${fc ? ` class="${fc}"` : ""} style="width:${colWidth(c, opts.kind, narrowSrc)}">`;
+  }).join("") + "</colgroup>";
 
   // Issue 는 persistent thead 대신 섹션(Yield/CPK/ETC)별 2행 헤더 블록을 tbody 안에 sticky 로
   // 심어 스크롤 시 헤더가 통째로 교체되게 한다 → 여기선 상단 thead 를 만들지 않는다.
@@ -1280,11 +1315,11 @@ function renderSheetTable(rows, opts) {
       if (String(c).trim().toLowerCase() === "signature") {
         const gkey = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
         if (!gkey || (txt === "" && !(r._sig || []).length)) {
-          return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
+          return `<td class="st-empty${subhead ? " sheet-subhead" : ""}${foldCls(c)}" data-r="${ri}" data-c="${ci}"></td>`;
         }
         // data-sig 는 조회모드 근거 팝업이 읽는 원본 id — 칩 텍스트는 UNKNOWN 을
         // "Unknown" 으로 보여주므로 화면 문자열을 되파싱하면 안 된다.
-        return `<td class="issue-sig-cell${r._sigrev ? " is-reviewed" : ""}" data-r="${ri}" data-c="${ci}" data-key="${esc(gkey)}" data-sig="${esc((r._sig || []).join(","))}">` +
+        return `<td class="issue-sig-cell${r._sigrev ? " is-reviewed" : ""}${foldCls(c)}" data-r="${ri}" data-c="${ci}" data-key="${esc(gkey)}" data-sig="${esc((r._sig || []).join(","))}">` +
           renderSignatureCell(r._sig || [], !!r._sigrev, !!opts.edit) + `</td>`;
       }
       // opts.editableCols 가 있으면 그 컬럼만 편집 가능(더블클릭으로 활성화), 나머지는 읽기전용으로
@@ -1307,7 +1342,10 @@ function renderSheetTable(rows, opts) {
       }
       const clsParts = [];
       if (isCommentCol(c)) clsParts.push("st-comment");   // 열너비 고정 (CSS .st-comment)
-      if (foldCls(c)) clsParts.push("cmp-stat-col");      // Compare 통계 접기 대상
+      // 접기 대상 클래스 — Compare 통계(cmp-stat-col) 또는 Signature/AI Comment
+      // (fold-col-*). foldCls 가 정하는 값을 그대로 쓴다(종전엔 무엇이 반환되든
+      // cmp-stat-col 을 박아, 새로 추가한 열 접기가 이 경로에서 안 먹었다).
+      { const fc = foldCls(c).trim(); if (fc) clsParts.push(fc); }
       let cellStyle = "";
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
