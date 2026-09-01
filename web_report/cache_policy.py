@@ -563,7 +563,16 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   (전역 bump 금지 — 이 상수는 ai_comment_key 에만 들어간다).
 #   ⚠ 잘라내기 상한 `ai_prompt.MAX_SUGGESTION_CHARS` 도 1800 → 2160 으로 함께 올렸다.
 #     안 올리면 12줄을 지시해 놓고 10줄어치에서 문장이 잘린 채 저장된다.
-AI_COMMENT_SCHEMA_VERSION = 12
+# v13 (2026-09-02): 지시문 3개 신설(사용자 요청) — `keep_english_terms`(retest·contact·
+#   open·leak 류 현장 영어를 한글로 옮기지 마라, 반대 변환도 금지) · `no_meta_judgment`
+#   ("대표 사례로 선정하기 어렵다" 류 메타 판단 금지 — 확실하지 않으면 "그런 사례가
+#   있었다" 로 끝낸다) · `omit_when_no_info`(사례에 근거·조치가 없으면 그 사실을 설명하지
+#   말고 생략/축약 — "차라리 빈칸이 낫다").
+#   yaml 지시문은 프롬프트에 들어가 sha 를 갈지만 **파일을 직접 고쳤으므로** `.rules_rev`
+#   가 안 움직인다 — v12 와 같은 이유로 여기서 올린다(전역 bump 금지).
+#   ⚠ 함께 넣은 deny_patterns 2종(`no_info_excuse`/`meta_judgment`)은 프롬프트에 들어가지
+#     않아 sha 불변이다(다음 push 부터 적용) — 그쪽만 고칠 때는 bump 가 필요 없다.
+AI_COMMENT_SCHEMA_VERSION = 13
 
 
 def _ai_meta_digest(session) -> str:

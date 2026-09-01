@@ -474,6 +474,52 @@ def test_case_section_hidden_only_with_suggestion():
     print("[j] [사례] 숨김 조건(제안 있음 AND 사례 있음) OK")
 
 
+def test_placeholder_and_partial_tokens():
+    """(k) 태그 라벨이 화면에 새어 나오던 두 경로 (2026-09-02 사용자 재신고).
+
+    라벨을 뺐는데도 "[제안]" 이 그대로 보인다는 신고의 원인은 렌더가 아니라 **게이트**였다:
+      ① `[현상]` 이 없는 문자열은 파싱을 통째로 건너뛰어 평문으로 나갔다 → 태그가 그대로
+         보인다. 이제 섹션 토큰이 **하나라도** 있으면 분해한다(AIC_SEC_RE).
+      ② 사례 0건이면 서버가 `[사례] -` 를 만드는데(recommend._NO_PRECEDENT_TEXT), 라벨을
+         뺀 뒤로는 그 "-" 만 남아 다음 섹션에 붙어 보였다("-- 조치"). 이제 내용이
+         자리표시뿐인 섹션은 통째로 생략한다.
+    섹션 토큰이 **하나도 없는** 옛 코멘트는 종전대로 평문 유지(폴백)여야 한다.
+    """
+    zero = "[MAJOR] [현상] - LOW_CPK: 현상\n[사례] - \n [제안] - LOW_CPK: 조치"
+    nophen = "[사례] - \n [제안] - 조치"
+    legacy = "[MONITOR] 섹션 토큰이 없는 옛 코멘트"
+    harness = (
+        "<script>(function(){var out={};"
+        "var Z=" + js_literal(zero) + ", N=" + js_literal(nophen)
+        + ", L=" + js_literal(legacy) + ";"
+        "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
+        # ① 사례 자리표시("-")는 섹션째 사라지고 제안만 남는다
+        "var a=box(renderAiComment(Z,0,'CPK|ItemA'));"
+        "out.zeroText=a.textContent; out.zeroTags=a.querySelectorAll('.aic-tag').length;"
+        "out.zeroSecs=[].map.call(a.querySelectorAll('.aic-sec'),"
+        "  function(d){return d.className.replace('aic-sec ','');}).join(',');"
+        # ② [현상] 이 없어도 태그가 남지 않는다
+        "var b=box(renderAiComment(N,0,'CPK|ItemA'));"
+        "out.nophenText=b.textContent;"
+        # ③ 섹션 토큰이 아예 없으면 평문 폴백(종전 동작)
+        "out.legacyText=box(renderAiComment(L,0,'CPK|ItemA')).textContent;"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "placeholder"))
+    assert "[사례]" not in r["zeroText"] and "[제안]" not in r["zeroText"], \
+        f"태그 라벨이 화면에 남았습니다: {r['zeroText']!r}"
+    assert r["zeroTags"] == 0, "aic-tag 가 되살아났습니다"
+    assert r["zeroSecs"] == "aic-act", \
+        f"자리표시뿐인 [사례] 섹션이 안 사라졌습니다: {r['zeroSecs']}"
+    assert "--" not in r["zeroText"], f"자리표시 '-' 가 본문에 붙었습니다: {r['zeroText']!r}"
+    assert "[사례]" not in r["nophenText"] and "[제안]" not in r["nophenText"], \
+        f"[현상] 없는 문자열에서 태그가 샜습니다: {r['nophenText']!r}"
+    assert "섹션 토큰이 없는 옛 코멘트" in r["legacyText"], \
+        f"섹션 토큰 없는 옛 코멘트의 평문 폴백이 깨졌습니다: {r['legacyText']!r}"
+    print("[k] 자리표시 생략 + 부분 토큰 게이트(태그 누출 차단) OK")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -494,6 +540,7 @@ def main():
     test_aic_clamp_affordance_and_drag()
     test_prec_link_render()
     test_case_section_hidden_only_with_suggestion()
+    test_placeholder_and_partial_tokens()
     print("\n전부 통과")
 
 

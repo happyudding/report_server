@@ -277,6 +277,15 @@ const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "사례
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 // 사례 섹션 토큰인가 — 신/구 토큰 둘 다. 화면에서 숨길지 판단하는 데 쓴다.
 function aicIsCaseTag(tag) { return tag === "사례" || tag === "과거사례"; }
+// 섹션 토큰이 하나라도 있나 — 분해를 태울지 판단한다. **`g` 플래그를 쓰지 않는다**:
+// 정규식 리터럴은 모듈 전역에 하나뿐이라 `g` 면 `test()` 가 `lastIndex` 를 남겨 다음
+// 호출이 엉뚱한 위치부터 검사한다(셀마다 결과가 달라지는 종류의 버그).
+const AIC_SEC_RE = /\[(현상|과거사례|사례|점검제안|제안)\]/;
+// 내용이 없는 섹션인가 — 엔진이 사례 0건일 때 넣는 자리표시("-", recommend.
+// _NO_PRECEDENT_TEXT)와 빈 문자열. 이런 섹션은 **화면에서 통째로 생략**한다
+// (2026-09-02 사용자 요청: "정보가 없으면 억지로 쓰지 말고 아예 빈칸이 낫다").
+// 서버 문자열은 그대로 두므로 Excel·챗봇·eval export 는 종전과 같다.
+function aicIsPlaceholder(text) { return !String(text || "").replace(/[-–—\s]/g, ""); }
 
 // 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
 // 종류가 늘어도 따라가야 하고, 못 알아본 토큰은 배지가 아니라 **본문으로 남아 글자를 잃지
@@ -321,8 +330,12 @@ function renderAiComment(txt, precCount, rowKey) {
   // — 종전 `!isEmpty` 게이트 때문에 안내가 영영 안 보였다(2026-08-13 신고).
   const precLink = aicPrecLinkHtml(precCount, rowKey);
   if (!raw.trim()) return aiWaitHtml();
-  // 섹션 토큰이 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이 보인다.
-  if (raw.indexOf("[현상]") < 0) return linkifyComment(raw) + precLink;
+  // 섹션 토큰이 **하나도** 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이
+  // 보인다. ⚠ 종전엔 `[현상]` 하나만 봤는데(2026-09-02 수정), 그러면 [현상] 이 빠진
+  // 문자열이 파싱을 통째로 건너뛰어 **[사례]/[제안] 태그가 평문 그대로 화면에 남았다**
+  // (사용자 신고 "태그를 없앴는데 안 없어졌다" 의 실제 경로). 어느 토큰이든 있으면
+  // 아래 분해를 태워야 라벨 제거·섹션 색이 일관되게 적용된다.
+  if (!AIC_SEC_RE.test(raw)) return linkifyComment(raw) + precLink;
   const split = aicSplitBadges(raw);
   const body = split.body;
   // 긴 **옛** 토큰(과거사례/점검제안)을 신 토큰(사례/제안)보다 먼저 둔다 — 교대는 왼쪽
@@ -356,6 +369,9 @@ function renderAiComment(txt, precCount, rowKey) {
     // 「📋 사례 N건 상세」에서 본다. 서버 문자열은 그대로다(Excel·챗봇·eval export 가
     // 같은 평문을 소비 — 위 주석과 같은 이유).
     if (aicIsCaseTag(p.tag) && hideCase) return;
+    // 내용이 자리표시뿐인 섹션("[사례] -")은 통째로 생략한다(2026-09-02 사용자 요청).
+    // 라벨을 뺀 뒤로는 그 "-" 만 덩그러니 남아 다음 섹션 글자에 붙어 보였다("-- 조치").
+    if (aicIsPlaceholder(t)) return;
     // 태그 라벨("[사례]"/"[제안]")은 **글자만** 뺀다(2026-09-02 사용자 요청) — 셀 폭이
     // 좁아 라벨이 본문 첫 줄을 밀어내는데, 어느 섹션인지는 색(aic-past/aic-act)으로 이미
     // 구분된다. 섹션 div·클래스는 그대로라 색·줄바꿈·4줄 clamp(markAicClamped)가 유지되고,

@@ -481,6 +481,44 @@ def test_strip_denied_lines():
     print("  (k3) strip_denied_lines 양성/음성/줄단위/선례게이트 OK")
 
 
+def test_shipped_deny_patterns_no_info_and_meta():
+    """(k4) 배포 deny 패턴 2종 (2026-09-02 사용자 요청) — 변명·메타 판단 문장 제거.
+
+      · `no_info_excuse` — "제공된 과거 사례는 제품명과 LOT 정보만 존재할 뿐 구체적인 판단
+        근거 조치내용이 없어서 활용할 수 없다" 류. 사용자 결정: "차라리 빈칸이 낫다".
+      · `meta_judgment` — "대표 사례로 선정하기 어렵다" 류. 사례를 고르는 고민 자체는
+        읽는 사람에게 쓸모가 없다.
+
+    지시문(omit_when_no_info / no_meta_judgment)의 **안전망**이라 배포 yaml 원문으로 잰다.
+    ⚠ 음성 샘플이 이 테스트의 요점이다 — 두 패턴 다 "사례 + 부정어" 라 조금만 넓게 쓰면
+    사례를 **활용하는** 문장("사례와 달리 …", "사례에서 확인되지 않은 항목 …", "유사 사례
+    2건 있었음")까지 지운다. 그건 필터가 없는 것보다 나쁘다.
+    """
+    pat = P.compile_deny_patterns(_load_shipped_rules())
+    ids = [p[0] for p in pat]
+    assert "no_info_excuse" in ids and "meta_judgment" in ids, ids
+    for bad in ("- 제공된 과거 사례는 제품명과 LOT 정보만 존재할 뿐 구체적인 판단 근거 조치내용이 없어서 활용할 수 없다.",
+                "- 제공된 사례는 제품명과 lot 정보만 있어 참고하기 어렵습니다.",
+                "- 구체적인 판단 근거가 없습니다.",
+                "- 구체적인 조치 내용이 확인되지 않습니다.",
+                "- 대표 사례로 선정하기 어렵습니다.",
+                "- 대표적인 사례를 꼽기 어렵다.",
+                "- 어느 사례가 더 적합한지 판단하기 어렵다."):
+        assert P.strip_denied_lines(bad, pat, True) == "", bad
+    for ok in ("- Retest 로 재현 여부 확인",
+               "- P1/L1 사례에서 contact open 으로 판정되어 socket 교체 후 회복",
+               "- wait 안정화 후 재측정, 개발팀 협의 필요",
+               "- 사례와 달리 이번은 edge 편중",
+               "- 사례에서 확인되지 않은 항목은 별도 확인",
+               "- 유사 사례 2건 있었음",
+               "- 진성 여부 판단을 위해 bin map 확인"):
+        assert P.strip_denied_lines(ok, pat, True) == ok, ok
+    # 선례 게이트를 걸지 않는다 — 선례가 실렸는데 내용이 부실한 경우가 바로 이 문장이
+    # 나오는 상황이라, 선례 유무로 게이트하면 정작 잡아야 할 때 안 걸린다.
+    assert P.strip_denied_lines("- 대표 사례로 선정하기 어렵습니다.", pat, False) == ""
+    print("  (k4) 배포 deny 패턴(변명·메타 판단) 양성/음성 OK")
+
+
 def test_signature_coverage_materials():
     """(l) 발화 signature 가 전부·건수와 함께 실린다 (2026-09-01).
 
@@ -605,6 +643,15 @@ def test_output_style_rules():
     assert "사례가 없는 signature 줄부터 줄이고" in flat, \
         "예산 부족 시 줄이는 순서가 프롬프트에 없다"
     assert "전체 12줄" in flat, "yaml 예산이 코드(_INSTRUCTION)와 갈렸다"
+
+    # ⑥ 지시문 3건(2026-09-02 사용자 요청) — 현장 영어 보존 / 메타 판단 금지 / 정보 없으면
+    #   생략. 셋 다 "무엇을 쓰지 마라" 라 문장이 빠지면 조용히 옛 문체로 돌아간다.
+    assert "retest" in flat and "contact" in flat, \
+        "keep_english_terms 의 예시 용어가 빠졌다 — 모델이 무엇을 영어로 둘지 모른다"
+    assert "한글로 옮기지" in flat, "현장 영어 보존 지시가 프롬프트에 없다"
+    assert "대표 사례로 선정하기 어렵다" in flat and "그런 사례가 있었다" in flat, \
+        "no_meta_judgment(메타 판단 금지)가 프롬프트에 없다"
+    assert "생략하거나 크게" in flat, "omit_when_no_info(정보 없으면 생략)가 프롬프트에 없다"
     print("  (t) 출력 문체(12줄·지표명 금지·사례 위주) + 재료 비대칭 OK")
 
 
@@ -785,6 +832,7 @@ def main():
     test_operator_rules()
     test_precedent_count()
     test_strip_denied_lines()
+    test_shipped_deny_patterns_no_info_and_meta()
     test_signature_coverage_materials()
     test_coverage_instruction_shipped()
     test_output_style_rules()
