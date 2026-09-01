@@ -415,13 +415,55 @@ def test_prec_link_render():
     assert r["hasBtn"], f"사례 링크가 안 그려졌습니다: {r}"
     assert "2건" in r["btnText"], r["btnText"]
     assert r["btnKey"] == "CPK|ItemA", r["btnKey"]
-    assert r["newSecs"] == "aic-past,aic-act", r["newSecs"]
-    # 신·구 토큰이 **같은 라벨**을 내야 옛/새 세션이 한 화면으로 보인다.
-    assert r["newLabels"] == r["oldLabels"] == "[사례],[제안]", (r["newLabels"], r["oldLabels"])
+    # 사례+제안이 다 있으면 [사례] 는 숨고 [제안]만 남는다(상세는 링크로) — 아래 (j) 참조.
+    assert r["newSecs"] == "aic-act", r["newSecs"]
+    # 신·구 토큰이 **같은 화면**을 내야 옛/새 세션이 갈리지 않는다(둘 다 사례 숨김).
+    assert r["newLabels"] == r["oldLabels"] == "[제안]", (r["newLabels"], r["oldLabels"])
     assert r["noBtnZero"] and r["noBtnUndef"], \
         f"건수가 없는데 링크가 붙었습니다(눌러도 빈 목록): {r}"
     assert r["oldHasBtn"], "옛 토큰 셀에는 링크가 안 붙습니다"
     print("[i] 사례 링크 렌더(건수 게이트·신구 토큰 동일 화면) OK")
+
+
+def test_case_section_hidden_only_with_suggestion():
+    """(j) [사례] 는 **사례 있음 AND 제안 있음** 일 때만 화면에서 숨긴다 (2026-09-02).
+
+    사례 내용이 [제안]에 녹아 들어가므로 셀에 두 번 적는 셈이라 숨기고, 원문은
+    「📋 사례 N건 상세」에서 본다. 다만 **"제안 제외" 세션은 [제안] 섹션 자체가 없으므로**
+    사례를 숨기면 셀이 텅 빈다 — 그때는 그대로 보여야 한다.
+    """
+    with_sugg = ("[MAJOR] [현상] - LOW_CPK: 현상\n[사례] ①(P1/L1) 사례 원문 \n"
+                 " [제안] - 통합 제안")
+    no_sugg = "[MAJOR] [현상] - LOW_CPK: 현상\n[사례] ①(P1/L1) 사례 원문"
+    harness = (
+        "<script>(function(){var out={};"
+        "var WS=" + js_literal(with_sugg) + ", NS=" + js_literal(no_sugg) + ";"
+        "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
+        "function secs(d){return [].map.call(d.querySelectorAll('.aic-sec'),"
+        "  function(x){return x.className.replace('aic-sec ','');}).join(',');}"
+        # ① 사례 있음 + 제안 있음 → 사례 숨김, 링크는 남는다
+        "var a=box(renderAiComment(WS,2,'CPK|ItemA'));"
+        "out.withSugg=secs(a); out.withSuggLink=!!a.querySelector('.aic-prec-btn');"
+        "out.withSuggText=a.textContent;"
+        # ② 제안 제외(제안 섹션 없음) → 사례를 **그대로 보여준다**
+        "var b=box(renderAiComment(NS,2,'CPK|ItemA'));"
+        "out.noSugg=secs(b); out.noSuggText=b.textContent;"
+        # ③ 사례 0건(링크 없음) → 사례 섹션 그대로 ("[사례] -" 가 보여야 한다)
+        "var c=box(renderAiComment(WS,0,'CPK|ItemA'));"
+        "out.noPrec=secs(c);"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "case_hide"))
+    assert r["withSugg"] == "aic-act", f"제안이 있는데 사례가 안 숨겨졌습니다: {r['withSugg']}"
+    assert r["withSuggLink"], "사례를 숨겼으면 상세 링크는 반드시 있어야 합니다"
+    assert "사례 원문" not in r["withSuggText"], r["withSuggText"]
+    assert r["noSugg"] == "aic-past", \
+        f"제안 제외 세션인데 사례까지 숨겨 셀이 비었습니다: {r['noSugg']}"
+    assert "사례 원문" in r["noSuggText"], r["noSuggText"]
+    assert r["noPrec"] == "aic-past,aic-act", \
+        f"사례 0건인데 [사례] 섹션이 사라졌습니다: {r['noPrec']}"
+    print("[j] [사례] 숨김 조건(제안 있음 AND 사례 있음) OK")
 
 
 def main():
@@ -443,6 +485,7 @@ def main():
     test_sig_reason_render()
     test_aic_clamp_affordance_and_drag()
     test_prec_link_render()
+    test_case_section_hidden_only_with_suggestion()
     print("\n전부 통과")
 
 

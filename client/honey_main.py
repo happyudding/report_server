@@ -24,7 +24,8 @@ from pathlib import Path
 import requests
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl, pyqtSignal
+from PyQt6.QtCore import (Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint,
+                          QRect, QSize, QUrl, pyqtSignal)
 from PyQt6.QtGui import QColor, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDialog, QFileDialog, QHeaderView,
@@ -1015,14 +1016,28 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_comment.installEventFilter(self)
         # 민감도 설정 버튼 — AI Comment 를 **켠 상태에서만** 보인다. 꺼져 있으면 그 설정이
         # 이번 업로드에 실리지 않으므로 버튼이 있으면 설정해도 안 먹는 것처럼 보인다.
-        # U+2699 는 폰트에 따라 아주 작게 그려진다 — 변이 선택자(U+FE0F)로 이모지
-        # 톱니바퀴를 요청하고 크기를 키워 톱니 모양이 보이게 한다.
-        self.btn_ai_sens = QPushButton("⚙️")
+        # 아이콘은 좌측 툴바 **Options 톱니바퀴와 같은 것**을 쓴다(2026-09-02 사용자 요청)
+        # — 같은 "설정" 인데 한쪽은 텍스트 이모지, 한쪽은 QIcon 이면 폰트에 따라 다른
+        # 모양·크기로 그려진다. `_emoji_icon` 이 이모지를 픽스맵에 그려 주므로 두 자리가
+        # 항상 같은 그림이 된다.
+        self.btn_ai_sens = QPushButton("")
+        self.btn_ai_sens.setIcon(self._emoji_icon("⚙️", 20))
+        self.btn_ai_sens.setIconSize(QSize(20, 20))
         self.btn_ai_sens.setToolTip("AI Comment 민감도 설정 (판정 기준 조절)")
-        self.btn_ai_sens.setStyleSheet("font-size:15px;")
         self.btn_ai_sens.setFixedWidth(32)
         self.btn_ai_sens.setVisible(False)
         self.btn_ai_sens.clicked.connect(self.on_ai_sensitivity)
+        # "제안 제외" — 켜면 [제안] 을 만들지 않고 **사례만** AI Comment 에 남긴다
+        # (2026-09-02 사용자 요청). LLM 을 아예 거치지 않으므로 토큰·대기 시간이 0 이다.
+        # AI Comment 를 켠 동안만 보인다(꺼져 있으면 업로드에 실리지 않아 의미가 없다).
+        self.chk_ai_no_suggest = QCheckBox("제안 제외")
+        self.chk_ai_no_suggest.setToolTip(
+            "체크하면 [제안] 문장을 만들지 않고 과거 사례만 AI Comment 에 표시합니다.\n"
+            "LLM 을 호출하지 않아 업로드 후 대기 시간이 없습니다.")
+        self.chk_ai_no_suggest.setVisible(False)
+        self.chk_ai_no_suggest.setChecked(
+            bool(app_settings.get_setting("ai_no_suggest")))
+        self.chk_ai_no_suggest.toggled.connect(self._on_ai_no_suggest_toggled)
         # Claude 연결 신호등 — AI Comment 를 켜는 순간 이 PC 에서 Claude 호출이 되는지
         # 실호출 1회로 확인한다(회색=확인중, 초록=성공, 빨강=실패). 바이너리 존재만으로는
         # 인증·게이트웨이·정책을 알 수 없어 거짓 초록이 되므로 실제로 한 번 불러 본다.
@@ -1050,6 +1065,7 @@ class HoneyMainWindow(QMainWindow):
         ai_row.addWidget(self.chk_ai_comment)
         ai_row.addWidget(self.lbl_ai_comment)
         ai_row.addWidget(self.btn_ai_sens)
+        ai_row.addWidget(self.chk_ai_no_suggest)
         ai_row.addWidget(self.lbl_ai_health)
         ai_row.addWidget(self.lbl_ai_health_msg)
         ai_row.addStretch(1)
@@ -2394,17 +2410,37 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_health.setStyleSheet(f"color:{color}; {_AI_HEALTH_DOT_CSS}")
 
     def _on_ai_comment_toggled(self, on):
-        """AI Comment 체크 변화 — ⚙·신호등·AI Model 표시 + 켤 때 연결 확인 1회."""
+        """AI Comment 체크 변화 — ⚙·제안 제외·신호등·AI Model 표시 + 켤 때 연결 확인 1회."""
         on = bool(on)
         self.btn_ai_sens.setVisible(on)
-        self.lbl_ai_health.setVisible(on)
+        self.chk_ai_no_suggest.setVisible(on)
         if not on:
             self.lbl_ai_health_msg.setVisible(False)
         # AI Model 은 AI Comment 를 켠 업로드에만 실린다 — 꺼져 있을 땐 숨긴다
         # (종전엔 비활성 상태로 계속 보여, 못 쓰는 설정이 화면에 남아 있었다).
-        self.lbl_ai_model.setVisible(on)
-        self.cbo_ai_model.setVisible(on)
-        if on:
+        self._sync_ai_suggest_widgets()
+        if on and not self.chk_ai_no_suggest.isChecked():
+            self._check_ai_health()
+
+    def _sync_ai_suggest_widgets(self):
+        """LLM 을 쓰는 위젯(신호등·AI Model)의 표시 — "제안 제외" 면 숨긴다.
+
+        제안 제외 세션은 LLM 을 아예 호출하지 않으므로 모델 선택도 연결 신호등도
+        의미가 없다. 남겨 두면 "골랐는데 왜 안 도나" 로 읽힌다.
+        """
+        live = bool(self.chk_ai_comment.isChecked()
+                    and not self.chk_ai_no_suggest.isChecked())
+        self.lbl_ai_health.setVisible(live)
+        if not live:
+            self.lbl_ai_health_msg.setVisible(False)
+        self.lbl_ai_model.setVisible(live)
+        self.cbo_ai_model.setVisible(live)
+
+    def _on_ai_no_suggest_toggled(self, on):
+        """제안 제외 변화 — 설정 저장 + LLM 관련 위젯 표시 갱신(켜면 연결 확인 1회)."""
+        app_settings.set_setting("ai_no_suggest", bool(on))
+        self._sync_ai_suggest_widgets()
+        if not on and self.chk_ai_comment.isChecked():
             self._check_ai_health()
 
     def _check_ai_health(self):
@@ -3005,7 +3041,13 @@ class HoneyMainWindow(QMainWindow):
         # AI Model (docs/23) — claude 를 고른 업로드만 키를 싣는다. **default 는 키 자체를
         # 넣지 않는다** — 옵션 원문이 서버 report_key 의 원소라, 키가 없어야 기존 세션과
         # 캐시 키가 바이트 그대로 유지된다(위 eval_sensitivity 와 같은 규약).
-        if ai_on and str(self.cbo_ai_model.currentData()) == "claude":
+        # "제안 제외" 면 LLM 을 아예 안 쓰므로 **ai_model 을 싣지 않는다** — 실으면 클라
+        # 워커가 뜨고(ai_suggest.start_background 게이트) 서버는 프롬프트를 안 주므로
+        # 헛되이 폴링만 하다 실패 보고를 남긴다.
+        no_suggest = bool(ai_on and self.chk_ai_no_suggest.isChecked())
+        if no_suggest:
+            options["ai_no_suggest"] = True
+        elif ai_on and str(self.cbo_ai_model.currentData()) == "claude":
             options["ai_model"] = "claude"
         # AI Comment 민감도 — 게이지 단계를 **구체적인 임계값으로 굳혀서** 싣는다. 세션이
         # "그때 무슨 기준으로 판정됐나"를 자기 안에 갖게 하기 위해서다(단계표를 나중에

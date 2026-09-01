@@ -265,6 +265,8 @@ const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "사례
 const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "사례": "사례",
   "점검제안": "제안", "제안": "제안" };
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
+// 사례 섹션 토큰인가 — 신/구 토큰 둘 다. 화면에서 숨길지 판단하는 데 쓴다.
+function aicIsCaseTag(tag) { return tag === "사례" || tag === "과거사례"; }
 
 // 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
 // 종류가 늘어도 따라가야 하고, 못 알아본 토큰은 배지가 아니라 **본문으로 남아 글자를 잃지
@@ -326,6 +328,11 @@ function renderAiComment(txt, precCount, rowKey) {
     last = m.index + m[0].length;
   }
   if (cur) { cur.body = body.slice(last); parts.push(cur); }
+  // [사례] 를 화면에서 뺄지 — **제안이 실제로 있을 때만** 뺀다. 사례 내용이 제안에
+  // 녹아 있어 두 번 적는 셈이기 때문이다(2026-09-02 사용자 요청). "제안 제외" 세션은
+  // [제안] 섹션 자체가 없으므로 사례를 그대로 보여 줘야 셀이 비지 않는다.
+  const hasSugg = parts.some(p => p.tag === "제안" || p.tag === "점검제안");
+  const hideCase = !!precLink && hasSugg;
   let out = "";
   parts.forEach(p => {
     const t = String(p.body || "").trim();
@@ -335,6 +342,10 @@ function renderAiComment(txt, precCount, rowKey) {
     // (recommend.make_comment)을 고치지 않는 이유는 이 함수 위 주석과 같다: payload 에
     // 굳어 캐시에 남고 Excel·챗봇·eval export 가 같은 평문을 소비한다.
     if (p.tag === "현상") return;
+    // [사례] 는 위 hideCase 조건에서만 숨긴다(사례 있음 AND 제안 있음). 원문은 아래
+    // 「📋 사례 N건 상세」에서 본다. 서버 문자열은 그대로다(Excel·챗봇·eval export 가
+    // 같은 평문을 소비 — 위 주석과 같은 이유).
+    if (aicIsCaseTag(p.tag) && hideCase) return;
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
       `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
   });

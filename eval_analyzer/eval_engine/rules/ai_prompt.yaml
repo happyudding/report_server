@@ -8,6 +8,11 @@
 #
 # ⚠ 사례가 0건인 item 은 LLM 을 아예 부르지 않는다(recommend.has_precedent_comments) —
 #    "사례가 없을 때" 를 다루는 지시는 필요 없다.
+#
+# ⚠ no_metric_names 는 **출력 문장에만** 거는 금지다(2026-09-02 사용자 결정). 프롬프트
+#    재료 쪽의 수치([근거: …] · [현재 통계] · 선례의 당시 통계)는 그대로 둔다 — 그게
+#    사라지면 "그때 값 vs 지금 값" 대조가 원리적으로 불가능해져 사례가 무용지물이 된다.
+#    사용자가 모르는 것은 지표 **이름**이지 대조 자체가 아니다.
 instructions:
 - id: keep_precedents
   enabled: true
@@ -23,8 +28,9 @@ instructions:
     결과를 바꾸거나 과장하지 마라.
 - id: integrate_precedents
   enabled: true
-  text: '[제안] 블록은 기본 조치 목록을 그대로 옮겨 적지 말고, 사례의 판단 근거와 조치를 현재
-    수치와 대조해 지금 무엇을 어떤 순서로 확인할지로 바꿔 써라.'
+  text: '[제안] 은 사례가 중심이다 - 사례가 있는 signature 는 그 사례가 무엇을 확인해 어떻게
+    해결했는지를 지금 할 일로 바꿔 쓰고, 기본 조치 목록은 사례로 덮이지 않는 signature 에만
+    쓰되 문장을 그대로 옮겨 적지 마라.'
 - id: cover_all_signatures
   enabled: true
   text: 발화한 signature 는 위 [발화 signature 전체] 목록에 있는 것이 전부다 - primary 하나만
@@ -32,9 +38,18 @@ instructions:
     마라.
 - id: signature_budget_first
   enabled: true
-  text: '[제안] 의 5줄 예산은 발화 signature 를 먼저 덮는 데 쓰고 남는 줄로 사례 대조를 써라 -
-    signature 가 목록에 있는데 근거가 약하면 빼는 것이 아니라 무엇을 더 확인해야 판단할 수 있는지로
-    한 줄 써라.'
+  text: '[제안] 은 전체 10줄 한 signature 당 5줄이 상한이다 - 예산은 발화 signature 를 먼저
+    덮는 데 쓰고 남는 줄로 사례 대조를 써라. signature 가 목록에 있는데 근거가 약하면 빼는
+    것이 아니라 무엇을 더 확인해야 판단할 수 있는지로 한 줄 써라.'
+- id: no_metric_names
+  enabled: true
+  text: 내부 지표 이름과 그 수치는 문장에 쓰지 마라 - FAIL_MAD_MIN TAIL_MASS_3S_HIGH
+    spread_norm fail_body_jump_ratio 같은 이름과 값은 읽는 사람이 모른다. 그 지표가 뜻하는
+    현상을 우리말로 풀어 쓰되 CPK 와 수율 그리고 단위가 붙은 측정값은 그대로 써도 된다.
+- id: terse_lines
+  enabled: true
+  text: 한 줄은 핵심 단어만 남겨 짧게 써라 - 인사말 배경설명 같은 말 반복 "~로 판단됩니다"
+    류의 군더더기를 빼고 무엇을 확인할지가 바로 읽히게 하라.
 deny_patterns:
 - id: precedent_denial
   enabled: true

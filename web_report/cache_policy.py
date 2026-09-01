@@ -39,8 +39,8 @@ from __future__ import annotations
 import hashlib
 import json
 
-from .validation import (validate_mode, webreport_ai_comment, webreport_compare_para,
-                         webreport_eval_overrides)
+from .validation import (validate_mode, webreport_ai_comment, webreport_ai_no_suggest,
+                         webreport_compare_para, webreport_eval_overrides)
 
 
 def _base(session, prep_digest: str = "") -> tuple:
@@ -459,6 +459,19 @@ def _eval_sensitivity_suffix(opts_raw: str) -> tuple:
     return ("sens" + hashlib.sha256(canon).hexdigest()[:12],)
 
 
+def _ai_no_suggest_suffix(opts_raw: str) -> tuple:
+    """"제안 제외" 꼬리표 — ai_comment_key 전용 (2026-09-02).
+
+    **`_eval_sensitivity_suffix` 와 같은 이유로 반드시 있어야 한다.** 이 옵션은
+    `webreport_options` 에만 있고 analysis_key·content_hash 에는 안 들어가는데,
+    `ai_comment_key` 는 dedup 이익을 위해 session_id 를 일부러 뺀다(perf_guard S10).
+    꼬리표가 없으면 같은 rawdata 를 "제안 제외"로 올린 세션과 아닌 세션이 **같은 키**를
+    공유해, 제안 제외 세션이 남의 [제안] 문장을 그대로 보게 된다(조용한 오답).
+    끈 세션(기본값)은 빈 튜플 = 기존 세션 키 바이트 불변(콜드 폭풍 회피).
+    """
+    return ("nosugg",) if webreport_ai_no_suggest(opts_raw) else ()
+
+
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
     # 전처리 변경은 edits_rev 증가로 무효화되므로 prep 을 따로 넣지 않는다
     # (rev 가 이미 키에 있어 덧붙여도 재사용 이득이 없다).
@@ -529,7 +542,17 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   그래서 `[사례] <…>` / `[제안] <…>` 두 줄을 **예시로 못 박고** JSON 금지를 명시했다.
 #   서버는 `unwrap_json_reply` 로 뒤에서도 걷어내지만 애초에 안 나오게 하는 게 낫다.
 #   지시문이 바뀌면 sha 가 갈리므로 v5~v9 와 같은 이유로 여기만 올린다(전역 bump 금지).
-AI_COMMENT_SCHEMA_VERSION = 10
+# v11 (2026-09-02): [제안] 의 **분량·문체·중심**을 바꿨다(사용자 결정). ① 5줄 상한 →
+#   전체 10줄 + signature 하나당 5줄 ② 내부 지표명·수치 출력 금지(`FAIL_MAD_MIN`
+#   `TAIL_MASS_3S_HIGH` 류 — CPK·수율·단위 붙은 측정값만 예외) ③ [제안]의 중심을
+#   action_ko 나열에서 **사례**로 이동 ④ 한 줄은 핵심 단어만.
+#   ⚠ 금지는 **출력 문장에만** 건다 — 프롬프트 재료의 수치([근거:…]·[현재 통계]·선례
+#   당시 통계)는 그대로다. 재료까지 빼면 "그때 값 vs 지금 값" 대조가 원리적으로 불가능해져
+#   사례가 무용지물이 된다(되돌림 방지: tests/test_ai_prompt_determinism.py (t)).
+#   ①②④ 는 `_INSTRUCTION`(+엔진 원본 recommend.py)·`_INSTRUCTION_EXTRA` 코드이고,
+#   ③ 은 yaml 기본 지시(integrate_precedents 개정 + no_metric_names/terse_lines 신설)라
+#   코드 배포로 처음 들어간다 — v5~v10 과 같은 이유로 여기만 올린다(전역 bump 금지).
+AI_COMMENT_SCHEMA_VERSION = 11
 
 
 def _ai_meta_digest(session) -> str:
@@ -617,6 +640,7 @@ def ai_comment_key(session, prep_digest: str = "", stage: str = "") -> tuple:
     return (_base(session, prep_digest) + (_mode(session), _ai_meta_digest(session))
             + _eval_rules_suffix()
             + _eval_sensitivity_suffix(session.get("webreport_options") or "")
+            + _ai_no_suggest_suffix(session.get("webreport_options") or "")
             + (AI_COMMENT_SCHEMA_VERSION,)
             + ((str(stage),) if stage else ()))
 

@@ -86,7 +86,7 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 
 | 파일 | 내용 |
 |---|---|
-| [web_report/ai_prompt.py](../web_report/ai_prompt.py) (신규) | case dict → 프롬프트 재구성(`build_prompt(case, enrich)`/`build_prompts`, 키는 **item_raw**) · `prompt_sha` · `split_comment`(신 `[제안]`/구 `[점검제안]` 둘 다) · `sanitize_suggestion`(개행 보존 — 엔진 프롬프트가 '- ' 항목 형식 요구, 1000자 상한) · `patch_suggestion_text`(마지막 섹션만 치환, `[MAJOR][이봉]` 접두·앞 2섹션 바이트 보존) · `apply_suggestions`(sha 게이트 + `key.endswith("\|"+item)` fan-out, **항상 copy**) |
+| [web_report/ai_prompt.py](../web_report/ai_prompt.py) (신규) | case dict → 프롬프트 재구성(`build_prompt(case, enrich)`/`build_prompts`, 키는 **item_raw**) · `prompt_sha` · `split_comment`(신 `[제안]`/구 `[점검제안]` 둘 다) · `sanitize_suggestion`(개행 보존 — 엔진 프롬프트가 '- ' 항목 형식 요구, 1800자 상한) · `patch_suggestion_text`(마지막 섹션만 치환, `[MAJOR][이봉]` 접두·앞 2섹션 바이트 보존) · `apply_suggestions`(sha 게이트 + `key.endswith("\|"+item)` fan-out, **항상 copy**) |
 | [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py) (신규) | 영구 저장 `load/save_merge(tmp pid→os.replace)/delete_stale` · 상한 500 · akey 안(세션 삭제 시 정리) |
 | [web_report/ai_comment.py](../web_report/ai_comment.py) | `build_ai_comments` 반환에 `prompts` 부착 · `_EMPTY_RESULT` 에 `"prompts": {}` (eval import 무변경 — 규칙 #8) · `_prompt_enrich` 가 **현재 케이스** 재료를 조립 (§선례 상세 보강) |
 | [eval_analyzer/eval_engine/store.py](../eval_analyzer/eval_engine/store.py) | `search_precedents` 가 선례 행에 **당시 수치**(최신 run 의 raw_metrics/features + unit/status)를 함께 싣는다 (§선례 상세 보강). DDL 무변경 — SELECT 확장뿐 |
@@ -171,6 +171,33 @@ primary)에 대한 얘기만 나온다.
 
 ⚠ 튜닝 시: 일반론이 늘었으면(v6 역효과 재발) **yaml 쪽**을 강화한다 — 코드 배포가 필요
 없다. 단 `/pe/eval` 저장은 rules_rev 를 올려 또 sha 가 갈리므로 몰아서 할 것.
+
+### 분량·문체·중심 개정 — 10줄 / 지표명 금지 / 사례 위주 (2026-09-02, v11)
+
+사용자 결정 4건을 한 번에 반영했다. 위 v6·v8 이 **5줄 예산 안에서** 배분을 다투던 것을
+예산 자체를 늘려 푼 것이라, 그 두 절의 조치(축소 지시 한정·커버리지 지시)는 유지된다.
+
+| 바뀐 것 | 전 | 후 | 어디 |
+|---|---|---|---|
+| 분량 | 최대 5줄 | **전체 10줄 + signature 하나당 5줄** | `_INSTRUCTION`(양쪽 사본) · yaml `signature_budget_first` · `_INSTRUCTION_EXTRA`("10줄은 상한이지") |
+| 수치 | 제한 없음 | **내부 지표명·값 출력 금지** (CPK·수율·단위 붙은 측정값만 예외) | `_INSTRUCTION` · yaml `no_metric_names`(신설) |
+| 중심 | 기본 조치 목록(action_ko) 통합 | **사례 위주** — 조치 목록은 사례가 안 덮는 signature 를 메우는 보조 | `_INSTRUCTION` · yaml `integrate_precedents`(개정) |
+| 문체 | 규정 없음 | 핵심 단어만, 군더더기 제거 | `_INSTRUCTION` · yaml `terse_lines`(신설) |
+
+**⚠ 수치 금지는 출력에만 건다 — 프롬프트 재료는 그대로다.** 이 비대칭이 이 절의 핵심이다.
+사용자가 모른다고 한 것은 `FAIL_MAD_MIN`·`TAIL_MASS_3S_HIGH` 같은 **지표 이름**이지 대조
+자체가 아니다. 재료 쪽(`[근거: …]` · `[현재 통계]` · 선례의 `당시 통계`/`당시 분포·공간`)
+까지 빼면 이 프롬프트의 존재 이유인 *"그때 값 vs 지금 값"* 대조가 **원리적으로 불가능**해져
+사례가 무용지물이 된다. 되돌림 방지 가드는 `tests/test_ai_prompt_determinism.py` **(t)** —
+재료 4종이 프롬프트에 그대로 실리는지를 함께 고정한다.
+
+`MAX_SUGGESTION_CHARS` 도 1000 → **1800** 으로 올렸다(상한이 5줄→10줄이 됐으므로). 이 값은
+**잘라내기**라 모자라면 마지막 줄이 문장 중간에서 끊긴 채 저장된다 — 줄 수 상한을 다시
+건드릴 때 함께 볼 것.
+
+캐시는 v5~v10 과 같은 이유로 `AI_COMMENT_SCHEMA_VERSION` 만 v11 로 올린다(전역 bump 금지).
+지시문이 갈리면 sha 가 전량 갈려 저장된 [제안]이 폐기되고 클라가 재대행하는데, 그때
+payload 셀은 push → `payload_rev` 증가 → 재빌드로 자연히 새 문장으로 교체된다.
 
 ### 지시문·금지 문구를 관리자 화면에서 (2026-09-02)
 
@@ -298,6 +325,37 @@ primary)에 대한 얘기만 나온다.
 
 같은 날 **사례 0건 표시도 `-` 한 글자로** 바꿨다(`recommend._NO_PRECEDENT_TEXT`, 사용자
 요청) — "참고할 수 있는 과거 사례가 없습니다." 를 매번 읽을 이유가 없다.
+
+#### 화면에서 [사례] 를 접고, "제안 제외" 옵션 (같은 날)
+
+사용자 요청 3건을 반영했다.
+
+**① [사례] 는 제안이 있으면 화면에서 숨긴다** — 사례 내용이 [제안]에 녹아 들어가므로 셀에
+두 번 적는 셈이다. 원문은 셀 아래 「📋 사례 N건 상세」에서 본다.
+⚠ 조건은 **사례 있음 AND 제안 있음** 둘 다다(`sheets.js` `hideCase`) — 아래 "제안 제외"
+세션은 [제안] 섹션 자체가 없어, 사례까지 숨기면 셀이 텅 빈다. 서버 문자열은 그대로다
+(Excel·챗봇·eval export 가 같은 평문을 소비 — [현상] 을 숨기는 것과 같은 방식).
+
+**② "제안 제외" 체크(Honey)** — 켜면 LLM 을 **아예 호출하지 않고** 사례만 남긴다.
+| 층 | 처리 |
+|---|---|
+| 클라 UI | `chk_ai_no_suggest`(AI Comment 를 켠 동안만 표시). 켜면 신호등·AI Model 을 숨긴다 — LLM 을 안 쓰는데 모델을 고르게 두면 "골랐는데 왜 안 도나" 가 된다 |
+| 클라 옵션 | `options["ai_no_suggest"]=True`, **`ai_model` 은 싣지 않는다** — 실으면 워커가 떠서 받을 프롬프트도 없이 폴링만 하다 실패 보고를 남긴다 |
+| 서버 | [validation.webreport_ai_no_suggest](../web_report/validation.py) → `ai_comment.build_ai_comments` 가 `prompts={}`(생성 자체를 생략) + `_cell_text(no_suggest=True)` 가 **[제안] 섹션을 토큰까지 제거** |
+| 캐시 | `_ai_no_suggest_suffix` → `ai_comment_key` 에 `"nosugg"` |
+- **기본값(끔)이면 옵션 키를 싣지 않는다** — 옵션 원문이 `report_key` 의 원소라 기존 세션
+  캐시 키가 바이트 그대로 유지된다(`ai_model`·`eval_sensitivity` 와 같은 규약).
+- ⚠ **캐시 꼬리표가 반드시 필요하다**: `ai_comment_key` 는 dedup 이익을 위해 session_id 를
+  일부러 뺀다(perf_guard S10). 이 옵션은 `webreport_options` 에만 있고 analysis_key·
+  content_hash 에는 없어서, 꼬리표가 없으면 같은 rawdata 를 제안 제외로 올린 세션이
+  **먼저 올라간 세션의 [제안] 을 그대로 본다**(`_eval_sensitivity_suffix` 가 막는 것과
+  같은 부류의 조용한 오답 — 구현 중 실제로 발견해 고쳤다).
+- 검증: [tests/test_ai_no_suggest_option.py](../tests/test_ai_no_suggest_option.py) 가
+  리더·클라 배선(소스 검사)·서버 소비·캐시 키 분리를 한 파일에서 고정한다.
+
+**③ ⚙ 아이콘 통일** — AI Comment 옆 민감도 버튼이 `QPushButton("⚙️")` 텍스트라 폰트에 따라
+좌측 툴바 Options 톱니바퀴와 다른 모양·크기로 보였다. 둘 다 `_emoji_icon` 픽스맵을 쓰도록
+바꿔 같은 그림이 된다.
 
 계약상 중요한 점:
 - **종전 선례 5키(action/result/comment/product_name/family_product)는 이름·의미 불변**이다 —

@@ -24,8 +24,8 @@ from pathlib import Path
 import pandas as pd
 
 from .honeyform import META_COLUMNS, META_ROW_LABELS
-from .validation import (validate_mode, webreport_eval_overrides,
-                         webreport_temperature_groups)
+from .validation import (validate_mode, webreport_ai_no_suggest,
+                         webreport_eval_overrides, webreport_temperature_groups)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,10 @@ UNKNOWN_SIGNATURE = "UNKNOWN"
 _SUBPOP_SIG_ID = "BIMODALITY"
 _MODALITY_SIGNAL = "MODALITY_V2"
 _MODALITY_RE = re.compile(r"modality_v2\s+(\w+)")
+# "제안 제외" 세션에서 [제안] 섹션을 통째로 걷어내는 패턴 — 토큰부터 끝까지.
+# 신·구 토큰 둘 다(캐시에 굳은 옛 코멘트도 같은 화면을 내야 한다). 교대는 왼쪽 우선이라
+# 긴 옛 토큰(점검제안)을 앞에 둔다.
+_SUGG_SEC_RE = re.compile(r"\s*\[(?:점검제안|제안)\].*$", re.S)
 # multimodal 은 **배지를 붙이지 않는다**(2026-08-13 사용자 요청) — 값이 빈 문자열이라
 # 아래 폴백([분포분리])도 타지 않는다. 판정·목록에는 그대로 남고 셀 표기만 생략한다.
 _MODALITY_TAG = {"bimodal": "[이봉]", "multimodal": "", "separated": "[분리]"}
@@ -291,9 +295,22 @@ def _modality_tag(case):
     return ""
 
 
-def _cell_text(case):
+def _drop_suggestion(comment: str) -> str:
+    """[제안] 섹션을 통째로 뺀 코멘트 — "제안 제외" 세션 전용 (2026-09-02).
+
+    사용자가 "사례만 보고 판단하겠다" 고 켠 옵션이라 조치 문장을 화면에 두지 않는다.
+    ⚠ 섹션 **토큰 자체를 지운다**(값만 비우지 않는다) — 빈 `[제안]` 이 남으면 화면에
+    라벨만 덩그러니 뜨고, 사용자에게는 "제안이 만들어지다 말았다" 로 보인다.
+    [현상]/[사례] 는 그대로 두어 3섹션 파서(신·구 토큰)가 계속 앞 두 섹션을 읽는다.
+    """
+    return _SUGG_SEC_RE.sub("", comment).rstrip()
+
+
+def _cell_text(case, no_suggest: bool = False):
     status = str(case.get("status") or "").strip()
     comment = str(case.get("comment") or "").strip()
+    if no_suggest and comment:
+        comment = _drop_suggestion(comment)
     tag = _modality_tag(case)
     prefix = f"[{status}]{tag}" if status else tag
     return f"{prefix} {comment}".strip() if prefix else comment
@@ -355,7 +372,8 @@ def fail_bins_by_item(tables) -> dict:
     return {k: sorted(v) for k, v in out.items()}
 
 
-def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True):
+def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True,
+                 no_suggest: bool = False):
     """item 별 case → {"comments": row_key 사전, "etc_auto_items": [...]}.
 
     row_key 규약(tabs/issue_table.py): 그 item 이 걸리는 **모든 fail bin 행**
@@ -387,7 +405,7 @@ def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True):
         # with_comments=False = Signature 만 먼저 내는 1단계 빌드. 셀 텍스트를 빈 문자열로
         # 두면 아래 대입이 전부 "" 를 쓰고 호출부가 그 dict 를 그대로 화면에 태울 때
         # "Loading 중…" 이 유지된다 (build_ai_comments docstring 의 ⚠ 참조).
-        text = _cell_text(case) if with_comments else ""
+        text = _cell_text(case, no_suggest) if with_comments else ""
         bins = (fail_bins or {}).get(item)
         if bins is None:
             # 폴백 — case 의 대표 bin 한 행만(구 호출부 호환).
@@ -575,15 +593,20 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
             prev = best.get(key)
             if prev is None or _rank(case) > _rank(prev):
                 best[key] = case
+    no_suggest = webreport_ai_no_suggest(session.get("webreport_options") or "")
     out = _to_row_keys(best, fail_bins_by_item(tables),
-                       with_comments=generate_comment)
+                       with_comments=generate_comment, no_suggest=no_suggest)
     # 클라 LLM 대행용 프롬프트(docs/23) — 대표 case 기준, 키는 item_raw(comments 의
     # row_key 꼬리와 동일). Signature 1단계 빌드(generate_comment=False)는 comment 가
     # None 이라 재료가 없다 — 빈 dict 로 계약 키만 유지한다.
     if generate_comment:
         from .ai_prompt import build_prompts
-        out["prompts"] = build_prompts(best, _prompt_enrich(best, tables),
-                                       _ai_prompt_rules())
+        # "제안 제외"(Honey 체크) 세션은 프롬프트를 **아예 만들지 않는다** — 클라 워커가
+        # 받을 목록이 비어 조용히 끝나므로 LLM 호출·토큰이 0 이다(2026-09-02 사용자 요청).
+        # 셀에는 코드가 만든 [사례] 나열과 룰 조치가 그대로 남는다.
+        out["prompts"] = ({} if no_suggest
+                          else build_prompts(best, _prompt_enrich(best, tables),
+                                             _ai_prompt_rules()))
         # 사례 상세(팝오버 라우트) + 행별 건수(payload 링크). Signature 1단계 빌드는
         # 선례 검색 자체를 안 하므로(엔진 generate_comment=False) 빈 dict 다.
         prec_views = _precedent_views(best)

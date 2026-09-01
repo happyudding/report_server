@@ -75,6 +75,28 @@ def webreport_ai_model(opts_raw: str) -> str:
     return value if value in ("default", "claude") else "default"
 
 
+def webreport_ai_no_suggest(opts_raw: str) -> bool:
+    """세션의 webreport_options JSON → **[제안] 생성을 건너뛸지** (2026-09-02).
+
+    Honey 의 AI Comment "제안 제외" 체크에서 온다. 참이면 LLM 을 아예 부르지 않고
+    (프롬프트도 만들지 않는다) AI Comment 컬럼에는 **사례만** 남는다 — 사용자가
+    "사례만 보고 판단하겠다" 고 할 때 토큰·시간을 쓰지 않기 위한 옵션이다.
+
+    클라는 기본값(False)일 때 **키 자체를 싣지 않는다** — 옵션 원문이 report_key 의
+    원소라 키가 없어야 기존 세션 캐시 키가 바이트 그대로 유지된다(콜드 폭풍 회피,
+    webreport_ai_model 과 같은 규약).
+    """
+    if not opts_raw:
+        return False
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return False
+    if not isinstance(opts, dict):
+        return False
+    return bool(opts.get("ai_no_suggest"))
+
+
 def webreport_step(opts_raw: str) -> str:
     """세션의 webreport_options JSON → 업로드 때 지정한 STEP 표시값 (없으면 "").
 

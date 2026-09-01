@@ -28,9 +28,14 @@ ai_comment/eval_export/eval_debug 3곳 고정)이라 ai_prompt.py 는 엔진을 
   (l) **발화 signature 커버리지 재료**(2026-09-01) — 헤더 건수 == `_sig_lines` 줄 수 ==
       `ai_comment._case_sig_ids` 길이. 셋이 갈리면 화면 Signature 컬럼과 프롬프트가
       어긋난다("N건" 이라 써놓고 목록은 N-1줄).
-  (m) **커버리지 지시 배포 확인**(2026-09-01) — 배포 yaml 에 cover_all_signatures /
-      signature_budget_first 가 켜져 있고 프롬프트로 나가는지 + `_INSTRUCTION_EXTRA` 의
-      축소 지시가 무조건형으로 되돌아가지 않았는지(그러면 커버리지 요구를 눌러 버린다).
+  (m) **커버리지·문체 지시 배포 확인**(2026-09-01, 2026-09-02 확장) — 배포 yaml 의
+      cover_all_signatures / signature_budget_first / no_metric_names / terse_lines 가
+      켜져 있고 프롬프트로 나가는지 + `_INSTRUCTION_EXTRA` 의 축소 지시가 무조건형으로
+      되돌아가지 않았는지(그러면 커버리지 요구를 눌러 버린다).
+  (t) **출력 문체 규칙**(2026-09-02) — 10줄 + signature 당 5줄 상한, 내부 지표명·수치
+      출력 금지(CPK 예외), 사례 위주. ⚠ 핵심은 **비대칭**이다: 금지는 출력 문장에만
+      걸고 프롬프트 **재료**의 수치([근거]·[현재 통계]·선례 당시 통계)는 그대로 실린다.
+      재료까지 빼면 "그때 값 vs 지금 값" 대조가 원리적으로 불가능해진다.
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert). 서버 불필요. (j)만 임시 sqlite 를 만든다.
 """
@@ -520,15 +525,22 @@ def test_signature_coverage_materials():
 
 
 def test_coverage_instruction_shipped():
-    """(m) 커버리지 지시가 **배포 yaml** 에 실제로 있고 프롬프트로 나간다 (2026-09-01)."""
+    """(m) 커버리지·문체 지시가 **배포 yaml** 에 실제로 있고 프롬프트로 나간다.
+
+    2026-09-01 커버리지 2종으로 시작해 2026-09-02 에 문체 2종이 늘었다
+    (`no_metric_names` 지표명 금지 · `terse_lines` 간결). 넷 다 화면 문장의 모양을
+    직접 정하므로, 꺼지거나 사라지면 사용자가 바로 알아채는 회귀가 된다.
+    """
     rules = _load_shipped_rules()
     by_id = {str(r.get("id") or ""): r for r in rules.get("instructions") or []}
-    for rid in ("cover_all_signatures", "signature_budget_first"):
+    shipped = ("cover_all_signatures", "signature_budget_first",
+               "no_metric_names", "terse_lines")
+    for rid in shipped:
         assert rid in by_id, f"배포 yaml 에 {rid} 지시문이 없습니다"
         assert by_id[rid].get("enabled") is True, f"{rid} 가 꺼져 있습니다"
 
     p = P.build_prompt(_CASE, None, rules)
-    for rid in ("cover_all_signatures", "signature_budget_first"):
+    for rid in shipped:
         text = str(by_id[rid].get("text") or "").strip()
         assert text and text in p, f"{rid} 문장이 프롬프트에 없습니다"
         # 위치: 고정 지시문 **뒤**, 재료(item:) **앞** — 재료 뒤면 지시로 안 읽힌다
@@ -540,7 +552,43 @@ def test_coverage_instruction_shipped():
         "_INSTRUCTION_EXTRA 의 축소 지시가 커버리지와 충돌하는 무조건형으로 되돌아갔다 — "
         "대상을 '발화 목록 밖' 으로 한정할 것 (cache_policy v8 사유 참조)")
     assert "발화 signature 를 전부 덮고 나서도" in P._INSTRUCTION_EXTRA
-    print("  (m) 배포 yaml 커버리지 지시 + 축소 지시 한정 OK")
+    print("  (m) 배포 yaml 커버리지·문체 지시 + 축소 지시 한정 OK")
+
+
+def test_output_style_rules():
+    """(t) 출력 문체 규칙 (2026-09-02 사용자 결정) — 줄 수·수치 금지·사례 위주.
+
+    ⚠ 이 테스트의 요점은 **금지가 출력에만 걸리고 재료에는 안 걸린다**는 비대칭이다.
+    지표 수치를 프롬프트 재료에서까지 빼면 "그때 값 vs 지금 값" 대조가 원리적으로
+    불가능해져 사례가 무용지물이 된다 — 되돌림을 여기서 막는다.
+    """
+    # ① 줄 수: 5줄 상한이 10줄 + signature 당 5줄로 바뀌었다(양쪽 사본 모두).
+    assert "최대 10줄" in P._INSTRUCTION and "5줄을 넘기지 마라" in P._INSTRUCTION
+    assert "최대 5줄로 쓰고" not in P._INSTRUCTION, "옛 5줄 상한이 남아 있다"
+    assert "10줄은 상한이지" in P._INSTRUCTION_EXTRA, "EXTRA 의 줄 수 안내가 옛 5줄이다"
+    # 상한 문자 수도 10줄에 맞게 올라가 있어야 한다(잘라내기라 모자라면 문장이 끊긴다)
+    assert P.MAX_SUGGESTION_CHARS >= 1800
+
+    # ② 수치·지표명은 **출력**에서 금지 — 지시문이 실제 지표명을 예로 들어야 모델이 안다.
+    assert "지표 이름과 그 수치는 쓰지 마라" in P._INSTRUCTION
+    assert "FAIL_MAD_MIN" in P._INSTRUCTION and "TAIL_MASS_3S_HIGH" in P._INSTRUCTION
+    # CPK 예외(사용자 지정) — 이게 빠지면 유일하게 읽히는 수치까지 사라진다
+    assert "CPK" in P._INSTRUCTION and "써도 된다" in P._INSTRUCTION
+
+    # ③ 재료 쪽 수치는 **그대로 실린다**(위 비대칭). 하나라도 빠지면 대조가 죽는다.
+    case = _case_with_precedent([_PRECEDENT])
+    p = P.build_prompt(case, _ENRICH, _load_shipped_rules())
+    assert "[근거: edge_fail_share=0.7512]" in p, "발화 근거 수치가 재료에서 사라졌다"
+    assert "[현재 통계] cpk=0.812345" in p, "현재 통계가 재료에서 사라졌다"
+    assert "당시 통계: cpk=0.62" in p, "선례 당시 통계가 재료에서 사라졌다"
+    assert "당시 분포/공간: edge_fail_ratio=0.81" in p
+
+    # ④ 사례 위주 — action_ko 나열이 아니라 사례가 [제안] 의 중심이라고 말해야 한다.
+    assert "사례에서 무엇을 어떻게 확인해 해결했는지를 중심으로" in P._INSTRUCTION
+    assert "그대로 옮겨 적지 마라" in P._INSTRUCTION
+    # 기본 조치 목록은 재료로는 계속 실린다(사례가 안 덮는 signature 를 메운다)
+    assert "[기본 조치 목록(action_ko)]" in p
+    print("  (t) 출력 문체(10줄·지표명 금지·사례 위주) + 재료 비대칭 OK")
 
 
 def test_parse_llm_blocks():
@@ -604,6 +652,38 @@ def test_denied_ignores_spacing():
     ok = "- 과거 사례와 달리 이번에는 edge 편중이 확인되지 않으므로 중심부를 보라."
     assert P.strip_denied_lines(ok, pat, True) == ok
     print("  (p) 금지 문구 띄어쓰기 무시 매칭 OK")
+
+
+def test_no_suggest_option():
+    """(s) "제안 제외"(Honey 체크) — [제안] 섹션을 통째로 빼고 사례만 남긴다 (2026-09-02).
+
+    LLM 을 아예 호출하지 않는 옵션이라, 화면에 조치 문장을 남기면 "제안이 만들어지다
+    말았다" 로 보인다. ⚠ 섹션 **토큰까지** 제거해야 빈 라벨이 안 뜬다.
+    """
+    import json as _json
+    sys.path.insert(0, str(_ROOT))
+    from web_report import ai_comment as A
+    from web_report.validation import webreport_ai_no_suggest as _no_sugg
+
+    # 옵션 리더 — 키가 없으면 False(기존 세션 캐시 키 바이트 불변 규약)
+    assert _no_sugg(_json.dumps({"ai_comment": True, "ai_comment_optin": True})) is False
+    assert _no_sugg(_json.dumps({"ai_no_suggest": True})) is True
+    assert _no_sugg("") is False and _no_sugg("{broken") is False
+
+    case = {"status": "MAJOR", "signatures": [], "comment":
+            "[현상] - LOW_CPK: CPK 부족\n[사례] ①(P1/L1) 재측정 회복 \n"
+            " [제안] - LOW_CPK: spec 재검토"}
+    normal = A._cell_text(case)
+    assert "[제안] - LOW_CPK: spec 재검토" in normal
+    dropped = A._cell_text(case, no_suggest=True)
+    assert "[제안]" not in dropped and "spec 재검토" not in dropped, dropped
+    assert "[사례] ①(P1/L1) 재측정 회복" in dropped, dropped   # 사례는 남는다
+    assert dropped.startswith("[MAJOR] [현상]")                 # 접두·현상 보존
+    # 옛 토큰 코멘트도 같은 결과 (캐시에 굳은 세션)
+    old = dict(case, comment="[현상] A\n[과거사례] B \n [점검제안] 옛 조치")
+    o = A._cell_text(old, no_suggest=True)
+    assert "[점검제안]" not in o and "옛 조치" not in o and "[과거사례] B" in o, o
+    print("  (s) 제안 제외 — [제안] 섹션 제거·사례 보존 OK")
 
 
 def test_real_llm_reply_shape():
@@ -690,11 +770,13 @@ def main():
     test_strip_denied_lines()
     test_signature_coverage_materials()
     test_coverage_instruction_shipped()
+    test_output_style_rules()
     test_parse_llm_blocks()
     test_patch_cell()
     test_denied_ignores_spacing()
     test_real_llm_reply_shape()
     test_unwrap_json_reply()
+    test_no_suggest_option()
     print("test_ai_prompt_determinism: 전부 통과")
 
 
