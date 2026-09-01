@@ -146,7 +146,7 @@ function syncTabVisibility() {
   });
   // 1b) 모드 전용 탭: Compare/Commonality 는 각 모드(web_report)에서만 표시.
   const modeNow = web ? webReportMode() : "Normal";
-  // Issue Table Compare 는 Compare 모드 전용 — 서브탭 5개(ISSUE_TABLE/MAP비교/LOG비교/
+  // Issue Table Compare 는 Compare 모드 전용 — 서브탭 5개(ISSUE_SUMMARY/MAP비교/LOG비교/
   // TESTTIME비교/동일성검증)로 구 최상위 Compare 탭을 흡수했다(2026-08-27).
   const cmpIssBtn = document.querySelector('.tab[data-tab="issue-cmp"]');
   if (cmpIssBtn) cmpIssBtn.style.display = (modeNow === "Compare") ? "" : "none";

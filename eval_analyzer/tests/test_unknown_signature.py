@@ -103,12 +103,35 @@ def test_unknown_reason_priority(kw, feats_kw, expect):
     assert code == expect
 
 
-def test_excluded_case_has_no_unknown():
-    """평가 제외 목록에 걸린 item 은 UNKNOWN 도 붙이지 않는다(완전 제외)."""
-    case = _case(item_raw="VDD_CODE_TRIM", item_canonical="VDD_CODE_TRIM")
+def test_excluded_case_has_no_unknown(monkeypatch):
+    """평가 제외 목록에 걸린 item 은 UNKNOWN 도 붙이지 않는다(완전 제외).
+
+    ⚠ 제외 **목록의 내용**은 운영이 `/pe/eval` 에서 바꾸는 설정이라(2026-09-02 에
+    `_CODE_` 가 제거됐다) 배포 yaml 을 그대로 읽으면 테스트가 설정에 흔들린다.
+    여기서 검증할 것은 "제외에 걸리면 UNKNOWN 도 안 뜬다" 는 **메커니즘**이므로
+    목록을 주입해 고정한다.
+    """
+    monkeypatch.setattr(signatures, "exclusion_reason",
+                        lambda ctx: "item명에 '_TESTEXCL_' 포함"
+                        if "_TESTEXCL_" in str(ctx.get("item_raw") or "") else None)
+    case = _case(item_raw="VDD_TESTEXCL_TRIM", item_canonical="VDD_TESTEXCL_TRIM")
     sig = signatures.evaluate(case, _quiet_features(), {"yield": 0.99, "cpk": 2.0})
     assert sig["excluded"]
     assert sig["signatures"] == []
+
+
+def test_code_items_are_not_excluded_by_default():
+    """기본 제외 목록은 비어 있다 — CODE 항목도 평가된다 (2026-09-02).
+
+    `_CODE_` 가 제외돼 있던 동안 이름에 그 문구가 든 item 은 fail 이어도 signature 가
+    하나도 안 떠(UNKNOWN 조차) 화면에 "미분류"로 보였고 AI Comment 도 안 생겼다.
+    "fail 이면 무조건 설명한다" 는 이 파일의 전제와 정면으로 어긋나던 지점이라
+    회귀 방지로 고정한다. 운영이 제외를 다시 넣으면 이 테스트가 먼저 알려 준다.
+    """
+    case = _case(item_raw="VDD_CODE_TRIM", item_canonical="VDD_CODE_TRIM")
+    sig = signatures.evaluate(case, _quiet_features(), {"yield": 0.99, "cpk": 2.0})
+    assert not sig.get("excluded")
+    assert [s["id"] for s in sig["signatures"]] == [UNKNOWN]
 
 
 def test_low_cpk_does_not_bury_its_cause():

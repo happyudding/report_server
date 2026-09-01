@@ -33,10 +33,14 @@ Before/After 비교 행에 대한 발화 개념이 없다.
 perf-guard: allow S01-report-schema — 이 제거는 **v42 와 같은 세대**다.
 REPORT_SCHEMA_VERSION 41→42 bump 는 CPK TOTAL 을 넣은 직전 커밋에 이미 들어가 있고,
 그 bump 주석이 이 Unit 정리를 함께 명시한다. 여기서 또 올리면 콜드 폭풍만 한 번 더 난다.
+2026-09-01 `_sd_origin` 추가도 같은 이유로 전역 bump 를 하지 않는다 — 이 시트는 Compare
+세션에만 있으므로 COMPARE_REPORT_SCHEMA_VERSION 1→2 로 그 모드만 세대를 갈랐다
+(전역을 올리면 Compare 아닌 세션까지 콜드 재빌드된다 — CLAUDE.md 규칙 14).
 """
 from __future__ import annotations
 
 from .common import fmt_type, item_meta as _item_meta, json_safe, num
+from .compare import DIST_STDEV_DELTA_RISK_PCT, DIST_TAIL_RATIO
 
 # 기존 Issue Table 과 **같은** comment 컬럼 이름을 쓴다 — 저장 키(col)가 같아야
 # service.update_issue_comments 검증·프런트 편집 컬럼 목록이 그대로 통한다.
@@ -68,6 +72,25 @@ def _stat_cells(stat, prefix):
 
 def _blank_stat_cells(prefix):
     return {f"{prefix}_avg": "", f"{prefix}_stdev": "", f"{prefix}_cpk": ""}
+
+
+def _stdev_origin(r):
+    """산포가 늘었을 때 그 기원 — "" / "spread"(전체 확산) / "outlier"(소수 die 이탈).
+
+    dist_shift 가 이미 낸 tail_ratio(σ/robust-σ)를 읽기만 한다(재계산 금지 — 규칙 13).
+    같은 △σ% 라도 조치가 다르기 때문에 화면에서 갈라 보여준다. σ 가 늘지 않았으면 빈 값이다
+    — 줄어든 항목에까지 표식을 붙이면 무슨 뜻인지 알 수 없다.
+    """
+    sd = num(r.get("stdev_delta_pct"))
+    if sd is None or sd < DIST_STDEV_DELTA_RISK_PCT:
+        return ""
+    ta, tb = num(r.get("tail_ratio_after")), num(r.get("tail_ratio_before"))
+    if ta is None:
+        return ""
+    # Before 도 이미 꼬리가 두꺼웠으면 "이번에 튄 것"이 아니다 — 그 경우는 확산으로 본다.
+    if ta >= DIST_TAIL_RATIO and (tb is None or ta > tb):
+        return "outlier"
+    return "spread"
 
 
 def _comment_values(issue_comments, row_key):
@@ -148,6 +171,9 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
         out["meanshift_sigma"] = json_safe(r.get("meanshift_sigma"))
         out["stdev_delta_pct"] = json_safe(r.get("stdev_delta_pct"))
         out["cpk_ratio_pct"] = json_safe(r.get("cpk_ratio_pct"))
+        # σ 증가의 기원 — "전체가 퍼졌나 / 몇 개가 튀었나". 판정이 아니라 표시용이라
+        # 컬럼을 새로 만들지 않고 △σ% 셀 옆에 붙일 표식만 내려보낸다(dist_shift 값 그대로).
+        out["_sd_origin"] = _stdev_origin(r)
         out["Distribution"] = ""
         out["Status"] = _status(row_key)
         out.update(_comment_values(issue_comments, row_key))
@@ -170,6 +196,7 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
         out["meanshift_sigma"] = ""
         out["stdev_delta_pct"] = ""
         out["cpk_ratio_pct"] = ""
+        out["_sd_origin"] = ""
         out["Distribution"] = ""
         out["Status"] = _status(row_key)
         out.update(_comment_values(issue_comments, row_key))
@@ -180,7 +207,7 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
     etc_head = {"Category": ROW_KEY_ETC, "구분": "", "Step": "", "TNO": "", "Item": "",
                 **_blank_stat_cells("before"), **_blank_stat_cells("after"),
                 "meanshift_sigma": "", "stdev_delta_pct": "", "cpk_ratio_pct": "",
-                "Distribution": "", "Status": ""}
+                "_sd_origin": "", "Distribution": "", "Status": ""}
     etc_head.update({col: "" for col in _COMMENT_COLS})
     rows.append(etc_head)
 
@@ -192,6 +219,7 @@ def build_compare_issue_rows(compare_payload, *, tables=None, cpk_rows=None,
         out["meanshift_sigma"] = ""
         out["stdev_delta_pct"] = ""
         out["cpk_ratio_pct"] = ""
+        out["_sd_origin"] = ""
         out["Distribution"] = ""
         out["Status"] = _status(row_key)
         out.update(_comment_values(issue_comments, row_key))

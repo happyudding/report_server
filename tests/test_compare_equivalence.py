@@ -291,42 +291,61 @@ def test_dist_shift_ks_hand_cases():
 
 
 def test_dist_shift_focus_rules():
-    """focus — 양쪽 cpk>100 제외 / 한쪽 cpk<1.33 포함 / |Δσ%|≥15 포함 / 고정값 제외 / 평온 제외.
+    """focus **v3** — 여유 과대 제외 / 낮은 cpk 는 *변화가 있을 때만* / Δσ 증가 / 고정값·평온 제외.
+
+    v2 와 갈리는 지점이 하나 있다: 낮은 Cpk 는 이제 **무조건**이 아니라 before/after 가
+    실제로 달라졌을 때만 잡는다. 무변화 항목까지 잡던 것이 과검출 1순위였다
+    (실측 FP_LOWCPK_NOCHANGE — data/compare_shape_v2_verify.csv). 그래서 여기서도
+    LOWCPK 를 **변화 있음(LOWCPK)/무변화(LOWCPK_SAME)** 두 항목으로 갈라 양쪽을 고정한다.
 
     표본을 ×10(n=150)으로 키운다 — SPREAD 의 Δσ +20% 가 **유의성 게이트를 통과**해야
     효과크기 규칙을 검증할 수 있다. n=15 에서는 같은 +20% 가 p≈0.45 라 게이트에 걸린다
     (그 억제 동작 자체는 test_dist_shift_significance_gate 가 따로 고정한다).
     """
     big = 10
-    before = {"HIGHCPK": _TIGHT * big, "LOWCPK": _LOW * big, "SPREAD": _WIDE * big,
-              "CONST": _CONST * big, "CALM": _WIDE * big}
-    after = {"HIGHCPK": _TIGHT * big, "LOWCPK": _LOW * big,
+    before = {"HIGHCPK": _TIGHT * big, "LOWCPK": _LOW * big, "LOWCPK_SAME": _LOW * big,
+              "SPREAD": _WIDE * big, "CONST": _CONST * big, "CALM": _WIDE * big}
+    after = {"HIGHCPK": _TIGHT * big,
+             # 낮은 Cpk + 산포가 실제로 커짐 → 봐야 한다.
+             "LOWCPK": _spread(_LOW * big, 1.3),
+             # 낮은 Cpk 지만 before 와 완전히 동일 → v3 에서 제외(과검출이었다).
+             "LOWCPK_SAME": _LOW * big,
              "SPREAD": _spread(_WIDE * big, 1.2),
              "CONST": _CONST * big, "CALM": _spread(_WIDE * big, 1.05)}
     dist = _payload([_make_table("WF_A", after), _make_table("WF_B", before)],
                     {"before": ["WF_B"], "after": ["WF_A"]})["compare"]["dist_shift"]
     rows = {r["subject"]: r for r in dist["rows"]}
 
-    # 전제: HIGHCPK 양쪽 >100 / LOWCPK <1.33 / SPREAD·CALM 은 1.33~100 / CONST σ=0.
-    assert rows["HIGHCPK"]["after"]["cpk"] > 100 and rows["HIGHCPK"]["before"]["cpk"] > 100
+    # 전제: HIGHCPK 양쪽 >10(여유 과대) / LOWCPK* <1.33 / SPREAD·CALM 은 그 사이 / CONST σ=0.
+    assert rows["HIGHCPK"]["after"]["cpk"] > 10 and rows["HIGHCPK"]["before"]["cpk"] > 10
     assert rows["LOWCPK"]["before"]["cpk"] < 1.33, rows["LOWCPK"]
-    assert 1.33 <= rows["SPREAD"]["after"]["cpk"] <= 100, rows["SPREAD"]
+    assert rows["LOWCPK_SAME"]["before"]["cpk"] < 1.33, rows["LOWCPK_SAME"]
+    assert 1.33 <= rows["SPREAD"]["after"]["cpk"] <= 10, rows["SPREAD"]
     assert rows["CONST"]["after"]["cpk"] is None and rows["CONST"]["after"]["stdev"] == 0
 
-    assert rows["HIGHCPK"]["focus"] is False, rows["HIGHCPK"]   # 여유 과대 — 무조건 제외
-    assert rows["LOWCPK"]["focus"] is True, rows["LOWCPK"]      # 한쪽 cpk<1.33
-    assert rows["SPREAD"]["focus"] is True, rows["SPREAD"]      # Δσ +20% ≥ 15 (n=150 → 유의)
-    assert rows["CONST"]["focus"] is False, rows["CONST"]       # 양쪽 고정값
-    assert rows["CALM"]["focus"] is False, rows["CALM"]         # Δσ +5% < 15
+    assert rows["HIGHCPK"]["focus"] is False, rows["HIGHCPK"]      # 여유 과대 — 무조건 제외
+    assert rows["LOWCPK"]["focus"] is True, rows["LOWCPK"]         # cpk<1.33 + 실제 변화
+    assert rows["LOWCPK_SAME"]["focus"] is False, rows["LOWCPK_SAME"]  # cpk<1.33 이나 무변화
+    assert rows["SPREAD"]["focus"] is True, rows["SPREAD"]         # Δσ +20% ≥ 20 (n=150 → 유의)
+    assert rows["CONST"]["focus"] is False, rows["CONST"]          # 양쪽 고정값
+    assert rows["CALM"]["focus"] is False, rows["CALM"]            # Δσ +5% < 20
+
+    # 무변화 항목은 '사실상 같다' 게이트가 잡는다 — 지표로도 구분되지 않음을 함께 고정.
+    same = rows["LOWCPK_SAME"]
+    assert same["ks_d"] == 0.0 and same["p_mean"] == 1.0 and same["p_stdev"] == 1.0, same
 
     # 고정값 항목은 정규화 지표도 유의성도 낼 수 없다.
     assert rows["CONST"]["meanshift_sigma"] is None and rows["CONST"]["cpk_ratio_pct"] is None
     assert rows["CONST"]["p_mean"] is None and rows["CONST"]["p_stdev"] is None, rows["CONST"]
 
-    assert dist["thresholds"] == {"cpk_high": 100.0, "cpk_low": 1.33,
-                                  "stdev_delta_pct": 15.0, "alpha": 0.05}, dist["thresholds"]
+    assert dist["thresholds"] == {
+        "cpk_high": 10.0, "cpk_low": 1.33,
+        "stdev_delta_pct": 20.0, "stdev_delta_risk_pct": 15.0,
+        "ks_d": 0.15, "meanshift_sigma": 1.0, "cpk_ratio_improved": 105.0,
+        "ks_solo_max_sd": 3.0, "quiet_ks_d": 0.10, "tail_ratio": 1.15,
+        "alpha": 0.05}, dist["thresholds"]
     s = dist["summary"]
-    assert s["total"] == len(dist["rows"]) == 5, s
+    assert s["total"] == len(dist["rows"]) == 6, s
     assert s["focus"] == sum(1 for r in dist["rows"] if r["focus"]) == 2, s
 
 
@@ -353,11 +372,20 @@ def test_dist_shift_significance_gate():
     assert small["p_stdev"] > 0.05 and small["focus"] is False, small
     assert large["p_stdev"] < 0.05 and large["focus"] is True, large
 
-    # 절대 조건(Cpk<1.33)은 게이트 대상이 아니다 — 작은 n 이어도 그대로 관심.
+    # v3: 낮은 Cpk 라도 before/after 가 **완전히 동일**하면 제외한다(v2 는 잡았다).
+    # 낮은 Cpk 자체는 CPK 탭이 이미 보여주므로, 비교 표에는 변화가 있을 때만 싣는다.
     low = _dist_rows(_payload([_make_table("WF_A", {"LOWCPK": list(_LOW)}),
                                _make_table("WF_B", {"LOWCPK": list(_LOW)})], groups))["LOWCPK"]
-    assert low["before"]["cpk"] < 1.33 and low["focus"] is True, low
+    assert low["before"]["cpk"] < 1.33 and low["focus"] is False, low
     assert low["p_mean"] == 1.0 and low["p_stdev"] == 1.0, low   # 완전 동일 표본
+    assert low["ks_d"] == 0.0, low
+
+    # 반대로 낮은 Cpk 에 실제 변화가 있으면 작은 n 이어도 잡는다 — 절대 품질 조건은
+    # 유의성 게이트를 타지 않는다(여유가 없는 항목은 작은 변화도 위험하다).
+    low_moved = _dist_rows(_payload(
+        [_make_table("WF_A", {"LOWCPK": _spread(list(_LOW), 1.3)}),
+         _make_table("WF_B", {"LOWCPK": list(_LOW)})], groups))["LOWCPK"]
+    assert low_moved["before"]["cpk"] < 1.33 and low_moved["focus"] is True, low_moved
 
     # 게이트는 큰 n 에서 사실상 무동작 — 유의성이 거의 항상 성립한다.
     assert large["p_mean"] == 1.0, large      # 평균은 고정(_spread 는 산포만 바꾼다)

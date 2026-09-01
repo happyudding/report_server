@@ -136,8 +136,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 |------|:----:|-------------|-------------|
 | `REPORT_SCHEMA_VERSION` | 41 | **전 세션 payload** — 콜드 폭풍 | `build_report_payload` 구조·탭 구성 변경 |
 | `TEMPERATURE_SCHEMA_VERSION` | 1 | Temperature 세션 payload | Temp 시트 구조 변경 |
-| `COMPARE_REPORT_SCHEMA_VERSION` | 1 | Compare 세션 payload **적재 방식** | payload 에 compare 결과를 싣는 방식 변경 |
-| `COMPARE_SCHEMA_VERSION` | 2 | compare **계산 결과**(`compare_key`) | dist_shift·equivalence 등 계산 변경 |
+| `COMPARE_REPORT_SCHEMA_VERSION` | 2 | Compare 세션 payload **적재 방식** | payload 에 compare 결과를 싣는 방식 변경 |
+| `COMPARE_SCHEMA_VERSION` | 3 | compare **계산 결과**(`compare_key`) | dist_shift·equivalence 등 계산 변경 |
 | `AI_COMMENT_SCHEMA_VERSION` | 5 | ai comment 반환 dict | 반환 키 구조 변경 + **`prompts` 프롬프트 본문 변경**(v5, docs/23 — 본문이 바뀌면 옛 sha 가 저장분과 맞아 폴백조차 안 걸린다). 룰 변경은 `.rules_rev` 몫 |
 | `MAP_SCHEMA_VERSION` | 2 | map rows 값 | die/bin 집계 결과 변경 |
 | `TEMP_MAP_SCHEMA_VERSION` | 1 | temp_map 응답 구조 | fail die 인덱스 응답 변경 |
@@ -404,6 +404,41 @@ payload 안에 `format` 필드로 실려 나가는 이름이다. **바꾸면 옛
   항상 우선이고, 양보하다 `_REWARM_BUDGET_SEC`(1시간)을 넘기면 스윕을 접는다.
   [report_extension.init_app](../server/report/report_extension.py) 이 기동하며 워커
   프로세스에서는 뜨지 않는다.
+
+### ⚠ 콜드 판정 경로의 비용 계약 (2026-09-02 — CLAUDE.md 규칙 17)
+
+`report_is_cold` → `_pending_report_ready` → `_pending_kinds` 는 **202 를 내기 전에** 도는
+판정 전용 경로다. 202 를 받은 프런트는 1s→5s 백오프로 재요청하므로 **콜드 세션 1건이
+15분간 수백 회** 이 경로를 통과하고, 같은 세션을 여러 명이 열면 그만큼 배가 된다.
+그래서 여기서 허용되는 비용은 셋뿐이다:
+
+| 허용 | 예 |
+|---|---|
+| 편집 rev SELECT 1회 | `_payload_rev` |
+| RAM dict 조회 | `cache.cache_get` / `key in cache.*_CACHE` |
+| 파일 **존재** 확인 (stat 1회) | `disk_cache.report_exists` · `ai_comment_exists` · `compare_exists` |
+
+**금지**: 본문을 읽는 `disk_cache.load_*`(gzip 해제 + JSON 파싱), 엔진·설정 재해석
+(`llm_status()` = eval_engine import + config 재해석), tables 로드, DB 다건 조회.
+설정성 판정은 `_ai_two_stage_wanted` 처럼 프로세스 단위로 메모이즈한다.
+
+그래서 판정 함수는 **값싼 짝 / 본문 짝**이 쌍으로 있다 — 폴링은 앞을, 실제로 값을 쓰는
+콜드 빌드는 뒤를 쓴다:
+
+| 값싼 짝 (판정) | 본문 짝 (사용) |
+|---|---|
+| `_ai_cache_ready` | `_ai_comment_cached` |
+| `_ai_signature_ready` | `_ai_signature_cached` |
+| `_compare_cache_ready` | `_compare_cached` |
+
+⚠ **두 짝은 같은 캐시 키·같은 파일을 봐야 한다** — 답이 갈리면 202 를 냈다가 다음
+요청에서 200 이 되는(또는 그 반대) 불일치가 생긴다.
+
+**실제 회귀**: 2026-08-28 Signature 2단계 분리가 `_pending_kinds` 에
+`_ai_two_stage_wanted()`(캐시 없는 `llm_status()`)와 `_ai_signature_cached()`(gzip 전체
+파싱)를 넣어, "AI Comment 때문에 콜드 빌드가 느려졌다" 는 신고로 나타났다. 정작 콜드
+빌드 자체(`allow_build=ai_inline` 게이트)는 정상이었고 **판정 경로만** 무거웠다.
+perf_guard `S13-cold-poll-cheap` 이 재발을 차단한다.
 
 ## 환경변수
 | 변수 | 기본값 | 설명 |

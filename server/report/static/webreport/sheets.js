@@ -494,8 +494,9 @@ function orderColumns(cols, kind) {
     && !cmpHidden(c)
     && !(kind === "issue" && String(c).trim().toLowerCase() === "category")
     && !(kind === "issue" && String(c).trim() === "구분")
-    // 토글 전용 내부 마킹 필드 + Signature 셀 렌더 보조 필드(_sig/_sigrev) 제외
-    && !/^_(grp|detail|ndetail|sig|sigrev)$/.test(String(c)));
+    // 토글 전용 내부 마킹 필드 + Signature 셀 렌더 보조 필드(_sig/_sigrev)
+    // + △σ% 셀에 붙는 산포 기원 표식(_sd_origin) 제외 — 전부 값 전달용이라 컬럼이 아니다.
+    && !/^_(grp|detail|ndetail|sig|sigrev|sd_origin)$/.test(String(c)));
 
   // source(={src}_yield 컬럼 수)가 1개면 avg 는 그 source 값과 동일해 의미가 없으므로
   // Yield/Issue 표에서 avg 컬럼을 표시하지 않는다(행 데이터의 avg 값은 그대로 유지 —
@@ -1301,6 +1302,7 @@ function renderSheetTable(rows, opts) {
       // 폰트만으로는 감당이 안 되는 극단값(예: 1278439127218.121 = 17자)은 지수 표기로 축약하고
       // 원래 값 전체는 title 툴팁에 남긴다 — 축약본이 더 짧을 때만 바꾸므로 짧은 값은 원문 그대로다.
       let cpkTitle = "";
+      let sdOrigin = "";        // △σ% 셀의 산포 증가 기원 표식(""=표시 안 함)
       if (opts.kind === "issue" && !opts.edit && issueRowSec === "CPK" && !subhead && !isEmpty
         && isBigValCol(c)) {
         // 임계 10자 = 지수 표기("1.278e+12" 9자 / 음수 10자)보다 확실히 길어지는 지점.
@@ -1340,6 +1342,13 @@ function renderSheetTable(rows, opts) {
             txt = short;
           }
         }
+        // △σ% 옆 기원 표식 — 산포가 **왜** 늘었는지(전체 확산 ↔ 소수 die 이탈)를 보여준다.
+        // 같은 △σ% 라도 조치가 다른데 숫자만으로는 구분이 안 된다(2026-09-01).
+        // 서버가 판정해 내려준 stdev_origin 을 읽기만 한다 — 프런트는 임계를 갖지 않는다.
+        if (/^stdev_delta_pct$/i.test(String(c))) {
+          const origin = r ? String(r["_sd_origin"] || "") : "";
+          if (origin === "outlier" || origin === "spread") sdOrigin = origin;
+        }
       }
       // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).
       const isSelCell = opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem);
@@ -1364,6 +1373,14 @@ function renderSheetTable(rows, opts) {
         // AI Comment 는 **빈 값도** 통과시킨다 — 백그라운드 평가 중이면 renderAiComment 가
         // "Loading 중…" 을 낸다(빈 값이면 종전대로 빈 문자열). 다른 comment 컬럼은 종전 그대로.
         cellHtml = isAiCommentCol(c) ? renderAiComment(txt) : linkifyComment(txt);
+      } else if (sdOrigin) {
+        // △σ% + 기원 표식. 숫자는 그대로 이스케이프하고 표식만 마크업으로 덧댄다.
+        const mark = sdOrigin === "outlier" ? "▲" : "▬";
+        const tip = sdOrigin === "outlier"
+          ? "소수 die 이탈로 산포 증가 (분포 본체는 유지)"
+          : "분포 전체가 퍼져 산포 증가";
+        cellHtml = `${esc(txt)} <span class="cmp-sd-origin cmp-sd-${sdOrigin}"`
+          + ` title="${esc(tip)}">${mark}</span>`;
       } else {
         cellHtml = isEmpty ? "" : esc(txt);
       }

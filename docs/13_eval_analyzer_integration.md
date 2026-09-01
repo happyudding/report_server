@@ -236,7 +236,14 @@ ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하
   `signature_options` 가 dropdown 선택지(정의된 전체 룰 — 비활성 포함 — + `UNKNOWN`).
 - **미분류**: fail 인데 발화 0건이면 셀에 `미분류` 로 표시한다. **2026-08-12 부터 엔진이
   그 자리에 `UNKNOWN` 을 명시 발화**하므로(§15) 실제로는 `Unknown` 칩이 뜬다 — `미분류`
-  표시는 엔진 UNKNOWN 룰을 꺼 둔 경우의 폴백으로 남는다. 사람이 고른 `UNKNOWN` 라벨과는
+  표시는 엔진 UNKNOWN 룰을 꺼 둔 경우의 폴백으로 남는다.
+  ⚠ **평가 제외(`rules/exclusions.yaml`)도 같은 화면이 된다** — 제외된 item 은
+  `signatures.evaluate` 가 맨 앞에서 빈 목록으로 return 해 `UNKNOWN` 에도 도달하지 못하고,
+  화면은 그것을 "미분류"로 그린다(AI Comment 도 빈다). 즉 **"일부러 안 봤다"가 "판단
+  못 했다"로 보인다**. 2026-09-02 에 그 목록의 유일한 항목이던 `_CODE_` 를 제거한 이유다
+  (fail 이 있는데 미분류로 나온다는 신고의 실제 원인이었다 —
+  [rules/CLAUDE.md](../eval_analyzer/eval_engine/rules/CLAUDE.md) §exclusions).
+  사람이 고른 `UNKNOWN` 라벨과는
   편집행 유무(`_sigrev`)로 계속 구분되고, **커버율 집계에서는 UNKNOWN 을 빼고 센다** —
   자동 발화를 성과로 세면 커버율이 가짜로 100% 가 되기 때문이다.
 - ENGR 편집: 드랍다운 N개(가로 추가 `+`) + `확정`. **엔진 제안과 값이 같아도 확정하면

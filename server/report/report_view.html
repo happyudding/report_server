@@ -139,10 +139,10 @@ body {
 .cmp-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 4px; font-size: 12px; }
 .cmp-lg { display: inline-flex; align-items: center; gap: 5px; }
 .cmp-lg i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
-/* Issue Table Compare 서브탭(ISSUE_TABLE/MAP비교/LOG비교/TESTTIME비교/동일성검증)
+/* Issue Table Compare 서브탭(ISSUE_SUMMARY/MAP비교/LOG비교/TESTTIME비교/동일성검증)
    — .distseg 세그먼트 재사용, 하위 패널 토글.
    서브탭 + '전체 펼치기' 를 한 툴바에 담아 스크롤해도 상단 고정.
-   z-index 93 = .issue-toolbar(92) 위 — ISSUE_TABLE 서브탭에선 두 툴바가 함께 고정되고
+   z-index 93 = .issue-toolbar(92) 위 — ISSUE_SUMMARY 서브탭에선 두 툴바가 함께 고정되고
    서브탭 바가 위에 얹혀야 한다. */
 .cmp-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 93;
@@ -545,6 +545,15 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue td.cpk-abbr {
   cursor: help; text-decoration: underline dotted; text-underline-offset: 2px;
 }
+/* Compare Issue Table △σ% 셀의 산포 증가 **기원** 표식 (2026-09-01).
+   같은 △σ% 라도 "분포 전체가 퍼진 것"(▬)과 "소수 die 가 튄 것"(▲)은 조치가 달라
+   숫자만으로는 구분이 안 된다. 판정은 서버(compare_issue._stdev_origin)가 하고
+   여기는 표시만 한다. 색은 경고가 아니라 구분용이라 채도를 낮게 둔다. */
+.sheet-table.kind-issue td .cmp-sd-origin {
+  cursor: help; margin-left: 2px; font-size: .85em; opacity: .8;
+}
+.sheet-table.kind-issue td .cmp-sd-outlier { color: #b45309; }  /* 소수 die 이탈 */
+.sheet-table.kind-issue td .cmp-sd-spread  { color: #64748b; }  /* 전체 확산 */
 /* Issue Table: Yield 식별/값 글자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
@@ -3254,7 +3263,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
     <!-- Temperature 모드 전용 — tabs_topbar.syncTabVisibility 가 노출을 결정한다 -->
     <button class="tab" data-tab="issue-temp" style="display:none">Issue Table Temp</button>
     <!-- Compare 모드 전용 — 위와 같은 규칙으로 노출된다.
-         서브탭 5개(ISSUE_TABLE / MAP비교 / LOG비교 / TESTTIME비교 / 동일성검증).
+         서브탭 5개(ISSUE_SUMMARY / MAP비교 / LOG비교 / TESTTIME비교 / 동일성검증).
          구 최상위 'Compare' 탭은 2026-08-27 이 탭에 흡수됐다. -->
     <button class="tab" data-tab="issue-cmp" style="display:none">Issue Table Compare</button>
     <button class="tab" data-tab="distribution">Distribution</button>
@@ -3322,7 +3331,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   <div class="panel" id="panel-issue-cmp">
     <div class="cmp-toolbar">
       <div class="cmp-subtabs distseg-group" id="cmpSubtabs">
-        <button class="distseg active" data-cmpsub="table">ISSUE_TABLE</button>
+        <button class="distseg active" data-cmpsub="table">ISSUE_SUMMARY</button>
         <button class="distseg" data-cmpsub="map">MAP비교</button>
         <button class="distseg" data-cmpsub="log">LOG비교</button>
         <button class="distseg" data-cmpsub="ttime">TESTTIME비교</button>

@@ -406,7 +406,9 @@ TEMPERATURE_SCHEMA_VERSION = 1
 #     (시트 구성·행 구조). compare 계산은 그대로 재사용하면서 report 만 다시 굽고 싶을 때.
 # v1: "Issue Table Compare" 시트 신설 (2026-08-20) — sheets 키가 늘어 옛 payload 를 쓰면
 #     탭이 빈 화면이 된다.
-COMPARE_REPORT_SCHEMA_VERSION = 1
+# v2 (2026-09-01): Distribution 행에 `_sd_origin`(산포 증가 기원 표식) 추가 + focus 룰 v3 로
+#     **행 목록 자체가 달라진다**. 옛 payload 를 쓰면 옛 판정으로 고른 행이 그대로 남는다.
+COMPARE_REPORT_SCHEMA_VERSION = 2
 
 
 def _eval_rules_suffix() -> tuple:
@@ -534,7 +536,10 @@ def report_pending_key(session, session_id: str, edits_rev: int,
 # 캐시는 그대로다(전역 REPORT_SCHEMA_VERSION bump 가 부르는 콜드 폭풍 회피 —
 # TEMPERATURE_SCHEMA_VERSION 과 같은 취지).
 # v2 (2026-08-20): new_items(After 에만 있는 신규 test item) 추가.
-COMPARE_SCHEMA_VERSION = 2
+# v3 (2026-09-01): dist_shift focus 판정 **룰 v3** — 과검출(변화 없음·개선·미세 σ) 제외
+#     게이트 + 형태 차이(ks_d) 검출 신설, thresholds 키 확장, tail_ratio_* 2개 추가.
+#     focus 불린이 바뀌므로 옛 캐시를 쓰면 Issue Table Compare 행 구성이 옛 판정으로 남는다.
+COMPARE_SCHEMA_VERSION = 3
 
 
 def compare_key(session, prep_digest: str = "") -> tuple:

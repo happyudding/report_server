@@ -573,7 +573,7 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
 const ISSUE_PANEL_MAIN = "panel-issues";
 const ISSUE_PANEL_TEMP = "panel-issue-temp";
 // ⚠ Compare 만 **탭 패널이 아니라 그 안의 서브패널**이다 (2026-08-27 Compare 탭 흡수).
-// 탭 패널 #panel-issue-cmp 는 서브탭 바 + 서브패널 5개를 담고, 이슈 표는 그 중 ISSUE_TABLE
+// 탭 패널 #panel-issue-cmp 는 서브탭 바 + 서브패널 5개를 담고, 이슈 표는 그 중 ISSUE_SUMMARY
 // 서브패널(#panel-issue-cmp-table)에만 들어간다 — renderIssueTableInto 가 대상 div 의
 // innerHTML 을 통째로 갈아치우기 때문에 서브탭 바가 그 밖에 있어야 살아남는다.
 // (Characteristic 이 #panel-trim-analysis 를 첫 서브패널에 둔 것과 같은 관례.)
@@ -613,7 +613,7 @@ function issuePanelsQueryAll(sel) {
 }
 // 인자 없는 호출의 기본 패널 — 활성 탭이 Issue 계열이면 그것, 아니면 기본 패널.
 // Compare 는 서브패널이라 .active 가 .cmp-subpanel.active 와 같은 클래스다 —
-// **ISSUE_TABLE 서브탭이 켜져 있을 때만** 잡힌다(다른 서브탭에선 이슈 툴바 자체가
+// **ISSUE_SUMMARY 서브탭이 켜져 있을 때만** 잡힌다(다른 서브탭에선 이슈 툴바 자체가
 // 안 보이므로 반환하지 않는 게 맞다).
 function activeIssuePanel() {
   return document.querySelector("#panel-issues.active, #panel-issue-temp.active, " +

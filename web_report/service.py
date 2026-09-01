@@ -144,7 +144,8 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     result = cache.cache_get(cache.AI_COMMENT_CACHE, key)
     if result is not None:
         return result, "ram"
-    result = disk_cache.load_ai_comment(upload_root, key)
+    # 본문 짝 — 호출자가 comments 를 실제로 쓴다(폴링 판정은 _ai_cache_ready 를 부른다).
+    result = disk_cache.load_ai_comment(upload_root, key)  # perf-guard: allow S13-cold-poll-cheap
     if result is not None and all(k in result for k in _AI_RESULT_KEYS):
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
@@ -165,6 +166,13 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     return result, ("build" if ok else "fallback")
 
 
+# _ai_two_stage_wanted 는 폴링 경로(_pending_kinds)에서도 불린다 — 프로세스 수명 동안
+# 1회만 판정하고 재사용한다. 판정 근거인 EVAL_LLM_* 는 server.env 기반이라 기동 중에
+# 바뀌지 않고, llm_status() 는 eval_engine import + config 재해석이라 콜드 세션 1건당
+# 수백 회 도는 경로에 두면 안 된다 (CLAUDE.md §5-17).
+_AI_TWO_STAGE = None
+
+
 def _ai_two_stage_wanted() -> bool:
     """Signature 를 먼저 내는 2단계 분리를 **쓸 이유가 있는가** — LLM 이 켜져 있는가.
 
@@ -174,13 +182,22 @@ def _ai_two_stage_wanted() -> bool:
     판정을 여기 한 곳에 둬서 예약(request_build)과 실행(run_ai_signature_build)이 서로
     다른 답을 내지 않게 한다 — 갈리면 잡이 큐에 들어갔다가 아무 일도 안 하고 끝난다.
     실패는 False(= 종전 동작)로 흡수한다. 배선 점검이 목적이 아니라 최적화 스위치다.
+
+    결과는 프로세스 단위로 메모이즈한다(위 주석) — 값이 매 호출 같아야 하는 판정이라
+    캐시가 의미를 바꾸지 않는다. 실패(False)도 캐시한다: 재시도해도 같은 설정을 다시
+    읽을 뿐이고, 실패를 캐시하지 않으면 LLM 미설정 서버에서 매 폴링마다 import 를
+    재시도하게 된다.
     """
-    try:
-        from . import ai_comment
-        return bool(ai_comment.llm_status().get("enabled"))
-    except Exception:
-        _log.debug("llm_status 조회 실패 — 2단계 분리 생략", exc_info=True)
-        return False
+    global _AI_TWO_STAGE
+    if _AI_TWO_STAGE is None:
+        try:
+            from . import ai_comment
+            # 메모이즈 대상 — 프로세스당 1회만 부른다(이 규칙이 막으려는 것이 매 폴링 호출).
+            _AI_TWO_STAGE = bool(ai_comment.llm_status().get("enabled"))  # perf-guard: allow S13-cold-poll-cheap
+        except Exception:
+            _log.debug("llm_status 조회 실패 — 2단계 분리 생략", exc_info=True)
+            _AI_TWO_STAGE = False
+    return _AI_TWO_STAGE
 
 
 def _ai_signature_cached(session, session_id: str, *, report_db,
@@ -198,7 +215,8 @@ def _ai_signature_cached(session, session_id: str, *, report_db,
     result = cache.cache_get(cache.AI_COMMENT_CACHE, key)
     if result is not None:
         return result
-    result = disk_cache.load_ai_comment(upload_root, key)
+    # 본문 짝 — 콜드 빌드가 row_signatures 를 payload 에 싣는다(판정은 _ai_signature_ready).
+    result = disk_cache.load_ai_comment(upload_root, key)  # perf-guard: allow S13-cold-poll-cheap
     if result is not None and all(k in result for k in _AI_RESULT_KEYS):
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
@@ -261,6 +279,24 @@ def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -
     """
     key = cache_policy.ai_comment_key(
         session, _preprocess.session_digest(report_db, session_id))
+    with cache.CACHE_LOCK:
+        if key in cache.AI_COMMENT_CACHE:
+            return True
+    return disk_cache.ai_comment_exists(upload_root, key)
+
+
+def _ai_signature_ready(session, session_id: str, *, report_db,
+                        upload_root: Path) -> bool:
+    """Signature 1단계 결과가 **있는가만** — 내용은 읽지 않는다 (dict/stat 1회).
+
+    `_ai_signature_cached` 의 값싼 짝이며 `_ai_cache_ready` 와 같은 형태다. 폴링 경로
+    (`_pending_kinds` → `report_is_cold`)는 "aisig 인가 ai 인가" 라는 **꼬리표 하나**만
+    필요한데, 종전에는 `_ai_signature_cached` 로 gzip 본문을 통째로 읽고 파싱했다.
+    콜드 세션 1건의 폴링이 15분간 수백 회 반복되는 경로다 (CLAUDE.md §5-17).
+    같은 파일을 보므로 `_ai_signature_cached is not None` 과 답이 같다.
+    """
+    key = cache_policy.ai_comment_key(
+        session, _preprocess.session_digest(report_db, session_id), stage="sig")
     with cache.CACHE_LOCK:
         if key in cache.AI_COMMENT_CACHE:
             return True
@@ -534,9 +570,11 @@ def _pending_kinds(session, session_id: str, *, report_db, upload_root: Path,
         # Signature 1단계가 이미 들어간 본과 그렇지 않은 본은 **내용이 다르므로** 키를
         # 갈라야 한다 (2026-08-28). 같은 키를 쓰면 Signature 가 비어 있던 본이 나중에
         # 재사용되어, 1단계 평가가 끝났는데도 화면은 계속 "미분류" 로 남는다.
-        kinds.append("aisig" if (_ai_two_stage_wanted() and _ai_signature_cached(
+        # 여기서 필요한 것은 꼬리표 하나뿐이라 **존재 확인만** 한다 — 본문을 읽는
+        # `_ai_signature_cached` 를 쓰면 폴링마다 gzip 전체를 파싱한다 (CLAUDE.md §5-17).
+        kinds.append("aisig" if (_ai_two_stage_wanted() and _ai_signature_ready(
             session, session_id, report_db=report_db,
-            upload_root=upload_root) is not None) else "ai")
+            upload_root=upload_root)) else "ai")
     if _compare_wanted(session) and not _compare_cache_ready(
             session, session_id, report_db=report_db, upload_root=upload_root):
         kinds.append("compare")
@@ -916,7 +954,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             # 만들지 않아 콜드 빌드가 중복되지 않고, LLM 이 켜진 세션에서는 'ai' 보다
             # 훨씬 먼저 끝나 Signature 컬럼이 앞당겨 채워진다. 이미 1단계 결과가 있으면
             # run_ai_signature_build 가 즉시 빠지므로 중복 예약은 값싸다.
-            if _ai_two_stage_wanted() and not _ai_signature_cached(
+            if _ai_two_stage_wanted() and not _ai_signature_ready(
                     session, session_id, report_db=report_db,
                     upload_root=upload_root):
                 compute.request_build(session_id, str(upload_root), "aisig")

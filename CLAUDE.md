@@ -589,6 +589,34 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     payload 중립인데 `PAYLOAD_NEUTRAL_KINDS` 에서 빠뜨리면 저장할 때마다 report 전체가
     콜드 재빌드된다(규칙 14 와 같은 기전).
 
+17. **AI Comment 는 콜드 빌드에 넣지 않는다 — 그리고 콜드 판정·폴링 경로는 값싸야 한다.**
+    "리포트를 먼저 띄우고 AI Comment 는 나중에 채운다"(2026-08-13 분리)를 지키는 장치가
+    둘 있는데, 둘 다 **조용히** 무너진다 — 에러가 아니라 "요즘 느리다" 로만 나타난다.
+
+    - **① 분리 게이트**: [service.py](web_report/service.py) 콜드 빌드의
+      `_ai_comment_cached(..., allow_build=ai_inline)` / `_compare_cached(..., allow_build=ai_inline)`.
+      사용자 대기 경로(`ai_inline=False`)는 **캐시 히트만 쓰고 미스면 평가하지 않는다** —
+      AI 는 백그라운드 `'ai'`/`'aisig'` 잡(`compute.request_build`)이 만들고, 화면은
+      `ai_comment_pending` 으로 "Loading 중…" 을 띄운다. **`allow_build` 를 `True` 로
+      고정하지 말 것**(perf_guard `S14-ai-inline-gate`). `ai_inline=True` 는 아무도
+      기다리지 않는 경로(프리웜·`'ai'` 잡)만 쓴다. perf_guard `S10`/`S12` 는 분리 캐시
+      **함수의 존재**만 보므로 게이트가 True 로 바뀌는 것은 못 잡는다.
+    - **② 값싼 판정**: `report_is_cold` → `_pending_report_ready` → `_pending_kinds` 는
+      라우트가 202 를 내기 전에 도는 경로이고, **콜드 세션 1건의 폴링이 15분간 수백 회**
+      반복된다(`report_is_cold` docstring). 여기서는 **존재 확인만** 한다 —
+      `disk_cache.*_exists`(stat 1회) / RAM dict 조회. 본문을 읽는 `load_*` 나 엔진을
+      import 하는 조회(`llm_status`)를 넣지 말 것(perf_guard `S13-cold-poll-cheap`).
+      설정 조회는 `_ai_two_stage_wanted` 처럼 프로세스 단위로 메모이즈한다.
+      값싼 짝과 본문 짝을 **쌍으로** 둔다: `_ai_cache_ready`/`_ai_comment_cached` ·
+      `_ai_signature_ready`/`_ai_signature_cached` · `_compare_cache_ready`/`_compare_cached`.
+      ⚠ 두 판정이 **같은 답**을 내야 한다(같은 캐시 키·같은 파일) — 갈리면 202 를 냈다가
+      200 이 되는 불일치가 생긴다.
+
+    실제 회귀 2건: 2026-08-28 Signature 2단계 분리가 `llm_status()`(eval_engine import,
+    캐시 없음)와 `load_ai_comment`(gzip 전체 파싱)를 ② 경로에 넣었다(2026-09-02 수정).
+    그 전 2026-08-13 에는 ① 이 없어 콜드 빌드가 300초 타임아웃까지 갔다.
+    → [docs/12](docs/12_web_report_cache.md) · [docs/23](docs/23_ai_comment_client_llm.md)
+
 ---
 
 ## 6. 코드 포인터

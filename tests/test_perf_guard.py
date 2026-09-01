@@ -89,6 +89,17 @@ ADD_CASES = [
      "  await save();\n"
      "  if (removeIssueRowsLocal(panel, [key], [])) rerenderIssuePanel(panel);\n"
      "}\n"),
+    # 폴링 판정 경로는 stat/RAM 조회만 — 본문 로드·엔진 조회를 되돌리면 차단.
+    ("S13-cold-poll-cheap", "web_report/service.py",
+     "    result = disk_cache.load_ai_comment(upload_root, key)",
+     "    return disk_cache.ai_comment_exists(upload_root, key)"),
+    ("S13-cold-poll-cheap", "web_report/service.py",
+     "        return bool(ai_comment.llm_status().get('enabled'))",
+     "    return _AI_TWO_STAGE"),
+    # allow_build 는 ai_inline 로만 — True 고정은 콜드 빌드 동기 평가로의 회귀.
+    ("S14-ai-inline-gate", "web_report/service.py",
+     "                        report_db=report_db, allow_build=True)",
+     "                        report_db=report_db, allow_build=ai_inline)"),
 ]
 
 REMOVE_CASES = [

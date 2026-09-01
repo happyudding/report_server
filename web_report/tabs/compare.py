@@ -40,9 +40,53 @@ EQUIV_CPK_LIMIT = 5.0        # Grade2 조건: Before/After CPK 가 둘 다 5 이
 
 # 산포 비교(dist_shift) focus 판정 임계값 — 프런트에도 thresholds 로 내려간다.
 # cpk_low(관심 경계)는 별도 상수 없이 CPK_THRESHOLD(1.33) 를 그대로 쓴다(값 정본 1곳).
-DIST_CPK_HIGH = 100.0            # 양쪽 Cpk 가 이 값 초과면 여유 과대 — 무조건 focus 제외
-DIST_STDEV_DELTA_PCT = 15.0      # |stdev 증가율(%)| 이 이 값 이상이면 focus
+#
+# perf-guard: allow S01-report-schema — 전역 bump 가 아니라 **Compare 전용** 세대를 올렸다
+# (COMPARE_SCHEMA_VERSION 2→3 = 계산 결과, COMPARE_REPORT_SCHEMA_VERSION 1→2 = payload 적재).
+# 바뀌는 것은 Compare 모드 세션의 dist_shift/Issue Table Compare 뿐이라, 전역
+# REPORT_SCHEMA_VERSION 을 올리면 무관한 전 세션이 콜드 재빌드된다(CLAUDE.md 규칙 14).
+#
+# v3 (2026-09-01) — 과검출 26건 제거 + 미검출 회수. 판정 근거는 실측 데이터
+# `data/compare_shape_v2_verify.csv`(생성기 tools/eval_testdata/make_compare_shape_testdata.py).
+# 임계는 전부 그 데이터에서 "빼야 할 것"과 "남겨야 할 것"의 경계를 보고 정했다 —
+# 바꾸려면 그 데이터로 재확인할 것(같은 근거 없이 만진 값은 회귀를 부른다).
+DIST_CPK_HIGH = 10.0             # 양쪽 Cpk 가 이 값 초과면 여유 과대 — 무조건 focus 제외.
+                                 # v2 는 100 이었다. Cpk 10 이면 불량률이 사실상 0(≈1e-23)이라
+                                 # σ 가 몇 % 흔들려도 볼 실익이 없는데, 100 은 너무 높아
+                                 # σ 가 아주 작은 항목(FP_TINY_SIGMA: Cpk 20.8→17.4, Δσ% 20~30%)이
+                                 # 전부 통과해 버렸다. 비율만 크고 절대 변화는 무의미한 대역이다.
+DIST_STDEV_DELTA_PCT = 20.0      # stdev 증가율(%) 이 이 값 이상이면 focus (v2 는 15.0).
+                                 # 15% 대역은 Cpk 1.60→1.38 로 여유가 남아 실익이 적었다
+                                 # (SD_UP L2 = Δσ% 16%). L3(44%)·L4(96%)는 그대로 검출된다.
+DIST_STDEV_DELTA_RISK_PCT = 15.0  # 단 After Cpk 가 이미 임계 미만이면 종전 15% 를 유지한다 —
+                                 # 여유가 없는 항목의 산포 증가는 작아도 위험하기 때문.
+DIST_KS_D = 0.15                 # 형태/위치 차이 검출(신규). μ·σ 가 같아도 모양이 다르면 잡는다.
+                                 # v2 는 모멘트 2개(μ,σ)만 봐서 쌍봉화·꼬리반전·완전분리가
+                                 # 통째로 미검출이었다(예: POS_SEPARATE = 평균이 σ의 6.5배
+                                 # 이동했는데 σ 가 같아 미검출). 0.15 는 보수적 값이다 —
+                                 # 대조군(POS_OVERLAP_SAME)의 ks_d 가 0.019~0.034 라 여유가 크다.
+DIST_KS_D_STRONG = 0.15          # ks_d 가 이 값 이상이면 유의성(p)을 묻지 않고 검출한다.
+                                 # μ·σ 를 보존한 형태 변화(꼬리 반전·삼봉화·절단)는 평균·산포
+                                 # p 가 원리적으로 유의할 수 없어, p 를 요구하면 영영 안 잡힌다.
+                                 # 현재 DIST_KS_D 와 같은 값이지만 σ 조건(DIST_KS_SOLO_MAX_SD)이
+                                 # 함께 걸리므로, σ 가 변한 항목은 여전히 ⑥ 의 p 분기를 탄다.
+DIST_KS_SOLO_MAX_SD = 3.0        # ks 단독 검출(⑥ p 미요구)을 허용할 최대 |Δσ%|.
+                                 # 이산 항목은 σ 가 조금만 변해도 ECDF 계단이 밀려 ks 가
+                                 # 부푼다 — σ 가 사실상 그대로일 때만 ks 를 단독 근거로 쓴다.
+DIST_CPK_RATIO_IMPROVED = 105.0  # Cpk 비(After/Before %)가 이 값 이상일 때만 '개선'으로 본다.
+                                 # 100 으로 잡으면 안 된다 — μ·σ 가 그대로면 비가 정확히
+                                 # 100.00 이라 **변화 없음이 개선으로 오인**돼 형태 검출(⑥)을
+                                 # 가로막는다(2026-09-01 실측). 5% 여유는 개선이라 부를
+                                 # 최소폭이자, 실제 개선 사례(FP_*_IMPROVED: 119~138%)와
+                                 # 충분히 떨어져 있다.
+DIST_MEANSHIFT_SIGMA = 1.0       # 평균이 Before σ 의 이 배수 이상 움직였으면 '개선'으로 보지 않는다
+                                 # (_dist_focus ③ 참조). 크게 이동한 분포는 Cpk 가 올랐어도
+                                 # 공정이 달라진 것이라 확인 대상이다.
+DIST_QUIET_KS_D = 0.10           # '사실상 같다' 판정의 형태 여유분 (_dist_focus ② 게이트)
 DIST_ALPHA = 0.05                # 노이즈 게이트 유의수준 (_dist_focus 참조)
+DIST_TAIL_RATIO = 1.15           # σ/robust-σ 가 이 값 이상이면 '산포 증가가 소수 die 이탈 기원'.
+                                 # 판정에는 쓰지 않고 payload 에 실어 화면이 구분해 보이게만 한다
+                                 # (실측: 소수 die 이탈 1.16~1.19 vs 전체적 확산 0.93~1.04).
 
 
 def build_compare_bin_delta(tables) -> list:
@@ -499,19 +543,40 @@ def _ratio_pct(a, b):
 def _dist_focus(row) -> bool:
     """산포 비교 focus(관심 항목) 판정 — 서버가 정본, 프런트는 이 플래그로 필터만 한다.
 
-    ① 무조건 제외: 양쪽 Cpk>DIST_CPK_HIGH(여유 과대) / 양쪽 σ=0·결측(고정값).
-    ② 관심: 한쪽 Cpk<CPK_THRESHOLD — **절대 품질 조건이라 유의성 게이트를 걸지 않는다**
-       (before/after 비교와 무관하게 낮은 Cpk 는 봐야 한다).
-    ③ 관심: |stdev 증가율|≥DIST_STDEV_DELTA_PCT **이고** 그 산포 변화가 유의(p<DIST_ALPHA)할 때.
-       게이트를 거는 이유: σ 추정치의 변동계수는 1/√(2(n−1)) 이라 n=15 면 ≈19% 다 —
-       표본이 작으면 15% 변화가 추정 노이즈와 구분되지 않아 오경보가 된다. n 이 수천인
-       보통의 pool 에서는 15% 변화가 언제나 유의해 이 게이트가 사실상 무동작이고,
-       작은 n(수율 낮은 항목·outlier 마스킹 후)에서만 일한다.
-       p 를 낼 수 없으면(n<3·양쪽 고정값) 종전대로 효과크기만 보고 판정한다.
-    ④ 그 외 제외. Cpk None(limit 없음·n≤1 등)은 어느 조건도 발동하지 않는다.
+    v3 (2026-09-01). v2 는 모멘트 2개(μ·σ)만 보면서 그마저도 방향·규모를 안 따져,
+    **변화가 없거나 좋아진 항목까지 잡고**(과검출) **모양이 완전히 달라진 항목은 놓쳤다**
+    (미검출). 실측 데이터 `data/compare_shape_v2_verify.csv` 기준 과검출 39건 중 26건이
+    아래 ②③ 게이트로 사라지고, 미검출 62건 중 19건을 ⑤ 가 회수한다(L3~L4 손실 0건).
 
-    p 는 **억제에만** 쓰고 포함 근거로는 쓰지 않는다 — die 는 공간 상관이 있어 p 가 실제보다
-    작게 나오므로 "유의하다→진짜"는 신뢰할 수 없다(significance.py 모듈 docstring).
+    ① 무조건 제외: 양쪽 Cpk>DIST_CPK_HIGH(여유 과대) / 양쪽 σ=0·결측(고정값).
+    ② 제외 — **사실상 같다**: 평균·산포 어느 쪽도 유의하지 않고(p≥α) 형태 차이도 작으면
+       (ks_d<DIST_QUIET_KS_D) Before/After 가 구분되지 않는다. v2 는 ③ 경로(낮은 Cpk)에
+       유의성 게이트가 아예 없어, 원래 Cpk 가 낮기만 하면 **before/after 가 같아도 무조건**
+       검출됐다(FP_LOWCPK_NOCHANGE: Δσ% −0.24~+0.02%, cpk 비 98.8~99.6% 인데 전건 검출).
+       낮은 Cpk 자체는 CPK 탭이 이미 보여주므로, **비교 표에는 변화가 있을 때만** 싣는다.
+    ③ 제외 — **개선**: Cpk 가 올랐고(≥100%) 산포도 늘지 않았으면 좋아진 것이다.
+       v2 는 |Δσ%| **절대값** 비교라 산포가 줄어도 검출됐고(FP_SD_IMPROVED: Δσ% −17~−22%,
+       Cpk 1.60→1.93/2.05), Cpk 가 0.76→1.05 로 38% 개선돼도 1.33 밑이면 잡았다
+       (FP_LOWCPK_IMPROVED). 단 평균이 σ의 DIST_MEANSHIFT_SIGMA 배 이상 움직였으면
+       개선으로 보지 않는다 — 그건 공정이 달라진 것이라 Cpk 가 올랐어도 확인 대상이다
+       (이 단서가 없으면 완전 분리 POS_SEPARATE 가 '개선'으로 묻힌다).
+    ④ 관심: 한쪽 Cpk<CPK_THRESHOLD (②③ 을 통과한 = 실제로 변한 항목만).
+    ⑤ 관심: 산포 증가 ≥DIST_STDEV_DELTA_PCT **이고** 유의(p<DIST_ALPHA)할 때.
+       After Cpk 가 이미 임계 미만이면 여유가 없으므로 DIST_STDEV_DELTA_RISK_PCT 를 쓴다.
+       유의성 게이트를 두는 이유: σ 추정치의 변동계수는 1/√(2(n−1)) 이라 n=15 면 ≈19% —
+       표본이 작으면 그 정도 변화가 추정 노이즈와 구분되지 않는다. n 이 수천인 보통의
+       pool 에서는 사실상 무동작이고, 작은 n(수율 낮은 항목·outlier 마스킹 후)에서만 일한다.
+       p 를 낼 수 없으면(n<3·양쪽 고정값) 효과크기만 보고 판정한다.
+    ⑥ 관심 — **형태/위치 차이**(신규): ks_d≥DIST_KS_D 이고 평균·산포 중 하나가 유의할 때.
+       μ·σ 가 같아도 분포가 달라진 경우를 잡는다 — v2 가 원리적으로 못 보던 축이다
+       (쌍봉화·꼬리 반전·이산화·평행 이동). ks_d 는 이미 payload 에 있던 값이라 계산 추가가
+       없다(규칙 13 — 재계산 금지).
+    ⑦ 그 외 제외. Cpk None(limit 없음·n≤1 등)은 ④ 를 발동하지 않는다.
+
+    p 는 **억제에만** 쓰고 단독 포함 근거로는 쓰지 않는다 — die 는 공간 상관이 있어 p 가
+    실제보다 작게 나오므로 "유의하다→진짜"는 신뢰할 수 없다(significance.py 모듈 docstring).
+    ⑤⑥ 이 p 를 참조하는 것도 효과크기(Δσ%·ks_d)를 이미 넘긴 행에 한해 **노이즈를 걷어내는**
+    쓰임이지, p 가 작다는 이유만으로 잡는 경로는 없다.
     """
     ca, cb = num(row["after"]["cpk"]), num(row["before"]["cpk"])
     sa, sb = num(row["after"]["stdev"]), num(row["before"]["stdev"])
@@ -519,18 +584,87 @@ def _dist_focus(row) -> bool:
         return False
     if (sa is None or sa == 0) and (sb is None or sb == 0):
         return False
+
+    sd = num(row["stdev_delta_pct"])
+    ks = num(row["ks_d"])
+    ms = num(row["meanshift_sigma"])
+    cr = num(row["cpk_ratio_pct"])
+    p_mean, p_stdev = num(row["p_mean"]), num(row["p_stdev"])
+
+    # ② 사실상 같다 — 유의성·형태 어느 쪽으로도 구분되지 않는다.
+    if ((p_mean is None or p_mean >= DIST_ALPHA)
+            and (p_stdev is None or p_stdev >= DIST_ALPHA)
+            and (ks is None or ks < DIST_QUIET_KS_D)):
+        return False
+
+    # ③ 개선 — Cpk 가 **의미 있게** 상승 + 산포 미증가 + 평균 이동 작음.
+    # cr 여유분(DIST_CPK_RATIO_IMPROVED)이 필요한 이유: μ·σ 를 그대로 둔 채 모양만 바뀌면
+    # cr 이 정확히 100.00 이 되는데, `>=100` 으로 잡으면 그 **변화 없음이 개선으로 오인**돼
+    # ⑥(형태 검출)에 닿지 못한다(2026-09-01 실측: 쌍봉화·스파이크 L4 가 전부 여기서 잘렸다).
+    # 반대로 여유분을 형태(ks)로 대신하려 해도 안 된다 — 실제 개선 사례가 평균 이동을
+    # 동반해 ks 가 커지기 때문이다(FP_LOWCPK_IMPROVED: Cpk 0.76→1.05 인데 ks 0.17~0.37).
+    # 그래서 **개선 여부는 Cpk 상승폭 하나로만** 가른다(개선 119~139% vs 무변화 100%).
+    if ((cr is not None and cr >= DIST_CPK_RATIO_IMPROVED)
+            and (sd is None or sd < DIST_STDEV_DELTA_PCT)
+            and (ms is None or ms < DIST_MEANSHIFT_SIGMA)):
+        return False
+
+    # ④ 절대 품질 — 여유가 없는 항목.
     if (ca is not None and ca < CPK_THRESHOLD) or (cb is not None and cb < CPK_THRESHOLD):
         return True
-    sd = num(row["stdev_delta_pct"])
-    if sd is None or abs(sd) < DIST_STDEV_DELTA_PCT:
-        return False
-    pv = num(row["p_stdev"])
-    return pv is None or pv < DIST_ALPHA
+
+    # ⑤ 산포 증가.
+    th = (DIST_STDEV_DELTA_RISK_PCT if (ca is not None and ca < CPK_THRESHOLD)
+          else DIST_STDEV_DELTA_PCT)
+    if sd is not None and abs(sd) >= th and (p_stdev is None or p_stdev < DIST_ALPHA):
+        return True
+
+    # ⑥ 형태/위치 차이. ks 가 DIST_KS_D_STRONG 이상이면 p 를 묻지 않는다 —
+    # ECDF 최대거리가 그만큼 벌어진 것 자체가 강한 효과크기이고, 평균·산포가 **일부러
+    # 같은** 경우(모양만 바뀐 항목)에는 그 두 p 가 애초에 유의할 수 없기 때문이다.
+    # p 를 요구하면 꼬리 반전·삼봉화·절단처럼 μ·σ 가 보존된 변화가 통째로 남는다(실측 9건).
+    #
+    # ⚠ 단 **σ 가 거의 그대로일 때만** ks 단독을 신뢰한다(DIST_KS_SOLO_MAX_SD).
+    # 값의 종류가 적은 이산(code unit) 항목은 산포가 조금만 변해도 계단이 통째로 밀려
+    # ks 가 부풀기 때문이다(실측: 15개 값 반복 데이터에서 Δσ +5% 가 ks 0.13 — 같은 변화가
+    # 연속 데이터에서는 0.02). σ 가 변한 경우는 ⑤ 가 볼 몫이고, 그 임계에 못 미치는
+    # 작은 σ 변화를 ks 로 우회 검출하면 이산 항목만 무더기로 뜬다.
+    if ks is not None and ks >= DIST_KS_D:
+        sd_quiet = sd is None or abs(sd) <= DIST_KS_SOLO_MAX_SD
+        if ks >= DIST_KS_D_STRONG and sd_quiet:
+            return True
+        if ((p_mean is not None and p_mean < DIST_ALPHA)
+                or (p_stdev is not None and p_stdev < DIST_ALPHA)):
+            return True
+    return False
 
 
 def _dist_thresholds() -> dict:
     return {"cpk_high": DIST_CPK_HIGH, "cpk_low": CPK_THRESHOLD,
-            "stdev_delta_pct": DIST_STDEV_DELTA_PCT, "alpha": DIST_ALPHA}
+            "stdev_delta_pct": DIST_STDEV_DELTA_PCT,
+            "stdev_delta_risk_pct": DIST_STDEV_DELTA_RISK_PCT,
+            "ks_d": DIST_KS_D, "meanshift_sigma": DIST_MEANSHIFT_SIGMA,
+            "cpk_ratio_improved": DIST_CPK_RATIO_IMPROVED,
+            "ks_solo_max_sd": DIST_KS_SOLO_MAX_SD,
+            "quiet_ks_d": DIST_QUIET_KS_D, "tail_ratio": DIST_TAIL_RATIO,
+            "alpha": DIST_ALPHA}
+
+
+def _tail_ratio(stdev, iqr):
+    """σ / robust-σ(IQR/1.349) — 산포가 **꼬리 때문에** 부푼 정도.
+
+    정규분포면 1.0 이다. 소수 die 가 멀리 이탈하면 σ 만 커지고 IQR 은 그대로라 값이 오른다
+    (실측: die 2% 이탈 1.16~1.19 vs 전체적 확산 0.93~1.04). **판정에는 쓰지 않는다** —
+    같은 Δσ% 라도 '전체가 퍼진 것'과 '몇 개가 튄 것'은 조치가 다른데 지표만으로는
+    구분이 안 돼 화면에서 갈라 보이게 하려는 것이다.
+
+    두 성격의 σ 증가를 판정 자체로 가르려 하지 말 것 — 그렇게 하면 소수 die 이탈
+    (FP_OUTLIER_FEW)이 전부 최우선 검출로 올라온다(2026-09-01 실측 확인).
+    """
+    s, q = num(stdev), num(iqr)
+    if s is None or q is None or q <= 0:
+        return None
+    return round_num(s / (q / 1.349), 3)
 
 
 def build_dist_shift(tables, cpk_rows) -> dict:
@@ -548,6 +682,7 @@ def build_dist_shift(tables, cpk_rows) -> dict:
       median_shift    = |med_a−med_b| / IQR_b      (robust 이동량)
       iqr_delta_pct   = (IQR_a−IQR_b) / IQR_b × 100
       ks_d            = 두 pool ECDF 최대거리(0~1, 분포 형태 차이)
+      tail_ratio_*    = σ / robust-σ — 산포가 꼬리 때문에 부푼 정도(1.0=정규, 판정 미사용)
     유의성 2종(`p_mean`=Welch t, `p_stdev`=Brown-Forsythe)은 표시(ns 마커)와 **노이즈 게이트**
     용이다 — 해석 한계와 게이트 규칙은 significance.py 모듈 docstring · _dist_focus 참조.
     정렬: meanshift_sigma 내림차순(None 최하단, tie |Δσ%|).
@@ -599,6 +734,10 @@ def build_dist_shift(tables, cpk_rows) -> dict:
             "median_shift": _norm_shift(rob_a.get("median"), rob_b.get("median"), iqr_b),
             "iqr_delta_pct": _calc_gap(rob_a.get("iqr"), iqr_b),
             "ks_d": round_num(_ks_d(sorted_a, sorted_b), 4),
+            # σ 증가의 **기원** 구분용(판정 아님 — _tail_ratio docstring 참조).
+            # 화면이 "전체적 확산"과 "소수 die 이탈"을 갈라 보이게 한다.
+            "tail_ratio_after": _tail_ratio(after["stdev"], rob_a.get("iqr")),
+            "tail_ratio_before": _tail_ratio(before["stdev"], iqr_b),
             # 유의성 — 표시(ns 마커)와 노이즈 게이트용. 평균은 Welch t(표시된 avg/stdev/n 을
             # 그대로 써 화면 값과 어긋나지 않게), 산포는 Brown-Forsythe(비정규에 강건).
             "p_mean": round_num(welch_p(num(after["average"]), num(after["stdev"]), after["n"],

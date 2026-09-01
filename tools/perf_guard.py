@@ -289,6 +289,36 @@ _RULES = [
         "doc": "docs/12_web_report_cache.md, web_report/service.py _compare_cached",
     },
     {
+        "id": "S13-cold-poll-cheap",
+        "kind": "forbid_add",
+        "paths": ["web_report/service.py"],
+        # 폴링 판정 경로가 쓰면 안 되는 "무거운" 호출들. 본문을 실제로 쓰는 콜드 빌드는
+        # `_ai_signature_cached`(내용 필요)를 계속 쓰므로 그 이름은 패턴에서 뺀다 —
+        # 여기서 막는 것은 값싼 판정 자리에 본문 로드·엔진 조회를 다시 넣는 변경이다.
+        "pattern": r"disk_cache\.load_ai_comment\(|ai_comment\.llm_status\(",
+        "why": "콜드 판정·폴링 경로(report_is_cold → _pending_kinds)는 콜드 세션 1건당 "
+               "15분간 수백 회 돈다. 여기서 gzip 본문을 읽거나(load_ai_comment) "
+               "eval_engine 을 import(llm_status)하면 202 폴링이 통째로 느려진다 "
+               "(2026-08-28 Signature 2단계 분리가 실제로 그렇게 회귀시켰다). "
+               "존재 확인은 *_exists(stat 1회), 설정 조회는 _ai_two_stage_wanted 메모이즈를 "
+               "쓸 것. 내용이 정말 필요한 자리면 면제 주석을 달 것.",
+        "doc": "CLAUDE.md §5-17, docs/12_web_report_cache.md",
+    },
+    {
+        "id": "S14-ai-inline-gate",
+        "kind": "forbid_add",
+        "paths": ["web_report/service.py"],
+        # allow_build 는 ai_inline 변수로만 넘긴다. 리터럴 True 로 굳히면 사용자 대기
+        # 경로가 엔진 평가를 동기로 돌게 된다(S10 은 함수 존재만 봐서 이걸 못 잡는다).
+        "pattern": r"allow_build\s*=\s*True",
+        "why": "AI Comment·Compare 를 콜드 빌드에서 떼어낸 유일한 방어선이 "
+               "`allow_build=ai_inline` 게이트다. True 로 고정하면 사용자가 기다리는 "
+               "콜드 빌드가 다시 eval 엔진 평가를 동기로 돌려 '리포트 먼저, AI 는 나중' "
+               "구조가 무너진다(2026-08-13 분리 이전으로 회귀). S10 은 분리 캐시 함수의 "
+               "존재만 보므로 이 변경을 잡지 못한다.",
+        "doc": "CLAUDE.md §5-17, docs/12_web_report_cache.md",
+    },
+    {
         "id": "R11-keyed-lock-cap",
         "kind": "forbid_add",
         "paths": ["web_report/cache.py"],

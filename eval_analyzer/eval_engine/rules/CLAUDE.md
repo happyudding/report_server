@@ -12,8 +12,28 @@
 | `product_taxonomy.yaml` | 허용 product_type ↔ family_product 조합. ingest 가 강제 검증(1:1 드롭다운 전제). | `_validate_product_meta()` |
 | `outcome_taxonomy.yaml` | case_outcome 의 action/result 허용 어휘 + ko/group. | `outcome_label()` / `validate_outcome()` |
 | `item_alias.yaml` | raw item명 → item_canonical 수동 별칭. | `_alias_map()` |
-| `exclusions.yaml` | 평가 제외 목록(전 제품군 공통). `item_contains`(item명 부분일치)·`units`(UNIT 정확일치, 둘 다 대소문자 무시) 매칭 시 L3 발화 전체 차단 + L6 저장 차단(AI Comment 미생성). `/pe/eval` Signatures 탭에서 편집. | `exclusion_reason(case_ctx)` |
+| `exclusions.yaml` | 평가 제외 목록(전 제품군 공통). `item_contains`(item명 부분일치)·`units`(UNIT 정확일치, 둘 다 대소문자 무시) 매칭 시 L3 발화 전체 차단 + L6 저장 차단(AI Comment 미생성). **⚠ 아래 경고 참조** — 2026-09-02 부터 **기본값은 빈 목록**이다. `/pe/eval` Signatures 탭에서 편집. | `exclusion_reason(case_ctx)` |
 | `sensitivity.yaml` | **민감도 게이지 1~5 단계표**(2026-08-28). signature 그룹 8개 × 키별 `[L1..L5]`. **엔진은 읽지 않는다** — 호출자(report_server)가 카탈로그로 노출하고, 사용자가 고른 단계를 구체값으로 굳혀 `evaluate(thresholds_override=…)` 로 넘긴다. | (서버 `eval_debug.sensitivity_catalog`) |
+
+### ⚠ exclusions.yaml — 제외는 "설명 없음"이 아니라 "설명 안 함"이다
+
+제외에 걸린 item 은 [`signatures.evaluate`](../pipeline/signatures.py) 가 **맨 앞에서**
+`signatures: []` 로 early-return 한다 — `UNKNOWN` 명시 발화(같은 함수 끝부분)에도
+**도달하지 못한다**. 그래서 서버 화면에서는 fail 이 있어도 Signature 가 `Unknown` 이
+아니라 **"미분류"**(빈 목록의 표시 폴백)로 보이고 AI Comment 도 비어 있다.
+사용자에게는 "엔진이 판단을 못 했다"로 읽혀, 실제(=일부러 안 봤다)와 정반대다.
+
+- **2026-09-02**: `item_contains: [_CODE_]` 를 **제거**했다(사용자 지시 — "fail 이면
+  무조건 발화해야 한다"). 그 전까지 이름에 `_CODE_` 가 든 항목은 fail 이어도 전부
+  미분류였다. CODE 항목에는 [`CODE_RAIL`](signatures.yaml) 전용 룰이 이미 있고,
+  아무 룰도 안 뜨면 이제 `UNKNOWN` 이 사유(`NO_LIMIT`/`NO_MATCH`…)와 함께 뜬다.
+- 회귀 방지: `tests/test_unknown_signature.py` 의
+  `test_code_items_are_not_excluded_by_default`. 제외 **메커니즘** 자체를 보는 테스트는
+  배포 yaml 이 아니라 주입한 목록으로 검증한다(설정에 흔들리지 않게).
+- 제외를 다시 넣을 때는 **"이 item 은 판정 자체가 무의미한가"** 로만 판단한다.
+  "룰이 잘 안 맞는다" 는 제외가 아니라 룰·임계값으로 푼다.
+- 편집은 `/pe/eval` Signatures 탭 — 저장이 백업 + `.rules_rev` +1(캐시 무효화)까지
+  해 준다. 파일을 손으로 고쳤으면 `.rules_rev` 를 **직접 올려야** 기존 세션이 재평가된다.
 
 ## thresholds 스코프 우선순위
 ```

@@ -224,13 +224,18 @@ function sheetSearchHtml(id, value, placeholder) {
     `<span class="sheet-search-cnt" id="${id}Cnt"></span></span>`;
 }
 
-// 검색 대상 텍스트. Item 셀은 읽기 모드 Issue Table 이면 data-col="Item", 그 외(Yield·
-// 편집 모드)는 좌측 고정열 순서(step/bin/tno/item — sheets.js orderColumns)상 4번째다.
+// 검색 대상 텍스트. Item 셀은 Issue Table 이면 읽기 모드 data-col="Item" /
+// 편집 모드 data-fcol="Item"(sheets.js — 편집 모드는 저장 셀렉터 충돌 때문에 data-col 을
+// 안 붙이고 CSS 전용 사본 data-fcol 만 붙인다), Yield 표는 둘 다 없어 좌측 고정열
+// 순서(step/bin/tno/item — sheets.js orderColumns)상 4번째다.
+// ⚠ 인덱스 폴백은 Yield 표 전용이다 — Issue Table Compare 시트는 bin 컬럼이 없어
+// Item 이 3번째라, 편집 모드에서 인덱스로 찾으면 엉뚱한 통계 셀을 본다(= Item 검색 불가).
 // comment 셀은 편집 모드에서 원문(data-raw)이 링크로 치환돼 있어 원문을 우선 쓴다.
 // terms 는 core.js searchTerms() 결과(`%` 분해된 조각) — 한 행의 Item+comment 를 이어
 // 붙인 **한 문자열**에서 조각 순서를 본다(행 전체가 한 검색 대상이라 의도한 동작이다).
 function sheetRowMatches(tr, terms) {
-  const itemCell = tr.querySelector('td[data-col="Item"]') || tr.children[3];
+  const itemCell = tr.querySelector('td[data-col="Item"], td[data-fcol="Item"]')
+    || tr.children[3];
   let txt = itemCell ? itemCell.textContent : "";
   // 서식 토큰은 벗기고 본문만 검색 대상에 넣는다 — 안 그러면 "*r[" 같은 표시문자가
   // 검색어에 걸려 엉뚱한 행이 남는다.
@@ -695,7 +700,7 @@ function issueToolbarHtml(panelId) {
   // 'TNO 전체 펼치기' 는 툴바에서 빼고 Yield 섹션 헤더의 Step 열 아래 작은 ▼ 아이콘으로
   // 옮겼다(2026-08-10 사용자 요청 — sheets.js issueSectionHeadRowsHtml). 동작·핸들러
   // (data-issue-act="toggle-all")는 그대로다.
-  // Compare 패널(ISSUE_TABLE 서브탭)의 이 표에는 섹션이 2개(Distribution/ETC)뿐이라
+  // Compare 패널(ISSUE_SUMMARY 서브탭)의 이 표에는 섹션이 2개(Distribution/ETC)뿐이라
   // 섹션 키로만 점프한다. 구 Bin Transition/Log 앵커 점프는 2026-08-27 그 표들이
   // MAP비교/LOG비교 서브탭으로 옮겨가며 없앴다 — 숨김 서브패널의 요소로
   // scrollIntoView 하면 아무 일도 일어나지 않는다.

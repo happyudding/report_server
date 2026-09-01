@@ -102,7 +102,7 @@ const TAB_RENDERERS = {
   },
   // Temperature 전용 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표 (yield_issue.js).
   "issue-temp": () => renderIssueTempTab(),
-  // Compare 전용 — 서브탭 5개(ISSUE_TABLE/MAP비교/LOG비교/TESTTIME비교/동일성검증)로
+  // Compare 전용 — 서브탭 5개(ISSUE_SUMMARY/MAP비교/LOG비교/TESTTIME비교/동일성검증)로
   // 구 최상위 Compare 탭을 흡수했다(2026-08-27, compare_issue.js + compare.js).
   // MAP비교가 Plotly 공통성 Map 을 그리므로 **PLOTLY_TABS 에 포함**한다(미니셀만 있던
   // 종전과 달라진 점 — 안 넣으면 Plotly 도착 전 진입 시 빈 맵이 남는다).

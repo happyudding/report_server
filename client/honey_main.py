@@ -1002,6 +1002,11 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_health.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lbl_ai_health.installEventFilter(self)
         self._ai_health_busy = False
+        # 확인 중 깜빡임 — 회색 고정이면 "멈춘 것"과 구분이 안 돼 진한/옅은 회색을 교대한다.
+        self._ai_health_blink = QTimer(self)
+        self._ai_health_blink.setInterval(500)
+        self._ai_health_blink.timeout.connect(self._blink_ai_health)
+        self._ai_health_blink_on = False
         self._set_ai_health(None, "확인 전")
         self.chk_ai_comment.toggled.connect(self._on_ai_comment_toggled)
         ai_row = QHBoxLayout()
@@ -1015,20 +1020,22 @@ class HoneyMainWindow(QMainWindow):
 
         # AI Model — [제안] 문장 생성 경로 (docs/23). default=서버 룰 폴백 문장(현행),
         # claude=업로드 직후 이 PC 의 로컬 Claude CLI 가 대행 생성해 서버에 push.
-        # AI Comment 가 꺼져 있으면 의미가 없어 함께 비활성. **모델 선택만** settings.json
+        # **기본값은 claude** (2026-09-02 사용자 요청) — 저장된 선택이 있으면 그것을 쓴다
+        # (예전에 default 를 직접 고른 PC 의 선택은 존중). **모델 선택만** settings.json
         # 에 영속한다 — AI Comment on/off 비영속(위 2026-08-04 이력)은 그대로다.
+        # 표시는 AI Comment 를 켠 동안만 — ⚙·신호등과 같이 `_on_ai_comment_toggled` 가
+        # setVisible 로 토글한다(꺼져 있으면 이 값이 업로드에 실리지 않아 의미가 없다).
         from PyQt6.QtWidgets import QComboBox
         self.cbo_ai_model = QComboBox()
         self.cbo_ai_model.addItems(["default", "claude"])
         saved_model = str(app_settings.get_setting("ai_model") or "")
-        if saved_model in ("default", "claude"):
-            self.cbo_ai_model.setCurrentText(saved_model)
+        self.cbo_ai_model.setCurrentText(
+            saved_model if saved_model in ("default", "claude") else "claude")
         self.cbo_ai_model.currentTextChanged.connect(
             lambda v: app_settings.set_setting("ai_model", str(v)))
-        self.cbo_ai_model.setEnabled(False)
-        self.chk_ai_comment.toggled.connect(
-            lambda on: self.cbo_ai_model.setEnabled(bool(on)))
+        self.cbo_ai_model.setVisible(False)
         self.lbl_ai_model = QLabel("AI Model")
+        self.lbl_ai_model.setVisible(False)
         model_row = QHBoxLayout()
         model_row.setSpacing(6)
         model_row.addWidget(self.lbl_ai_model)
@@ -2309,18 +2316,35 @@ class HoneyMainWindow(QMainWindow):
     # 켜는 시점에 미리 알려 주는 것이 이 신호등의 목적이다.
 
     def _set_ai_health(self, ok, detail):
-        """신호등 색·툴팁 갱신 — ok: True 초록 / False 빨강 / None 회색(확인 중)."""
+        """신호등 색·툴팁 갱신 — ok: True 초록 / False 빨강 / None 회색 깜빡임(확인 중)."""
         color = {True: "#2E7D32", False: "#C62828"}.get(ok, "#9E9E9E")
         state = {True: "사용 가능", False: "사용 불가"}.get(ok, "확인 중")
         self.lbl_ai_health.setStyleSheet(f"color:{color}; font-size:15px;")
         self.lbl_ai_health.setToolTip(
             f"Claude 연결 {state}\n{detail}\n\n클릭하면 다시 확인합니다.")
+        # 실제로 확인 중일 때만 깜빡인다(기동 직후 "확인 전"은 제외) — 결과가 오면
+        # 즉시 멈춰 고정색으로 남긴다.
+        if ok is None and self._ai_health_busy:
+            self._ai_health_blink_on = False
+            self._ai_health_blink.start()
+        else:
+            self._ai_health_blink.stop()
+
+    def _blink_ai_health(self):
+        """확인 중 깜빡임 1틱 — 진한 회색 ↔ 옅은 회색 교대."""
+        self._ai_health_blink_on = not self._ai_health_blink_on
+        color = "#E0E0E0" if self._ai_health_blink_on else "#9E9E9E"
+        self.lbl_ai_health.setStyleSheet(f"color:{color}; font-size:15px;")
 
     def _on_ai_comment_toggled(self, on):
-        """AI Comment 체크 변화 — ⚙·신호등 표시 + 켤 때 연결 확인 1회."""
+        """AI Comment 체크 변화 — ⚙·신호등·AI Model 표시 + 켤 때 연결 확인 1회."""
         on = bool(on)
         self.btn_ai_sens.setVisible(on)
         self.lbl_ai_health.setVisible(on)
+        # AI Model 은 AI Comment 를 켠 업로드에만 실린다 — 꺼져 있을 땐 숨긴다
+        # (종전엔 비활성 상태로 계속 보여, 못 쓰는 설정이 화면에 남아 있었다).
+        self.lbl_ai_model.setVisible(on)
+        self.cbo_ai_model.setVisible(on)
         if on:
             self._check_ai_health()
 
