@@ -78,8 +78,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8). **report 콜드 빌드가 `service.seed_map` 으로 RAM+디스크를 함께 채운다** (아래 "Map dies 시딩" — Map 3초 SLA) |
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
-| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode[, rules_rev][, "evalfail"]) | comment/override/전처리 편집(rev) + eval 룰 편집(ai 세션만) + 위 전부 |
-| AI_COMMENT_CACHE | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"][, sens_digest], aiver) | raw_data 편집 / 전처리 / **세션 메타 PATCH**(meta_digest) / eval 룰 편집 / **세션 민감도 게이지**(sens_digest) — **sid·edits_rev 무관**: comment 편집·스키마 bump·dedup 형제 세션에서 eval 재평가(콜드 빌드 80%)를 안 한다 (2026-08-13, 아래 "AI Comment 비동기 분리") |
+| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode[, rules_rev][, "evalfail", "evalcpk"]) | comment/override/전처리 편집(rev) + eval 룰 편집(ai 세션만) + 위 전부 |
+| AI_COMMENT_CACHE | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail", "evalcpk"][, sens_digest], aiver) | raw_data 편집 / 전처리 / **세션 메타 PATCH**(meta_digest) / eval 룰 편집 / **세션 민감도 게이지**(sens_digest) — **sid·edits_rev 무관**: comment 편집·스키마 bump·dedup 형제 세션에서 eval 재평가(콜드 빌드 80%)를 안 한다 (2026-08-13, 아래 "AI Comment 비동기 분리") |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |
 | TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |

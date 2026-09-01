@@ -119,7 +119,7 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
   이 단계가 **콜드 빌드의 80%** 였으므로(5.9s 중 4.7s) 두 겹으로 분리했다
   ([docs/12 "AI Comment 비동기 분리"](12_web_report_cache.md)):
   - **분리 캐시**: 평가 결과 dict 를 `cache_policy.ai_comment_key`
-    (`(akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver)` —
+    (`(akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail", "evalcpk"], aiver)` —
     **sid·edits_rev 불포함**)로 RAM+디스크에 저장한다. comment 편집(rev+1)·
     `REPORT_SCHEMA_VERSION` bump·dedup 형제 세션의 payload 재빌드는 캐시 히트로
     evaluate 를 건너뛴다. rawdata 편집(chash)·전처리(prep)·**세션 메타 PATCH**
@@ -204,10 +204,11 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
 - **엔진 사설 계약 핀**: `present.to_result` 의 `signatures[].evidence[].note` 포맷.
 - 캐시: 셀 **값**이 바뀌므로 `cache_policy.REPORT_SCHEMA_VERSION` 22 로 올렸다.
 
-### 6-2. 평가 범위 — fail item 만 (2026-08-11, env 토글)
+### 6-2. 평가 범위 — Issue Table 에 행이 생기는 item 만 (2026-08-11 fail, 2026-09-01 +CPK)
 
-기본은 **fail 이 1chip 이상인 item 만** 평가한다 (`WEB_REPORT_EVAL_FAIL_ONLY=1`,
-server.env). `0` 이면 종전대로 전체 item.
+기본은 **Issue Table 에 행이 생기는 item 만** 평가한다 (`WEB_REPORT_EVAL_FAIL_ONLY=1`,
+server.env) = fail 이 1chip 이상인 item(Yield 섹션) ∪ **CPK 섹션 후보**(fail 은 없지만
+worst Bin1 cpk<1.33 — 2026-09-01). `0` 이면 종전대로 전체 item.
 
 - **item 컬럼만 줄이고 chip 행은 전량 유지한다** — 필터는 `table.item_columns` 축소뿐이라
   엔진 L1/L2 가 전체 분포(cpk·이봉·outlier) 대비 fail 을 그대로 본다. fail chip 만 남기는
@@ -215,13 +216,27 @@ server.env). `0` 이면 종전대로 전체 item.
 - fail 판정 = Yield 탭·Issue Table 과 같은 규칙(`FAILTNO == item 의 TNO`, 소스 합집합) —
   `ai_comment.eval_fail_scope` 하나가 정본이고 운영 경로와 트레이스가 이걸 공유한다
   (`_eval_items`). Temperature 도 같은 기준이다(CT/HT 재판정 불일치는 아래 6-3 으로 회피).
-- 부작용(의도): 수율·cpk 정상 + 룰만 위반한 item 이 평가 대상에서 빠지므로 **ETC 자동 행
-  (`etc_auto_items`)이 생기지 않는다**. 되돌리려면 플래그를 0 으로.
+- CPK 섹션 후보 판정 = Issue Table 의 행 멤버십 함수 그대로
+  (`tabs.issue_table.cpk_issue_subjects` — worst Bin1 cpk<`CPK_THRESHOLD`, Pass/Fail unit·
+  OTP/CHIP ID 제외, Temperature 는 RT source 만). cpk 는 `tabs.cpk.build_cpk_rows` 정본으로만
+  계산한다(공식 사본 금지, 규칙 13). **스코프는 "누구를 평가할지" 만 정한다** — 그 행에
+  LOW_CPK 가 뜨는지는 엔진이 자기 threshold(`/pe/eval` 제품군 오버레이 + 세션 민감도
+  `thresholds_override`)로 판정한다. 사용자가 cpk 기준을 바꿔 안 뜨면 화면은 "미분류" 이며
+  그게 맞는 동작이다 — 서버가 탭 임계값(1.33)으로 LOW_CPK 를 덧붙이지 않는다(사용자 설정을
+  무시하게 된다). 알려진 격차: 엔진 cpk 는 전 die 모집단 + **양측 limit 필수**
+  (`pipeline/metrics.py cpk_summary`)라 편측 limit item 은 cpk=None → LOW_CPK 불가, fail 없는
+  item 은 UNKNOWN 도 안 뜬다. 엔진 cpk 를 탭(Bin1·편측 허용)과 통일할지는 별도 결정.
+- 부작용(의도): 수율·cpk **둘 다** 정상 + 룰만 위반한 item 이 평가 대상에서 빠지므로 **ETC
+  자동 행(`etc_auto_items`)이 생기지 않는다**. 되돌리려면 플래그를 0 으로. CPK 섹션 item 은
+  `_auto_etc_items` 가 seen 으로 빼므로 ETC 에 중복되지 않는다(숨긴 CPK 행도 — seen 은
+  숨김 적용 **전** 목록).
 - **적용 안 되는 2곳** — 표본함 수집(`collect_session_snapshot`)과 골든셋 검사
   (`golden_check.check_session` 은 `fail_only=False` 고정)는 **항상 전체 item**이다.
   표본이 한쪽으로 마르거나, fail 없는 골든 항목이 `[케이스없음]` 오탐으로 잡히는 걸 막는다.
 - 캐시: ai_comment 옵션 세션 키에 `evalfail` 표식이 붙는다(`cache_policy.report_key`) —
   env 토글은 rules_rev 로 감지되지 않으므로. 되돌리면 종전 키의 캐시가 그대로 재사용된다.
+  `evalcpk`(2026-09-01)는 fail-only 모집단에 CPK 후보를 더한 **코드 세대** 표식 — 같은 이유로
+  rules_rev 가 못 잡아 붙였고 되돌리지 않는다(ai 세션만 1회 콜드 재빌드, 비-AI 세션 무영향).
 - `/pe/eval` 트레이스는 범위를 요청별로 바꿀 수 있다(`scope`=fail|all|미지정=서버 기본).
   범위가 다르면 **직전 run 과의 diff 를 건너뛴다** — 모집단이 달라 added/removed 가 오보다.
 

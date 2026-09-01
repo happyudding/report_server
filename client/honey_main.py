@@ -1026,13 +1026,18 @@ class HoneyMainWindow(QMainWindow):
         # 표시는 AI Comment 를 켠 동안만 — ⚙·신호등과 같이 `_on_ai_comment_toggled` 가
         # setVisible 로 토글한다(꺼져 있으면 이 값이 업로드에 실리지 않아 의미가 없다).
         from PyQt6.QtWidgets import QComboBox
+        # 표시명 ≠ 저장값: 화면은 "claude-sonnet5" 로 보이지만 settings.json·업로드
+        # options["ai_model"] 은 계속 "claude" 다(서버 report_key·ai_suggest 계약 — 바꾸면
+        # 기존 세션 캐시 키가 갈리고 구 서버가 404 를 낸다). 값은 userData 로 든다.
         self.cbo_ai_model = QComboBox()
-        self.cbo_ai_model.addItems(["default", "claude"])
+        self.cbo_ai_model.addItem("default", "default")
+        self.cbo_ai_model.addItem("claude-sonnet5", "claude")
         saved_model = str(app_settings.get_setting("ai_model") or "")
-        self.cbo_ai_model.setCurrentText(
-            saved_model if saved_model in ("default", "claude") else "claude")
-        self.cbo_ai_model.currentTextChanged.connect(
-            lambda v: app_settings.set_setting("ai_model", str(v)))
+        self.cbo_ai_model.setCurrentIndex(max(0, self.cbo_ai_model.findData(
+            saved_model if saved_model in ("default", "claude") else "claude")))
+        self.cbo_ai_model.currentIndexChanged.connect(
+            lambda _i: app_settings.set_setting(
+                "ai_model", str(self.cbo_ai_model.currentData())))
         self.cbo_ai_model.setVisible(False)
         self.lbl_ai_model = QLabel("AI Model")
         self.lbl_ai_model.setVisible(False)
@@ -2946,7 +2951,7 @@ class HoneyMainWindow(QMainWindow):
         # AI Model (docs/23) — claude 를 고른 업로드만 키를 싣는다. **default 는 키 자체를
         # 넣지 않는다** — 옵션 원문이 서버 report_key 의 원소라, 키가 없어야 기존 세션과
         # 캐시 키가 바이트 그대로 유지된다(위 eval_sensitivity 와 같은 규약).
-        if ai_on and str(self.cbo_ai_model.currentText()) == "claude":
+        if ai_on and str(self.cbo_ai_model.currentData()) == "claude":
             options["ai_model"] = "claude"
         # AI Comment 민감도 — 게이지 단계를 **구체적인 임계값으로 굳혀서** 싣는다. 세션이
         # "그때 무슨 기준으로 판정됐나"를 자기 안에 갖게 하기 위해서다(단계표를 나중에

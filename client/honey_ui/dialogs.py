@@ -319,7 +319,7 @@ class GaugeSlider(QWidget):
     CUSTOM = 0
     LEVELS = 5
     STOPS = 6
-    _PAD = 26          # 좌우 여백 — 라벨이 눈금 밖으로 안 나가게
+    _PAD = 40          # 좌우 여백 — 양끝 라벨('1'·'사용자설정' 76px 박스)이 위젯 밖으로 안 나가게
     _RADIUS = 6
 
     changed = pyqtSignal(int)
@@ -332,7 +332,8 @@ class GaugeSlider(QWidget):
         # 눈금 6개 + '사용자설정' 라벨이 겹치지 않는 최소 폭. 고정폭인 이유는 행마다
         # 눈금 위치가 같아야 세로로 훑을 때 단계가 한눈에 비교되기 때문이다.
         # 라벨 10pt 로 키운 만큼 넓혔다 — 좁히면 '사용자설정' 이 이웃 눈금과 겹친다.
-        self.setFixedWidth(340)
+        # 2026-09-01 340→440: 마지막 칸 '사용자설정' 이 잘려 보여 창 전체와 함께 1.3배.
+        self.setFixedWidth(440)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def value(self):
@@ -432,30 +433,51 @@ class EvalSensitivityDialog(QDialog):
     LEVELS = 5
     NAME_WIDTH = 190          # SIGNATURE 영문 원문이 안 잘리는 폭 (글자 13px 기준)
     KEY_WIDTH = 240           # 가장 긴 키(subpop_density_gap_strong) 기준 (12px)
+    # 그룹 1행 최소 높이 — 키가 1~2개인 그룹도 게이지 높이(36)에 딱 붙지 않게 벌린다
+    # (2026-09-01 "행이 너무 짧다"). 다만 **고정값이면 1080p 에서 8행이 화면을 넘겨
+    # 스크롤이 생긴다**(사용자 요구: 세로·가로 어느 쪽도 스크롤 금지). 그래서 상한/하한만
+    # 두고 실제 값은 `_row_min_height()` 가 화면 높이에서 역산한다.
+    ROW_MIN_MAX = 92          # 큰 화면에서의 상한 (이 이상 벌려도 허전하기만 하다)
+    ROW_MIN_FLOOR = 38        # 하한 — 게이지(36)에 딱 붙는 값. 여기까지 내려가는 것은
+                              # 1080p 미만의 작은 화면뿐이고, 그마저 스크롤보다는 낫다
+    _KEY_LINE_H = 28          # threshold 한 줄(입력란 높이와 같게 유지)
+    # threshold 줄 사이. 키 5개 그룹(TAIL·BIMODALITY)은 이 값이 행 높이를 그대로 정하고,
+    # 그 행은 최소높이로 못 줄이는 **고정 지출**이라 1080p 예산을 여기서 잡아먹는다.
+    _KEY_GAP = 3
+    _SAFETY = 24              # 실기 폰트·DPI 편차 흡수용 여유 (스크롤 재발 방지)
     _catalog_ready = pyqtSignal(object, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("AI Comment 민감도")
-        # 폭은 (이름 150 + 게이지 300 + 키 196 + 값 76 + 기본값 힌트) 합이 들어가는 값이다 —
+        # 폭은 (이름 190 + 게이지 440 + 키 240 + 값 90 + 기본값 힌트) 합이 들어가는 값이다 —
         # 모자라면 가로 스크롤바가 생겨 값 입력란이 화면 밖으로 밀린다.
         # 높이는 내용에 맞춰 `_fit_height()` 가 정한다(그룹 수·키 수는 카탈로그가 정하므로
         # 고정값으로 두면 아래가 텅 비거나 잘린다).
-        self.resize(1060, 640)
+        # 2026-09-01 1060→1380(1.3배): 게이지 '1~사용자설정' 이 잘리던 것.
+        # 실제 하한은 `_fit_width()` 가 내용에서 재서 건다(창을 좁히면 가로 스크롤이 아니라
+        # 그냥 잘리는 구조라, 좁힐 수 없게 막는 편이 안전하다).
+        self.resize(1380, 640)
         self._settings = eval_sensitivity.load_settings()
         self._catalog = eval_sensitivity.load_cached_catalog()
         self._rows = {}          # group_id → {"steps": [...], "inputs": {key: QLineEdit}}
         self._loading = QLabel("서버에서 민감도 기준을 불러오는 중…")
 
+        # 1080p(작업영역 ~1040)에서 그룹 8개가 스크롤 없이 들어가야 한다(사용자 지정).
+        # 스크롤영역 밖 여백(chrome)이 그만큼 행에서 뺏어가므로 여백·안내문을 조인다.
         root = QVBoxLayout(self)
-        root.setSpacing(6)
+        root.setSpacing(4)
+        root.setContentsMargins(11, 7, 11, 7)
         info = QLabel(
-            "AI Comment 가 이슈를 얼마나 민감하게 잡을지 정합니다. "
-            "1 rough(굵직한 것만) ← 3 기본 → 5 tight(꼼꼼히). "
-            "값을 직접 입력하면 그 줄은 '사용자설정'이 됩니다.\n"
-            "(마우스를 가져가 대면 설명이 나옵니다.)")
-        info.setWordWrap(True)
-        info.setStyleSheet("color:#555; font-size:13px;")
+            "AI Comment 가 이슈를 얼마나 민감하게 잡을지 정합니다.  "
+            "1 rough(굵직한 것만) ← 3 기본 → 5 tight(꼼꼼히).  "
+            "값을 직접 입력하면 그 줄은 '사용자설정'이 됩니다.")
+        # **1줄 고정**(wordWrap off + 고정 높이). 켜 두면 폭에 따라 2줄이 되는데, 그 hint
+        # 54px 가 행 예산에서 그대로 빠져 아래 그룹이 잘린다(실제 렌더는 26px 인데도).
+        # 마우스오버 안내는 아래 설명바가 이미 하므로 문구에서 뺐다.
+        info.setWordWrap(False)
+        info.setFixedHeight(24)
+        info.setStyleSheet("color:#555; font-size:12px;")
         root.addWidget(info)
 
         all_row = QHBoxLayout()
@@ -481,7 +503,7 @@ class EvalSensitivityDialog(QDialog):
         # 그룹이 8개 + threshold 세로 나열이라 세로가 길다 — 화면보다 길어지면 스크롤한다.
         self._grid = QGridLayout()
         self._grid.setHorizontalSpacing(12)
-        self._grid.setVerticalSpacing(2)
+        self._grid.setVerticalSpacing(14)
         inner = QWidget()
         inner.setLayout(self._grid)
         self._scroll = QScrollArea()
@@ -495,10 +517,14 @@ class EvalSensitivityDialog(QDialog):
         root.addWidget(self._loading)
 
         self._help = QLabel(" ")
-        self._help.setWordWrap(True)
+        # wordWrap 을 끈다 — 켜 두면 긴 설명이 2~3줄로 늘어나며 그만큼 행 예산을 먹고,
+        # 늘어난 만큼 아래 그룹이 잘려 스크롤이 생긴다(높이가 내용따라 출렁이는 것도 산만).
+        # 넘치는 문구는 말줄임으로 처리하고 전문은 툴팁으로 준다.
+        self._help.setWordWrap(False)
+        self._help.setFixedHeight(26)
         self._help.setStyleSheet(
             "color:#445; background:#f4f7fb; border:1px solid #dfe6ef;"
-            "border-radius:6px; padding:6px 8px; font-size:13px;")
+            "border-radius:6px; padding:3px 8px; font-size:12px;")
         root.addWidget(self._help)
 
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
@@ -547,6 +573,105 @@ class EvalSensitivityDialog(QDialog):
         sigs = [str(s) for s in (group.get("signatures") or []) if s]
         return "<br>".join(sigs) or str(group.get("id") or "")
 
+    def _fit_rows_to_screen(self, n_rows):
+        """행 최소 높이를 **화면 예산에 맞춰 조인다** — 세로 스크롤이 안 생기는 최대치.
+
+        고정값(종전 90)은 큰 화면에선 맞지만 1080p 에선 8행이 작업영역을 넘겨 스크롤을
+        만든다. 사용자 요구는 "1080p 한 화면 + 스크롤 없음"이므로, 남는 세로를 키가 적은
+        그룹들에게 나눠 주되 예산을 넘지 않는 선까지만 준다.
+
+        행이 내용만으로 갖는 높이는 **카탈로그에서 직접 계산**한다(`_natural_row_height`).
+        Qt 에 묻는 방법을 두 번 시도했다가 둘 다 틀렸다:
+          · `inner.sizeHint()` 반복 측정 ✗ — show() 뒤 캐시돼 두 번째 적용부터 옛 값.
+          · 행 위젯의 `sizeHint()` ✗ — 재구성 직후 위젯이 아직 창에 붙기 전이라 **전부 0**
+            (이 창은 캐시본→서버본으로 두 번 그리는데, 그 두 번째가 사용자가 보는 화면이다).
+        위젯 구조는 이 클래스가 직접 만든 것이라 계산이 안전하고 타이밍도 안 탄다.
+        """
+        if self._grid is None or n_rows <= 0:
+            return
+        groups = list((self._catalog or {}).get("groups") or [])[:n_rows]
+        if len(groups) < n_rows:
+            return
+        # 여유 SAFETY: 실기의 폰트·DPI·테마가 여기 계산보다 몇 px 크게 나올 수 있다.
+        # 딱 맞게 채우면 그 몇 px 때문에 스크롤바가 되살아난다(사용자 요구는 "스크롤 없음").
+        budget = (int(self._avail_height() * 0.97)
+                  - self._chrome_height() - 8 - self._SAFETY)
+
+        # 각 행이 **내용만으로** 갖는 높이 = 그 행 세 칸(이름·게이지·threshold)의 sizeHint
+        # 중 최대. 위젯에 직접 물으므로 배치 전/후와 무관하게 같은 값이 나온다.
+        #   · `inner.sizeHint()` 를 후보마다 재는 방식 ✗ — show() 뒤 캐시돼 **두 번째
+        #     적용부터 옛 값**이 온다(이 창은 캐시본→서버본으로 두 번 그린다).
+        #   · `cellRect()` ✗ — 아직 배치 안 된 첫 호출에서 실제와 다른 값이 나온다
+        #     (해상도가 달라도 같은 값이 나오는 것으로 들통났다).
+        natural = [self._natural_row_height(g) for g in groups]
+        m = self._grid.contentsMargins()
+        fixed = (self._grid.verticalSpacing() * max(0, n_rows - 1)
+                 + m.top() + m.bottom())
+
+        best = self.ROW_MIN_FLOOR
+        for h in range(self.ROW_MIN_FLOOR, self.ROW_MIN_MAX + 1, 2):
+            if sum(max(nat, h) for nat in natural) + fixed <= budget:
+                best = h
+            else:
+                break
+        for r in range(n_rows):
+            self._grid.setRowMinimumHeight(r, best)
+        self._grid.invalidate()
+        self._grid.activate()
+
+    def _natural_row_height(self, group) -> int:
+        """행이 **내용만으로** 갖는 높이 — 세 칸(이름·게이지·threshold) 중 가장 큰 것.
+
+        실측 대조값(Malgun Gothic 9pt): 키 1개 28 / 2개 55 / 5개 136,
+        signature 5줄 75, 게이지 36. → 줄 하나가 24, 줄간격이 `_KEY_GAP`,
+        아래 여백 4 로 두면 1/2/5개가 28/55/136 으로 실측과 맞는다.
+
+        ⚠ 이 값이 실측보다 **작으면** 예산을 넘겨 스크롤이 생긴다(크면 여유가 남을 뿐이라
+        안전 측). 줄 높이·간격 상수를 바꾸면 여기 계수도 같이 확인할 것.
+        """
+        n_keys = len(group.get("keys") or [])
+        # threshold 칸: 줄(입력란 24) × 개수 + 줄간격 + 아래 여백(4).
+        line = self._KEY_LINE_H - 4
+        keys_h = (n_keys * line
+                  + max(0, n_keys - 1) * self._KEY_GAP + 4) if n_keys else 0
+        # 이름 칸: signature 를 <br> 로 이어 붙이므로 줄 수만큼 높아진다(줄당 15px).
+        n_lines = max(1, len([s for s in (group.get("signatures") or []) if s]))
+        name_h = n_lines * 15
+        return max(36, keys_h, name_h)
+
+    def _avail_height(self) -> int:
+        screen = self.screen() if hasattr(self, "screen") else None
+        avail = screen.availableGeometry() if screen else None
+        return avail.height() if avail else 900
+
+    def _chrome_height(self) -> int:
+        """스크롤영역 밖(안내문·ALL·구분선·설명바·버튼·여백)이 쓰는 세로.
+
+        레이아웃 hint 로 재는 이유: 실제 height() 는 창이 아직 안 그려졌을 때 0 이거나
+        직전 크기라 첫 렌더에서 틀린 값이 나온다.
+
+        ⚠ 숨김 판정은 `isHidden()` 이어야 한다 — `not isVisible()` 은 **창을 show() 하기
+        전에 모든 자식이 True** 라, 첫 렌더(=행 높이를 정하는 순간)에 안내문·ALL·버튼이
+        전부 없는 것으로 계산돼 chrome 이 54 로 나온다(실제 174). 그만큼 예산이 부풀어
+        행이 안 조여지고 1080p 에서 스크롤이 남았다.
+        """
+        root = self.layout()
+        if root is None:
+            return 200
+        total = 0
+        count = 0
+        for i in range(root.count()):
+            item = root.itemAt(i)
+            w = item.widget()
+            if w is self._scroll:
+                continue
+            if w is not None and w.isHidden():
+                continue          # 숨긴 _loading 은 자리를 차지하지 않는다
+            total += item.sizeHint().height()
+            count += 1
+        m = root.contentsMargins()
+        return total + root.spacing() * count + m.top() + m.bottom()
+
     def _build_rows(self):
         while self._grid.count():
             item = self._grid.takeAt(0)
@@ -554,7 +679,8 @@ class EvalSensitivityDialog(QDialog):
             if w is not None:
                 w.setParent(None)
         self._rows = {}
-        for r, group in enumerate(self._catalog.get("groups") or []):
+        groups = list(self._catalog.get("groups") or [])
+        for r, group in enumerate(groups):
             gid = str(group.get("id") or "")
             fixed = bool(group.get("gauge_fixed"))
 
@@ -576,7 +702,7 @@ class EvalSensitivityDialog(QDialog):
             # threshold 는 **세로로** 쌓는다 — 키 이름이 길어(subpop_density_gap_strong 등)
             # 가로로 늘어놓으면 창 밖으로 밀리고, 키가 5개인 그룹(TAIL·BIMODALITY)은 줄이 접힌다.
             values = QVBoxLayout()
-            values.setSpacing(1)
+            values.setSpacing(self._KEY_GAP)
             values.setContentsMargins(0, 0, 0, 4)
             inputs = {}
             for entry in group.get("keys") or []:
@@ -591,7 +717,7 @@ class EvalSensitivityDialog(QDialog):
                 label.setToolTip(help_text)
                 edit = QLineEdit()
                 edit.setFixedWidth(90)
-                edit.setFixedHeight(24)
+                edit.setFixedHeight(self._KEY_LINE_H - 4)
                 edit.setStyleSheet("font-size:13px;")
                 edit.setAlignment(Qt.AlignmentFlag.AlignRight)
                 edit.setToolTip(help_text)
@@ -616,8 +742,30 @@ class EvalSensitivityDialog(QDialog):
             self._grid.addWidget(vholder, r, 2)
 
             self._rows[gid] = {"gauge": gauge, "inputs": inputs, "fixed": fixed}
-        self._grid.setRowStretch(self._grid.rowCount(), 1)
+        # 키가 적은 그룹은 행이 게이지 높이(36)만 해서 너무 촘촘했다 — 남는 세로를 나눠
+        # 벌리되 화면 예산 안에서만(스크롤 금지). 행을 다 만든 뒤라야 sizeHint 를 잰다.
+        self._fit_rows_to_screen(len(groups))
+        self._fit_width()
         self._fit_height()
+
+    def _fit_width(self):
+        """내용이 잘리지 않는 **최소 폭**을 창에 건다.
+
+        가로 스크롤바를 꺼 둔 창이라(값 입력란이 화면 밖으로 나가면 안 되므로) 폭이
+        모자라면 스크롤이 아니라 **그냥 잘린다**. 사용자가 창을 좁히면 값 입력란과
+        '기본 N' 힌트가 소리 없이 사라지므로, 좁힐 수 없게 하한을 둔다.
+        """
+        inner = self._scroll.widget()
+        if inner is None:
+            return
+        inner.adjustSize()
+        # 내용 + 세로 스크롤바(작은 화면에선 뜬다) + 창 좌우 여백
+        bar = self._scroll.verticalScrollBar().sizeHint().width()
+        m = self.layout().contentsMargins()
+        need = inner.sizeHint().width() + bar + m.left() + m.right() + 4
+        self.setMinimumWidth(need)
+        if self.width() < need:
+            self.resize(need, self.height())
 
     def _fit_height(self):
         """내용 높이에 창을 맞춘다 — 화면보다 크면 화면에 맞추고 스크롤한다.
@@ -627,6 +775,8 @@ class EvalSensitivityDialog(QDialog):
 
         cap 은 **화면 작업영역 전체**다(사용자 지정 — 모든 Signature 가 스크롤 없이
         보여야 한다). 여백을 남기면 그룹 8개가 잘려 다시 스크롤이 생긴다.
+        `_row_min_height()` 가 같은 예산으로 행을 줄여 두므로 정상적으로는 여기서
+        cap 에 걸리지 않는다(걸린다면 그 화면이 8행을 담기엔 너무 낮다는 뜻).
         """
         inner = self._scroll.widget()
         if inner is None:
@@ -636,7 +786,10 @@ class EvalSensitivityDialog(QDialog):
         screen = self.screen() if hasattr(self, "screen") else None
         avail = screen.availableGeometry() if screen else None
         cap = int(avail.height() * 0.97) if avail else 900
-        chrome = self.height() - self._scroll.height()      # 안내문·ALL·설명바·버튼
+        # chrome 은 **레이아웃 hint 로** 잰다 — `height() - scroll.height()` 는 창이 아직
+        # 안 그려진 첫 렌더에서 직전 크기를 반영해 과소평가되고, 그만큼 창이 짧게 잡혀
+        # 세로 스크롤이 남는다(2026-09-01 1080p 회귀의 직접 원인).
+        chrome = self._chrome_height()
         self.resize(self.width(), min(cap, need + max(chrome, 0)))
         # 세로로 커진 창이 화면 아래로 삐져나가면 그만큼 다시 안 보인다 — 작업영역
         # 안으로 끌어올린다(리사이즈만으로는 위치가 그대로다).
@@ -659,7 +812,11 @@ class EvalSensitivityDialog(QDialog):
         if event.type() in (QEvent.Type.FocusIn, QEvent.Type.Enter):
             key = obj.property("threshold_key")
             if key:
-                self._help.setText(self._help_text(key))
+                text = self._help_text(key)
+                self._help.setText(text)
+                # 설명바는 1줄 고정(높이가 출렁이면 아래 그룹이 밀린다) — 길어서 잘린
+                # 문구는 툴팁으로 전문을 준다.
+                self._help.setToolTip(text)
         return super().eventFilter(obj, event)
 
     # ── 상호작용 ────────────────────────────────────────────────────────────

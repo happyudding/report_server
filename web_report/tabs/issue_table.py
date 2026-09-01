@@ -159,6 +159,25 @@ def _cpk_fail_subjects(cpk_rows):
     return fails
 
 
+def cpk_issue_subjects(cpk_rows, sources):
+    """CPK 섹션 후보 [(subject, worst cpk), ...] — 숨김·Yield 중복 제외 **전** 목록.
+
+    ``sources`` 컬럼에 있는 source 행만 보고(Temperature 는 RT 만), worst Bin1 cpk 가
+    임계값 미만이면서 Pass/Fail unit·OTP/CHIP ID 계열이 아닌 항목. 이 표에 무엇이 오르는지의
+    판정을 한곳에 모은 것이며, ``build_issue_table_rows`` 와 AI Comment 평가 범위
+    (``ai_comment.eval_fail_scope``)가 같은 함수를 쓴다 — 갈리면 평가는 됐는데 행이 없거나
+    행은 있는데 평가가 안 된 item 이 생긴다(CLAUDE.md 규칙 13).
+    """
+    src_set = set(sources)
+    src_rows = [r for r in (cpk_rows or []) if r.get("source") in src_set]
+    # unit 은 항목이 처음 등장하는 행 기준 (표시 unit 규칙과 동일).
+    units = {}
+    for r in src_rows:
+        units.setdefault(r.get("subject"), r.get("units"))
+    return [(subject, cpk) for subject, cpk in _cpk_fail_subjects(src_rows)
+            if not _cpk_skip_subject(subject, units.get(subject))]
+
+
 def build_issue_bin_summary(yield_rows):
     """Bin 별 FailTNO(Item) 구성 요약: {bin(str): [yield_row, ...]} (avg 내림차순).
 
@@ -294,19 +313,16 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # (CT/HT 는 RT limit 재판정으로 이미 잘려 있어 그 분포로 낸 cpk 를 섞으면 기준이 어긋난다).
     src_set = set(sources)
     cpk_src_rows = [r for r in (cpk_rows or []) if r.get("source") in src_set]
-    # unit 은 항목이 처음 등장하는 행 기준 (표시 unit 규칙과 동일).
-    cpk_units = {}
-    for r in cpk_src_rows:
-        cpk_units.setdefault(r.get("subject"), r.get("units"))
-    cpk_hit = [(subject, cpk) for subject, cpk in _cpk_fail_subjects(cpk_src_rows)
-               if f"CPK|{subject}" not in hidden]
-    # 제외 항목은 CPK 섹션에서만 빼고 _auto_etc_items 의 seen 에는 그대로 넘긴다
-    # (cpk_hit) — 안 그러면 여기서 뺀 항목이 룰 위반 자동 ETC 행으로 다시 올라온다.
-    # yield_items 제외도 같은 취급이다: Yield 섹션에 이미 같은 item 행이 있으므로 CPK
-    # 섹션에서만 뺀다(그 항목의 "CPK|<item>" comment 는 편집 DB 에 그대로 남는다).
-    cpk_fails = [(subject, cpk) for subject, cpk in cpk_hit
-                 if subject not in yield_items
-                 and not _cpk_skip_subject(subject, cpk_units.get(subject))]
+    # cpk<임계 전체(제외 규칙·숨김 적용 전) — _auto_etc_items 의 seen 전용. 제외 항목·숨긴
+    # 항목·yield_items 는 CPK 섹션에서만 빼고 seen 에는 그대로 넘긴다 — 안 그러면 여기서
+    # 뺀 항목이 룰 위반 자동 ETC 행으로 다시 올라온다(숨김은 2026-09-01 부터 CPK item 도
+    # 평가 대상이라 실제로 생기는 경로). yield_items 제외는 Yield 섹션에 이미 같은 item
+    # 행이 있어서다(그 항목의 "CPK|<item>" comment 는 편집 DB 에 그대로 남는다).
+    # perf-guard: allow S01-report-schema — 멤버십 판정을 cpk_issue_subjects 로 추출하고
+    # seen 을 숨김 전 목록으로 바로잡았을 뿐, 행·값·순서가 그대로라 캐시 세대와 무관하다.
+    cpk_all = _cpk_fail_subjects(cpk_src_rows)
+    cpk_fails = [(subject, cpk) for subject, cpk in cpk_issue_subjects(cpk_rows, sources)
+                 if f"CPK|{subject}" not in hidden and subject not in yield_items]
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
     # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
     # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 Bin1 기준 cpk.
@@ -343,7 +359,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # 수동 추가분(ENGR) 뒤에 룰 위반 자동 행을 잇는다 — 행 채움 로직은 동일.
     # Temp 시트에 이미 선 item 은 자동 ETC 행에서 뺀다(같은 item 이 두 곳에 겹치지 않게).
     etc_all = list(etc_items or []) + _auto_etc_items(
-        etc_auto_items, etc_items, cpk_hit, base_rows, hidden,
+        etc_auto_items, etc_items, cpk_all, base_rows, hidden,
         temp_items=temp_items)
     rows.extend(_etc_rows(tables, base_rows, etc_all, sources,
                           issue_comments=issue_comments, ai_comments=ai_comments,

@@ -93,6 +93,19 @@ def _temperature_context(tables, sources, mode, temperature_groups):
     return groups, member_names, yield_tables
 
 
+def temperature_yield_tables(tables, mode, temperature_groups):
+    """Yield 계열(Issue Table 포함)이 보는 입력 테이블 — Temperature 면 RT source 만.
+
+    `_temperature_context` 의 세 번째 반환값만 필요한 호출부(ai_comment.eval_fail_scope 의
+    CPK 섹션 후보 판정)용 얇은 래퍼 — 폴백(그룹 없음 → 전 source)까지 정본 한 곳을 탄다.
+    sources 태깅은 일회용 dict 에 하므로 호출부에 부수효과가 없다.
+    """
+    # perf-guard: allow S01-report-schema — 기존 분기 함수의 반환값 하나를 재노출한 래퍼.
+    # build_report_payload 는 이 함수를 쓰지 않아 payload 가 그대로다.
+    sources = [{"name": t.source, "file_name": t.file_name} for t in tables]
+    return _temperature_context(tables, sources, mode, temperature_groups)[2]
+
+
 # honeyform STEP 메타가 실데이터에서 사실상 항상 이 값으로 온다 — 업로드 창에서 고른
 # 공정 STEP(기본 L2)으로 **표시만** 바꾸는 대상. 다른 STEP(P1/P3 등)은 실제 구분이므로
 # 손대지 않는다 (2026-08-11 요청: "P2 라고 들어가는 부분을 그 값으로").

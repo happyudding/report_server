@@ -605,7 +605,7 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
 
     if fail_only is None:
         fail_only = ai_comment.fail_only_enabled()
-    fail_set = ai_comment.eval_fail_scope(tables) if fail_only else None
+    fail_set = ai_comment.eval_fail_scope(tables, session, selected) if fail_only else None
 
     engine_version = eval_config.ENGINE_VERSION
     sources, cases, truncated = [], [], False

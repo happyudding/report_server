@@ -418,6 +418,11 @@ def _eval_rules_suffix() -> tuple:
     rev 파일이 없으면 빈 문자열이라 아무것도 덧붙지 않는다(기존 키 불변).
     "evalfail": 평가 범위(fail item 만 ↔ 전체 item) env 토글 표식 — rules_rev 가
     감지하지 못하므로 기본(fail-only)에서만 붙어, 되돌리면 종전 키 캐시가 재사용된다.
+    "evalcpk" (2026-09-01): fail-only 범위의 **모집단이 코드로 바뀐** 표식 — fail item 에
+    Issue Table CPK 섹션 후보(cpk<1.33)를 더했다(ai_comment.eval_fail_scope). 코드 변경은
+    rules_rev(/pe/eval 저장 카운터)가 감지 못 하므로 여기서 갈아야 ai 옵션 세션의
+    payload(Signature 셀 포함)·분리 캐시가 함께 재평가된다. 되돌리지 않는 영구 표식이며,
+    전체 item 범위(env 0)는 모집단이 원래 전부라 붙지 않는다(비-AI 세션 키는 바이트 불변).
     """
     from .eval_debug import rules_rev
     parts = ()
@@ -426,7 +431,7 @@ def _eval_rules_suffix() -> tuple:
         parts += ("rules" + rev,)
     from .ai_comment import fail_only_enabled
     if fail_only_enabled():
-        parts += ("evalfail",)
+        parts += ("evalfail", "evalcpk")
     return parts
 
 
@@ -491,6 +496,10 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 # v6 (2026-09-01): 프롬프트 지시문 확장(_INSTRUCTION_EXTRA 에 "5줄은 상한이지 목표가
 #   아니다" 3줄 — 근거 없는 줄 채우기 차단). v5 와 같은 이유로 여기만 올린다: 안 올리면
 #   캐시에 굳은 옛 prompt/sha 가 그대로 나가 클라가 옛 지시문으로 대행한다.
+# (2026-09-01) 평가 모집단 확장(fail ∪ CPK 섹션 후보)은 여기를 올리지 않고
+#   `_eval_rules_suffix` 의 "evalcpk" 표식으로 갈았다 — 그 꼬리표는 report_key(ai 세션)와
+#   ai_comment_key 가 공유하므로 payload 안에 구워진 Signature 셀까지 한 번에 갈린다.
+#   반환 dict 구조는 그대로라 이 상수의 규약("구조 변경 때만")에도 맞다.
 AI_COMMENT_SCHEMA_VERSION = 6
 
 

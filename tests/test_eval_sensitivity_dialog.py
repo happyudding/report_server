@@ -236,6 +236,83 @@ def test_resolve_payload_rules():
     print("  resolve payload 규칙 OK")
 
 
+def test_fits_1080p_without_scroll():
+    """1080p 한 화면에 그룹 8개가 **스크롤 없이** 들어간다 (2026-09-01 사용자 요구).
+
+    왜 필요한가: 행 높이·안내문 줄 수·설명바 같은 걸 조금만 키워도 예산을 넘겨 세로
+    스크롤이 조용히 되살아난다. 스크롤이 생기면 아래 그룹이 안 보이는데 에러가 아니라
+    "설정이 없는 것"처럼 보인다.
+
+    실물에 가까운 그룹 8개(키 1/2/5개 섞임)로 재고, 화면 높이는 주입한다 — 테스트 PC 의
+    실제 해상도에 결과가 좌우되면 안 된다.
+    """
+    groups = []
+    for i, n_keys in enumerate([2, 1, 1, 5, 2, 1, 1, 5]):
+        groups.append({
+            "id": f"G{i}", "label_ko": "그룹", "signatures": [f"SIG_{i}"],
+            "gauge_fixed": False,
+            "keys": [{"key": f"g{i}_key_{k}", "levels": [1.0] * 5, "default": 1.0}
+                     for k in range(n_keys)]})
+    catalog = {"version": 1, "groups": groups,
+               "allowed_keys": [k["key"] for g in groups for k in g["keys"]], "help": {}}
+
+    for label, avail_h in (("1080p", 1040), ("1440p", 1400)):
+        orig = EvalSensitivityDialog._avail_height
+        EvalSensitivityDialog._avail_height = lambda self, _h=avail_h: _h
+        try:
+            eval_sensitivity.save_cached_catalog(catalog)
+            dlg = EvalSensitivityDialog()
+            dlg._apply_catalog(catalog, True)
+            # 실제 동작 경로 = 캐시본으로 그린 뒤 서버본으로 **다시** 그린다.
+            # 두 번째가 사용자가 보는 화면이라 여기서 어긋나면 실전에서 스크롤이 생긴다.
+            dlg.show()
+            QApplication.processEvents()
+            dlg._apply_catalog(catalog, True)
+            QApplication.processEvents()
+
+            inner = dlg._scroll.widget()
+            inner.adjustSize()
+            need = inner.sizeHint().height() + 8 + dlg._chrome_height()
+            cap = int(avail_h * 0.97)
+            dlg.hide()
+            assert need <= cap, \
+                f"{label}: 세로 스크롤이 생긴다 (필요 {need} > 한도 {cap})"
+            # 가로도 잘리면 안 된다 — 가로 스크롤바는 꺼 두었으므로 그냥 잘려 나간다.
+            assert inner.sizeHint().width() <= dlg._scroll.viewport().width(), \
+                f"{label}: 가로가 잘린다"
+        finally:
+            EvalSensitivityDialog._avail_height = orig
+    print("  1080p 스크롤 없음 OK")
+
+
+def test_natural_row_height_matches_qt():
+    """행 높이 추정식이 Qt 실측과 일치한다 — 어긋나면 예산 계산이 통째로 틀린다.
+
+    추정이 실측보다 **작으면** 예산을 넘겨 스크롤이 생긴다(위 테스트가 잡는다).
+    여기서는 상수(`_KEY_LINE_H`/`_KEY_GAP`)를 고쳤을 때 계수 보정을 잊지 않게 못을 박는다.
+
+    비교 대상은 행의 **내용 높이**(칸 위젯 sizeHint 의 최대)다 — `cellRect()` 를 쓰면
+    안 된다. 그리드가 남는 세로를 행에 나눠 준 뒤의 값이라, 그룹이 적어 여백이 남는
+    창에서는 내용과 무관하게 커진다(2그룹 카탈로그에서 36 짜리 행이 96 으로 나왔다).
+    """
+    dlg = _dialog()
+    dlg.show()
+    QApplication.processEvents()
+    for r, group in enumerate(CATALOG["groups"]):
+        est = dlg._natural_row_height(group)
+        act = 36                       # 게이지 높이가 바닥
+        for c in range(3):
+            item = dlg._grid.itemAtPosition(r, c)
+            if item is not None:
+                act = max(act, item.sizeHint().height())
+        assert est >= act, \
+            f"{group['id']}: 추정 {est} < 실측 {act} — 예산이 모자라 스크롤이 생긴다"
+        assert est - act <= 12, \
+            f"{group['id']}: 추정 {est} 이 실측 {act} 보다 과하게 크다(행이 좁아진다)"
+    dlg.hide()
+    print("  행 높이 추정식 = Qt 실측 OK")
+
+
 def test_settings_roundtrip():
     """OK 저장 → 다음 실행에서 그대로 복원된다(클라별 기본값)."""
     dlg = _dialog()
@@ -263,5 +340,7 @@ if __name__ == "__main__":
     test_thresholds_are_stacked_vertically()
     test_tooltip_uses_server_help()
     test_resolve_payload_rules()
+    test_fits_1080p_without_scroll()
+    test_natural_row_height_matches_qt()
     test_settings_roundtrip()
     print("전부 통과")

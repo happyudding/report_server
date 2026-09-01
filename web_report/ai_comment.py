@@ -24,7 +24,8 @@ from pathlib import Path
 import pandas as pd
 
 from .honeyform import META_COLUMNS, META_ROW_LABELS
-from .validation import webreport_eval_overrides
+from .validation import (validate_mode, webreport_eval_overrides,
+                         webreport_temperature_groups)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,8 @@ _FAMILY_FALLBACK = {
 _SEVERITY = {"OK": 0, "MONITOR": 1, "MINOR": 2, "MAJOR": 3, "CRITICAL": 4}
 _PASS_BIN = 1
 
-# 평가 범위 — 1(기본)=fail item 만(FAILTNO 1chip 이상, Yield/IssueTable 과 같은 기준),
+# 평가 범위 — 1(기본)=Issue Table 에 행이 생기는 item 만: fail item(FAILTNO 1chip 이상,
+# Yield 섹션) ∪ CPK 섹션 후보(worst Bin1 cpk<1.33, 2026-09-01 — eval_fail_scope).
 # 0=전체 item(종전 동작). 토글은 server.env 수정 + 서버 재기동.
 # ⚠ 이 필터는 **item 컬럼만** 줄인다. 선택된 item 의 chip 행(측정 행)은 전량 유지해야
 # 엔진 L1/L2 가 전체 분포(cpk·이봉·outlier) 대비 fail 을 볼 수 있다 — fail chip 만
@@ -84,16 +86,52 @@ def fail_only_enabled() -> bool:
     return _FAIL_ONLY
 
 
-def eval_fail_scope(tables):
-    """평가 대상 item 집합 — fail(FAILTNO==TNO) 이 1chip 이상인 항목. 소스 합집합.
+def eval_fail_scope(tables, session=None, selected=None):
+    """평가 대상 item 집합 = fail item ∪ Issue Table CPK 섹션 후보. 소스 합집합.
 
-    Yield 탭 / Issue Table 의 fail 귀속 규칙을 그대로 재사용한다
-    (tabs.distribution.fail_items → yield_tab.tno_to_item_map). 모드 구분 없이 같은
-    기준을 쓴다 — Temperature 의 CT/HT RT-limit 재판정은 저장된 FAILTNO 와 다르지만,
-    그 표(Issue Table Temp)는 AI Comment 대상에서 제외했으므로 어긋나지 않는다.
+    - fail item: fail(FAILTNO==TNO) 이 1chip 이상 — Yield 탭 / Issue Table 의 fail 귀속
+      규칙 그대로(tabs.distribution.fail_items → yield_tab.tno_to_item_map). 모드 구분 없이
+      같은 기준을 쓴다 — Temperature 의 CT/HT RT-limit 재판정은 저장된 FAILTNO 와 다르지만,
+      그 표(Issue Table Temp)는 AI Comment 대상에서 제외했으므로 어긋나지 않는다.
+    - CPK 섹션 후보(2026-09-01): fail 은 없지만 worst Bin1 cpk 가 임계값 미만이라 Issue
+      Table CPK 섹션에 **행이 생기는** item — 행 멤버십과 같은 함수
+      (tabs.issue_table.cpk_issue_subjects)를 쓴다. 여기는 **누구를 평가할지** 만 정한다.
+      LOW_CPK 가 뜨는지는 엔진이 자기 threshold(/pe/eval 오버레이 + 세션 민감도 override)로
+      판정하며, 기준을 바꿔 안 뜨면 화면은 "미분류" 다 — 탭 임계값으로 서버가 덧붙이지
+      않는다(사용자 설정을 무시하게 된다).
+    - `session` 이 있으면 Temperature 세션은 RT source 만으로 cpk 후보를 잰다(Issue Table 과
+      같은 테이블 — metrics.temperature_yield_tables). `selected` 는 selected_items 집합 —
+      service 경로의 tables 는 build_report_payload 의 in-place 필터 **이전** 객체라 여기서
+      걸러야 미선택 item 의 cpk 를 헛계산하지 않는다. 둘 다 None 이면 전 테이블·전 item.
     """
     from .tabs.distribution import fail_items
-    return fail_items(tables)
+    scope = set(fail_items(tables))
+    scope |= _cpk_issue_scope(tables, session, selected, exclude=scope)
+    return scope
+
+
+def _cpk_issue_scope(tables, session, selected, exclude) -> set:
+    """Issue Table CPK 섹션 후보 item 집합 (eval_fail_scope 의 cpk 쪽 절반).
+
+    cpk 는 CPK 탭 정본(tabs.cpk.build_cpk_rows, Bin1)으로만 계산한다 — 공식 사본 금지
+    (CLAUDE.md 규칙 13). `exclude`(이미 스코프인 fail item)는 후보에서 빼 계산량을 줄인다.
+    """
+    from .tabs.cpk import build_cpk_rows
+    from .tabs.issue_table import cpk_issue_subjects
+    cpk_tables = list(tables or ())
+    if session is not None:
+        from .metrics import temperature_yield_tables
+        groups = webreport_temperature_groups(session.get("webreport_options") or "",
+                                              [t.source for t in cpk_tables])
+        cpk_tables = temperature_yield_tables(
+            cpk_tables, validate_mode(session.get("mode")), groups)
+    candidates = sorted({c for t in cpk_tables for c in t.item_columns
+                         if (not selected or c in selected) and c not in exclude})
+    if not candidates:
+        return set()
+    rows = build_cpk_rows(cpk_tables, candidates)
+    return {subject for subject, _ in
+            cpk_issue_subjects(rows, [t.source for t in cpk_tables])}
 
 
 def _eval_items(table, selected, fail_set):
@@ -417,9 +455,10 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
     (2026-08-19: 엔진 case 가 item 당 1개가 되어 키에서 bin 이 빠졌다 — 소스 간 대표
     선정이라는 _rank 의 역할 자체는 그대로다.)
 
-    fail_only=None 이면 서버 기본(env). 참이면 fail 이 1chip 이상인 item 만 평가한다 —
-    그 결과 **수율·cpk 는 정상인데 룰만 위반한 item(etc_auto_items)이 생기지 않는다**.
-    의도된 동작이며, 되돌리려면 WEB_REPORT_EVAL_FAIL_ONLY=0.
+    fail_only=None 이면 서버 기본(env). 참이면 Issue Table 에 행이 생기는 item 만 평가한다
+    (fail 1chip 이상 ∪ CPK 섹션 후보 — eval_fail_scope) — 그 결과 **수율·cpk 가 둘 다
+    정상인데 룰만 위반한 item(etc_auto_items)은 생기지 않는다**. 의도된 동작이며, 되돌리려면
+    WEB_REPORT_EVAL_FAIL_ONLY=0.
 
     세션에 민감도 게이지 설정(webreport_options.eval_sensitivity)이 있으면 그 구체값을
     `thresholds_override` 로 넘긴다 — 단계표 해석은 저장 시점에 끝나 있고 여기는 숫자만
@@ -439,7 +478,7 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
     evaluate = _evaluate_fn()
     th_override = webreport_eval_overrides(session.get("webreport_options") or "") or None
     selected = {str(v) for v in (selected_items or []) if str(v)}
-    fail_set = eval_fail_scope(tables) \
+    fail_set = eval_fail_scope(tables, session, selected) \
         if (fail_only if fail_only is not None else _FAIL_ONLY) else None
     from . import build_log
     best = {}

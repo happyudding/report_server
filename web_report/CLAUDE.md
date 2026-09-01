@@ -52,9 +52,10 @@ web_report/
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드
 ├── ai_comment.py       eval_analyzer(eval_engine) 통합 접점 1/3 — IssueTable AI Comment
 │                        (ai_comment 옵션 세션 콜드 빌드에서 evaluate() 호출 → docs/13)
-│                        + **평가 범위 정본**: fail item 만 볼지의 플래그
-│                        (env WEB_REPORT_EVAL_FAIL_ONLY) 와 fail 집합 산출
-│                        (eval_fail_scope/_eval_items) — eval_debug 가 같은 함수를 쓴다
+│                        + **평가 범위 정본**: Issue Table 행 item 만 볼지의 플래그
+│                        (env WEB_REPORT_EVAL_FAIL_ONLY) 와 스코프 산출 = fail item ∪ CPK
+│                        섹션 후보(eval_fail_scope/_eval_items) — eval_debug 가 같은 함수를
+│                        쓴다. 발화 판정은 엔진 threshold 가 정본(서버가 덧붙이지 않음)
 │                        + Signature 컬럼 입력(row_signatures/signature_catalog)
 ├── eval_export.py      eval_analyzer 통합 접점 2/3 — IssueTable PTE/개발 comment 를
 │                        eval.db 스키마 별도 DB(REPORT_EVAL_DB_PATH)로 export

@@ -309,7 +309,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
       <select class="sel" id="trScope" style="width:190px"
               title="평가할 item 범위. 기본은 서버 설정(WEB_REPORT_EVAL_FAIL_ONLY)을 따릅니다.">
         <option value="">범위: 서버 설정</option>
-        <option value="fail">범위: fail item 만</option>
+        <option value="fail">범위: Issue Table item 만 (fail + cpk&lt;1.33)</option>
         <option value="all">범위: 전체 item</option>
       </select>
       <button class="btn primary" id="trRun">트레이스 실행</button>
@@ -1338,7 +1338,7 @@ async function runTrace() {
       `mode ${esc(TRACE.mode)} · ${esc(TRACE.product_type)} / ${famNote} · ` +
       `소스 ${TRACE.sources.length}개 · ${TRACE.elapsed_ms}ms` +
       (TRACE.truncated ? ` <span class="msg err">상위 ${TRACE.max_cases}건만 표시</span>` : '') +
-      `<br>범위: <b>${TRACE.fail_only ? 'fail item 만' : '전체 item'}</b> ` +
+      `<br>범위: <b>${TRACE.fail_only ? 'Issue Table item 만(fail + cpk<1.33)' : '전체 item'}</b> ` +
       `(item ${(TRACE.item_scope || {}).evaluated}/${(TRACE.item_scope || {}).total})` +
       traceCoverageText(TRACE.coverage);
     fillTraceFilters();
@@ -2851,7 +2851,7 @@ async function init() {
   $('scFam').dataset.prev = '';
   // 트레이스 범위 기본값 = 서버 env 설정. 무엇을 따라가는지 라벨에 그대로 적는다.
   $('trScope').options[0].textContent =
-    `범위: 서버 설정 (현재 ${META.eval_fail_only ? 'fail item 만' : '전체 item'})`;
+    `범위: 서버 설정 (현재 ${META.eval_fail_only ? 'Issue Table item 만(fail + cpk<1.33)' : '전체 item'})`;
   await loadThresholds();
   loaded.add('pThresholds');     // activateTab 과 같은 규약 — 성공했을 때만 기록
 }
