@@ -496,7 +496,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
   직접 편집하고, Thresholds 는 **읽기 전용**으로 default 를 보여준다(패널은 제품군 오버레이만
   저장한다 — `read_thresholds(pt="")` 가 그 뷰를 내려준다). 트레이스 탭은 세션의 제품군을
   따르므로 이 선택기와 무관하다.
-- **탭 7개** (표본함은 §14):
+- **탭 8개** (표본함은 §14):
   1. *Thresholds* — 상단 범위 선택기로 오버레이 편집. 병합 순서는
      `default → product_type(레거시 섹션) → thresholds/<PT>/_default.yaml →
      thresholds/<PT>/<FAMILY>.yaml → item_class`.
@@ -628,12 +628,21 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
      채점 탭이 `eval_admin.scoring()` 으로 혼동행렬·status 일치율·MAJOR+ 정밀도/재현율·
      수용률·signature 별 집계를 보여준다. **이 쌍이 룰 정확도 검증(calibrate 후속 3번)의
      원재료**다. 검증: [tests/test_eval_label_scoring.py](../tests/test_eval_label_scoring.py).
+  7. *AI 지시문* (2026-09-02) — AI Comment **[제안]** 문장을 만드는 LLM 에게 주는 추가
+     지시(`instructions`)와, 그래도 어겼을 때 서버가 줄 단위로 걷어낼 **금지 문구**
+     (`deny_patterns`). 정본은 `rules/ai_prompt.yaml`, 저장은 같은 파이프라인
+     (`rules_io.save_ai_prompt` → 백업 → 원자적 쓰기 → rev +1).
+     계기는 "사례를 회수했는데도 LLM 이 '적용할 사례 없음'이라 쓴다"는 신고이며, 이런 조건이
+     계속 늘어나므로 코드가 아니라 화면에서 관리하기로 했다(사용자 결정).
+     ⚠ **지시문**을 고치면 프롬프트 sha 가 갈려 저장된 [제안]이 전량 폐기·재대행되고,
+     **금지 문구**만 고치면 sha 가 그대로라 다음 push 부터 적용된다 — 성격이 다르므로
+     화면도 카드를 나눠 안내한다. 규약 전문은 [docs/23](23_ai_comment_client_llm.md).
 - **저장 파이프라인**: **낙관적 잠금** → 검증 → **no-op 판정** → `rules/_backup/` 백업(파일당
   50개, 같은 초면 `-2` 접미사) → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 →
   감사 로그 `action=eval_rules_edit`, `client_user=eval-panel`.
   ⚠ signatures.yaml 재작성은 **선두 주석 블록만 보존**하고 인라인 주석은 잃는다(백업이 이력).
-- **저장 안전장치 3종** (2026-08-05, 변경 5개 라우트 = thresholds PUT / signatures PUT /
-  signatures enabled / signature reset / exclusions PUT):
+- **저장 안전장치 3종** (2026-08-05, 변경 6개 라우트 = thresholds PUT / signatures PUT /
+  signatures enabled / signature reset / exclusions PUT / **ai_prompt PUT**):
   1. **낙관적 잠금** — 화면이 들고 있던 `base_rules_rev` 를 요청에 실어 보내고 현재 값과
      다르면 409(`conflict:true` + 현재 rev). **필드가 없어도 409** 다: 클라이언트가 이
      HTML 하나뿐이고 HTML 과 라우트는 같이 배포되므로, 필드 없는 요청 = 배포 전에 열어 둔

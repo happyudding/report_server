@@ -313,10 +313,28 @@ def _find_item_meta(tables, item):
     return None
 
 
+def _fail_bin_counts(table) -> dict:
+    """{(FAILTNO, BIN): die 수} — 테이블 인스턴스 단위 lazy 캐시.
+
+    `bin_types`/`failtno_norms` 와 같은 방식이다(tabs/common.bin_types 주석 — tables 는
+    요청마다 새 클론이라 무효화가 필요 없다). 종전에는 `_yield_metrics` 가 **item 마다**
+    전 die 를 zip 으로 훑어, 프롬프트 재료를 만드는 비용이 O(item × 소스 × die) 였다
+    (2026-08-28 클라 대행 프롬프트와 함께 들어온 신규 비용). 한 번 세어 두면 item 조회는
+    dict lookup 1회다. 집계 규칙은 그대로라 값이 바뀌지 않는다.
+    """
+    cached = getattr(table, "_fail_bin_counts_cache", None)
+    if cached is None:
+        from collections import Counter
+        from .tabs.common import bin_types
+        from .tabs.yield_tab import failtno_norms
+        cached = Counter(zip(failtno_norms(table), bin_types(table)))
+        table._fail_bin_counts_cache = cached
+    return cached
+
+
 def _yield_metrics(tables, item, bin_) -> dict:
     """Yield 행 fail/total 집계 — FAILTNO==item TNO AND BIN==bin (yield_tab 규칙)."""
-    from .tabs.common import bin_types
-    from .tabs.yield_tab import _tno_norm, failtno_norms
+    from .tabs.yield_tab import _tno_norm
 
     bin_s = str(bin_)
     fail = 0
@@ -328,9 +346,7 @@ def _yield_metrics(tables, item, bin_) -> dict:
         if tno is None:
             continue
         matched = True
-        for b, ft in zip(bin_types(t), failtno_norms(t)):
-            if ft == tno and b == bin_s:
-                fail += 1
+        fail += _fail_bin_counts(t).get((tno, bin_s), 0)
     if not matched or not total:
         return {}
     return {"fail_count": fail, "total_count": total, "yield": 1 - fail / total}

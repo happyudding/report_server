@@ -1,0 +1,31 @@
+# AI Comment [제안] 지시문 · 금지 문구 — /pe/eval "AI 지시문" 탭에서 편집한다.
+#
+# instructions : 프롬프트 base 지시문 뒤에 순서대로 덧붙는 문장. 프롬프트에 들어가므로
+#                저장하면 prompt sha 가 갈려 기존 [제안] 이 폐기되고 Honey 가 재대행한다.
+# deny_patterns: 서버가 클라 push 를 받을 때 [제안] 을 **줄 단위**로 걷어내는 정규식.
+#                프롬프트에 안 들어가므로 sha 는 그대로 — 다음 push 부터 적용된다.
+#                only_with_precedents: true 면 선례가 실제로 프롬프트에 실린 item 에만 적용.
+instructions:
+- id: keep_precedents
+  enabled: true
+  text: 주어진 과거 사례를 버리거나 부정하는 문장은 쓰지 마라 - "직접 적용할 수 있는 사례는
+    없다/확인되지 않았다/해당 사례 없음" 같은 표현은 전부 금지다.
+- id: refine_with_precedents
+  enabled: true
+  text: 과거 사례는 제안을 다듬는 재료다 - 조건이 완전히 같지 않아도 그 사례의 판단 근거와
+    조치 중 지금 쓸 수 있는 부분을 골라 점검 항목으로 바꿔 써라.
+- id: no_distortion
+  enabled: true
+  text: 사실을 왜곡하지 마라 - 사례에 없는 내용을 사례가 말한 것처럼 쓰지 말고 사례의 수치
+    조치 결과를 바꾸거나 과장하지 마라.
+- id: empty_precedents
+  enabled: true
+  text: 과거사례 목록이 실제로 비어 있을 때만 사례를 언급하지 말고 발화 signature 와 현재
+    수치만으로 써라.
+deny_patterns:
+- id: precedent_denial
+  enabled: true
+  only_with_precedents: true
+  regex: 사례(는|가|은|이|도|를)?\s*(직접\s*|바로\s*|그대로\s*)*(없|확인되지\s*않|존재하지\s*않|찾을\s*수\s*없|해당\s*없|적용되지\s*않|적용할\s*수\s*없|(직접\s*)?(적용|참고)(이|은|는|하기)?\s*(어렵|불가|힘들))
+  note: 사례를 버리는 문장만 제거한다. "사례와 달리 …", "사례에서 확인되지 않은 항목" 같은
+    비교문은 조사가 달라 통과한다.

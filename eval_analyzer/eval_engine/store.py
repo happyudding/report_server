@@ -6,6 +6,7 @@ import difflib
 import hashlib
 import re
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 
@@ -14,6 +15,11 @@ import yaml
 from . import config
 
 SCHEMA_VERSION = 10  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+
+# search_precedents 의 run 단위 결과 캐시(rows_cache) 보호용. evaluate 가 case 를 스레드로
+# 병렬 처리하므로(api._MAX_WORKERS) 같은 캐시 dict 에 여러 스레드가 동시에 닿는다.
+# 캐시 자체는 호출자가 만들어 넘긴다(모듈 전역 캐시가 아니다 — run 이 끝나면 사라진다).
+_PRECEDENT_CACHE_LOCK = threading.Lock()
 
 # 선례 이름 비교에서 떼어낼 공통 토큰(소문자 — item_canonical 이 이미 소문자다).
 # 측정 단계(init/code/trim/p1/p2)·전원 도메인(pwr1/pwr2)·test number(t + 숫자) 표기라
@@ -779,7 +785,8 @@ def name_similarity(a: str, b: str) -> float:
 
 def search_precedents(value_type, item_canonical, family_product=None,
                       limit=None, exclude_case_id=None, exclude_session_id=None,
-                      exclude_analysis_key=None, fired_signatures=None, conn=None) -> list:
+                      exclude_analysis_key=None, fired_signatures=None, conn=None,
+                      rows_cache=None) -> list:
     """DB_SCHEMA §9: 동일 value_type + item_canonical 유사도>=threshold (+ family_product).
 
     bin 은 매칭 조건에서 제외(더 폭넓게 참고). 후보를 SQL 로 좁힌 뒤
@@ -800,6 +807,16 @@ def search_precedents(value_type, item_canonical, family_product=None,
     얼마나 닮았나"를 판단할 수 없어, 소비자(AI Comment 프롬프트)가 과거/현재를 같은 자로
     대조할 수 있게 하기 위해서다. 전부 LEFT JOIN 이라 통계가 없는 선례(CSV 적재분 등)는
     그 컬럼만 None 이고 행은 그대로 남는다 — 매칭·정렬·dedup 규칙은 종전과 동일하다.
+
+    `rows_cache` (2026-09-02): **run 단위 SQL 결과 캐시** — `{params 튜플: rows}`.
+    이 SQL 의 파라미터는 value_type·family_product·exclude 세션뿐이고 **item 은 들어가지
+    않는다**(이름 매칭은 아래 difflib 후처리). 그래서 한 evaluate 안의 case 수십~수백 건이
+    전부 **같은 쿼리**를 되풀이하며 case 마다 `sqlite3.connect` + WAL PRAGMA 까지 새로
+    열었다(실측: L5 가 L2 의 5배, 선례 0건인데도 — 2026-09-02). dict 를 주면 같은 파라미터의
+    두 번째 호출부터 쿼리를 건너뛴다. 주지 않으면 종전과 완전히 동일하다.
+    ⚠ 캐시된 행은 **여러 case 가 공유**하므로 절대 제자리에서 고치지 말 것 — 아래에서
+    `similarity` 를 붙일 때 반드시 사본(dict(r))에 쓴다. evaluate 는 case 를 스레드로
+    병렬 처리하므로(api._MAX_WORKERS) 캐시 조회/적재는 `_PRECEDENT_CACHE_LOCK` 아래서 한다.
     """
     if conn is None and not config.DB_PATH.exists():
         return []
@@ -817,7 +834,13 @@ def search_precedents(value_type, item_canonical, family_product=None,
              FROM fail_case fc
              JOIN item_master im ON im.item_id = fc.item_id
              JOIN product_master pm ON pm.product_name = fc.product_name
-             LEFT JOIN evaluation ev ON ev.case_id = fc.case_id
+             -- 평가도 **최신 1건**만 (2026-09-02). 제한이 없으면 재평가할 때마다 쌓인
+             -- evaluation 행 수만큼 같은 case 가 복제돼(실측 case 당 평균 9.5행, 최대 49)
+             -- 아래 dedup 이 대표행을 잘못 고르고 반환 행 수가 시간이 갈수록 늘어난다.
+             -- raw_metrics/features 가 이미 쓰는 규약과 같게 맞춘 것이며, 부수적으로
+             -- status·primary signature 가 "임의 run" 이 아니라 "최신 평가" 기준이 된다.
+             LEFT JOIN evaluation ev ON ev.eval_id = (SELECT MAX(eval_id) FROM evaluation
+                                                       WHERE case_id = fc.case_id)
              LEFT JOIN case_signature cs ON cs.eval_id = ev.eval_id AND cs.role='primary'
              LEFT JOIN label l ON l.case_id = fc.case_id
              LEFT JOIN case_outcome co ON co.case_id = fc.case_id
@@ -842,8 +865,20 @@ def search_precedents(value_type, item_canonical, family_product=None,
     params = (value_type, family_product, family_product,
               exclude_session_id, exclude_session_id,
               exclude_analysis_key, exclude_analysis_key)
-    with _scope(conn) as c:
-        rows = [dict(r) for r in c.execute(sql, params).fetchall()]
+    if rows_cache is None:
+        with _scope(conn) as c:
+            rows = [dict(r) for r in c.execute(sql, params).fetchall()]
+    else:
+        # ⚠ 락으로 **조회와 실행을 함께** 감싼다(single-flight). 조회만 감싸면 evaluate 의
+        # case 스레드들이 동시에 미스를 보고 각자 같은 쿼리를 던져 캐시가 무의미해진다
+        # (실측: 3 case → connect 3회 그대로). 여기서 기다리는 스레드는 어차피 그 쿼리
+        # 결과가 있어야 진행할 수 없으므로 직렬화가 손해가 아니다.
+        with _PRECEDENT_CACHE_LOCK:
+            rows = rows_cache.get(params)
+            if rows is None:
+                with _scope(conn) as c:
+                    rows = [dict(r) for r in c.execute(sql, params).fetchall()]
+                rows_cache[params] = rows
 
     def _rank(r):  # 같은 case 의 여러 (label×outcome) 행 중 대표행: 최신 label > comment 있는 행
         """대표행 선정 정렬키 — (label_id, human_comment 유무). 큰 쪽이 이긴다."""
@@ -851,12 +886,15 @@ def search_precedents(value_type, item_canonical, family_product=None,
 
     fired = {s for s in (fired_signatures or []) if s}
     best = {}
-    for r in rows:
-        if exclude_case_id is not None and r["case_id"] == exclude_case_id:
+    for row in rows:
+        if exclude_case_id is not None and row["case_id"] == exclude_case_id:
             continue
-        sim = name_similarity(item_canonical, r["item_canonical"] or "")
+        sim = name_similarity(item_canonical, row["item_canonical"] or "")
         if sim < config.PRECEDENT_NAME_SIMILARITY:
             continue
+        # ⚠ rows 는 캐시일 수 있어 **여러 case 가 공유**한다 — similarity 는 case 마다
+        # 다르므로 반드시 사본에 쓴다(제자리 수정은 다른 case 의 정렬을 오염시킨다).
+        r = dict(row)
         r["similarity"] = sim
         # dedup 은 **(제품, lot, item)** 단위다 — case_id 단위로 묶으면 과거에 bin 별로
         # 쪼개져 적재된 case(2026-08-19 이전 데이터·CSV 적재분)가 같은 item 인데도 각각

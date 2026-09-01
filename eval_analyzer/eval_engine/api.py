@@ -79,6 +79,15 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
             _case["_th_override"] = _ovr           # 전 case 공유(읽기 전용)
             _case["_th_override_digest"] = _digest
 
+    # 선례검색 SQL 결과의 **run 단위 공유 캐시** (2026-09-02). 그 쿼리의 파라미터는
+    # value_type·family·exclude 세션뿐이라 item 이 달라도 결과가 같은데, 종전에는 case 마다
+    # DB 를 새로 열고 같은 쿼리를 되풀이했다(실측 L5 가 L2 의 5배 — 선례 0건인데도).
+    # `_th_override` 와 같은 방식으로 case 에 실어 보낸다(전역 상태 금지 — 동시 evaluate 가
+    # 서로를 덮어쓰지 않게). generate_comment=False 면 L5 자체를 건너뛰므로 무해하다.
+    precedent_cache = {}
+    for _case in run_ctx["cases"]:
+        _case["_precedent_cache"] = precedent_cache
+
     # 레벨별 누적 소요(ms) — 종전에는 총소요 1줄뿐이라 "L1/L2 가 느리다" 를 확인하거나
     # 최적화 효과를 증명할 수치가 엔진에 전혀 없었다(2026-08-19 계측 추가).
     # 워커 스레드에서 더하므로 GIL 아래 float 누적이다 — 관측용이라 정밀 동기화는 불필요.

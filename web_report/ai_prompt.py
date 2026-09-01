@@ -29,6 +29,13 @@
    (`store.search_precedents` 가 최신 run 의 raw_metrics/features 를 JOIN →
    `present._precedent_result` 가 계약 dict 에 담는다).
 이 파일은 **순수 함수**를 유지한다 — DB 접근 없음, 재료는 전부 인자로 받는다.
+
+**운영자 지시문·금지 문구** (2026-09-02, `rules` 인자): "사례를 버리는 문장을 쓰지 마라"
+같은 조건은 앞으로도 계속 늘어나므로 코드가 아니라 `/pe/eval` "AI 지시문" 탭
+(rules/ai_prompt.yaml)에서 관리한다. `instructions` 는 프롬프트 뒤에 붙고(= sha 가 갈려
+기존 [제안] 폐기 → 재대행), `deny_patterns` 는 프롬프트에 들어가지 않고 push 수용 때
+줄 단위 필터로만 쓰인다(sha 불변 — 다음 push 부터 적용). 위 `_INSTRUCTION_EXTRA` 는
+그대로 둔다(사본 계약과 무관한 이 프로젝트 고정 지시).
 """
 from __future__ import annotations
 
@@ -98,6 +105,66 @@ _INSTRUCTION_EXTRA = (
     "확인할 근거가 부족한 항목은 쓰지 말고 아예 빼라 - 줄 수를 맞추려고 일반론을 넣지 마라."
     "주어진 재료로 판단할 수 없는 부분은 단정하지 말고 무엇을 더 확인해야 하는지로 써라."
 )
+
+
+def instruction_lines(rules) -> list:
+    """운영자 지시문(rules/ai_prompt.yaml `instructions`) → 프롬프트에 넣을 문장 목록.
+
+    엔진 `_rules.ai_prompt_instructions` 와 **같은 규칙**이다(enabled 만, 선언 순서 유지,
+    빈 text 제외). 두 경로가 같은 지시를 받아야 서버 LLM 과 클라 대행이 같은 품질을 낸다.
+    재료는 호출부(ai_comment)가 `eval_debug.ai_prompt_rules()` 로 읽어 넘긴다 — 이 모듈은
+    순수 함수라 파일을 열지 않는다.
+    """
+    out = []
+    for item in (rules or {}).get("instructions") or []:
+        if not isinstance(item, dict) or item.get("enabled") is False:
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def compile_deny_patterns(rules) -> list:
+    """금지 문구(`deny_patterns`) → [(id, only_with_precedents, compiled regex)].
+
+    프롬프트에는 들어가지 않는다(sha 불변) — 클라가 push 한 [제안] 을 서버가 받을 때
+    줄 단위로 거르는 데만 쓴다. 컴파일 실패는 **건너뛴다**: 저장 시 `/pe/eval` 이 이미
+    검증하므로 평시엔 없고, 손으로 고친 yaml 때문에 push 전체가 막히면 안 된다.
+    """
+    out = []
+    for item in (rules or {}).get("deny_patterns") or []:
+        if not isinstance(item, dict) or item.get("enabled") is False:
+            continue
+        raw = str(item.get("regex") or "").strip()
+        if not raw:
+            continue
+        try:
+            out.append((str(item.get("id") or ""),
+                        item.get("only_with_precedents") is not False,
+                        re.compile(raw)))
+        except re.error:
+            continue
+    return out
+
+
+def strip_denied_lines(text, patterns, has_precedents: bool) -> str:
+    """[제안] 에서 금지 문구에 걸리는 **줄만** 제거. 전부 걸리면 "".
+
+    줄 단위인 이유: [제안] 은 '- ' 항목 여러 줄이라, 사례를 버리는 한 줄이 섞여 있어도
+    나머지 점검 항목은 쓸모가 있다. 통째로 버리면 사용자는 룰 문장으로 되돌아간 것만 본다.
+    `only_with_precedents` 패턴은 선례가 실제로 프롬프트에 실린 item 에만 적용한다 —
+    사례가 0건인 item 의 "참고할 사례가 없어 …" 는 **사실**이라 지우면 왜곡이 된다.
+    """
+    if not isinstance(text, str) or not text or not patterns:
+        return text if isinstance(text, str) else ""
+    active = [rx for _id, only_prec, rx in patterns
+              if has_precedents or not only_prec]
+    if not active:
+        return text
+    kept = [ln for ln in text.split("\n")
+            if not any(rx.search(ln) for rx in active)]
+    return "\n".join(kept).strip()
 
 
 def split_comment(comment) -> tuple[str, str, str] | None:
@@ -226,6 +293,17 @@ def _has_detail(p: dict) -> bool:
                                   "signature", "bin"))
 
 
+def _precedent_count(case: dict) -> int:
+    """프롬프트에 실제로 실리는 선례 건수 — `_precedent_lines` 와 **같은 기준**.
+
+    금지 문구의 `only_with_precedents` 게이트가 이 수를 본다. comment 가 없는 선례는
+    프롬프트에 안 들어가므로(문장 재료가 안 된다) 여기서도 세지 않는다 — 기준이 갈리면
+    "사례를 줬다고 판단해 지웠는데 실제로는 안 준" 경우가 생긴다.
+    """
+    return sum(1 for p in (case.get("precedents") or [])
+               if str((p or {}).get("comment") or "").strip())
+
+
 def _precedent_lines(case: dict) -> str:
     """선례 전량 목록 — 상세가 있으면 다행 블록, 없으면 한 줄.
 
@@ -268,11 +346,16 @@ def _item_head(case: dict, enrich: dict) -> str:
     return head
 
 
-def build_prompt(case: dict, enrich: dict | None = None) -> str | None:
+def build_prompt(case: dict, enrich: dict | None = None,
+                 rules: dict | None = None) -> str | None:
     """case dict → LLM 프롬프트. 재료가 모자라면 None(그 item 은 폴백 유지 = 무해).
 
     구조는 recommend._build_prompt(L122~164) 를 따르되 이 프로젝트에서 3가지를 더한다
     (docs/23): 지시문 확장(_INSTRUCTION_EXTRA) · 현재 통계 줄 · 선례 상세 블록.
+
+    `rules` 는 운영자가 `/pe/eval` 에서 편집한 지시문(rules/ai_prompt.yaml)이다. 엔진
+    `_build_prompt` 와 마찬가지로 **고정 지시문 뒤·재료 앞**에 들어간다. None 이면
+    종전 프롬프트와 바이트 동일하다(sha 불변).
 
     `enrich` 는 **현재 케이스 쪽 재료**다(과거 쪽은 엔진이 case dict 에 실어 준다).
     순수 입력이라 이 함수는 DB 를 열지 않는다(결정성 유지 — 호출부 ai_comment.py 가
@@ -295,6 +378,7 @@ def build_prompt(case: dict, enrich: dict | None = None) -> str | None:
     lines = [
         _INSTRUCTION,
         _INSTRUCTION_EXTRA,
+        *instruction_lines(rules),
         _item_head(case, enrich),
         f"status: {case.get('status')} / primary: {case.get('primary_signature')}",
         f"secondary: {', '.join(str(s) for s in secondary)}",
@@ -317,22 +401,29 @@ def prompt_sha(prompt: str) -> str:
     return hashlib.sha256(str(prompt).encode("utf-8")).hexdigest()[:12]
 
 
-def build_prompts(cases_by_item: dict, enrich_by_item: dict | None = None) -> dict:
-    """build_ai_comments 의 대표 case dict → {item_raw: {"prompt","sha"}}.
+def build_prompts(cases_by_item: dict, enrich_by_item: dict | None = None,
+                  rules: dict | None = None) -> dict:
+    """build_ai_comments 의 대표 case dict → {item_raw: {"prompt","sha","precedents"}}.
 
     키는 **item_raw**(Issue Table join 키 — comments 의 row_key 꼬리와 같은 값)다.
     프롬프트를 못 만든 item 은 키 자체를 만들지 않는다(클라 대행 대상에서 빠진다).
     `enrich_by_item` 은 같은 키(item_raw)로 찾는 build_prompt 의 enrich 모음이다.
+    `rules` 는 운영자 지시문(build_prompt 참조).
+
+    `precedents` 는 그 프롬프트에 실린 선례 건수다 — 금지 문구의 `only_with_precedents`
+    게이트가 push 수용 때 이 값을 본다(service.apply_ai_suggestions). sha 재계산 없이
+    "사례를 줬는가"를 알 수 있어야 하므로 prompts dict 에 함께 싣는다.
     """
     enrich_by_item = enrich_by_item or {}
     out = {}
     for item, case in (cases_by_item or {}).items():
         if not item:
             continue
-        prompt = build_prompt(case, enrich_by_item.get(item))
+        prompt = build_prompt(case, enrich_by_item.get(item), rules)
         if prompt is None:
             continue
-        out[str(item)] = {"prompt": prompt, "sha": prompt_sha(prompt)}
+        out[str(item)] = {"prompt": prompt, "sha": prompt_sha(prompt),
+                          "precedents": _precedent_count(case)}
     return out
 
 

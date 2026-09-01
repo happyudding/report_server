@@ -26,7 +26,11 @@ SPECIFICITY_ORDER = ["MISSING_LIMIT", "CONSTANT_VALUE",
                      # 그래도 맨 앞부류에 둔다 — 데이터 품질 축(값이 측정량이 아니라
                      # 판정 코드다)이라 성격이 위 둘과 같고, 순서 정합 검증이 전 id 를 요구한다.
                      "FUNC_FAIL",
-                     "EQUIPMENT_SUSPECT", "RING_FAIL",
+                     # DUT_FAIL 은 장비 축(EQUIPMENT_SUSPECT)과 나란히 둔다 — 원인을
+                     # **측정 하드웨어의 한 채널**로 지목하므로 웨이퍼 공간 존보다
+                     # 구체적이다. 공간 룰과 함께 떠도 관계 선언이 없어 둘 다 목록에
+                     # 남고, 같은 severity 면 여기 순서로 primary 가 정해진다.
+                     "EQUIPMENT_SUSPECT", "DUT_FAIL", "RING_FAIL",
                      # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER.
                      # SPOT_FAIL(국부 뭉침)은 존보다 구체적이지만 존으로 설명되면 그쪽이
                      # 조치가 분명하므로 뒤에 둔다(CENTER 와 겹칠 때는 아예 목록에서

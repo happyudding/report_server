@@ -177,7 +177,8 @@ def _apply_replacement(fired: list, docs: dict, ctx_values: dict):
             fired.append({"id": sig_id, "status_hint": doc["status_hint"], "score": None,
                           "evidence": [_format_evidence(t, ctx_values)
                                        for t in doc.get("evidence", [])],
-                          "action_ko": doc.get("action_ko"), "replaced": sorted(drop)})
+                          "action_ko": _fill_action(doc.get("action_ko"), ctx_values),
+                          "replaced": sorted(drop)})
     return fired, replaced
 
 
@@ -268,6 +269,34 @@ def _format_evidence(template, ctx_values):
     value = ctx_values.get(primary_key) if keys else None
     value = round(value, 4) if isinstance(value, (int, float)) else None
     return {"signal_code": primary_key.upper(), "value": value, "note": note}
+
+
+def _fill_action(text, ctx_values):
+    """action_ko 의 `{키}` 를 그 case 의 실제 값으로 치환 — evidence 와 같은 치환 규약.
+
+    **조치 대상을 지목해야 말이 되는 문구**를 위한 것이다. `DUT_FAIL` 의
+    "DUT {dut_top} 에 Fail 집중" 이 첫 사용처인데, 채널 번호가 빠지면 사용자는 무엇을
+    점검해야 할지 알 수 없다.
+
+    발화 시점(L3)에 채우는 이유는 `action_ko` 소비자가 여럿이기 때문이다 — L5 코멘트,
+    LLM 프롬프트, `present` 가 내보내는 signature 목록(서버 `ai_prompt.py` 가 읽는다),
+    관리자 트레이스. 하류에서 각자 채우면 사본이 늘고 한 곳만 빠뜨려도 사용자 화면에
+    `{dut_top}` 이 그대로 보인다.
+
+    ⚠ 값이 없으면 `{키}` 를 **그대로 남긴다**. 빈칸으로 지우면 "DUT  에 Fail 집중" 이 되어
+    값이 누락된 사실이 사람 눈에 안 보인다 — 중괄호가 남아야 이상하다는 게 드러난다.
+    `{` 가 없는 평범한 action_ko(배포 룰 대부분)는 원문 객체를 그대로 반환한다.
+    """
+    if not text or "{" not in text:
+        return text
+
+    def repl(mo):
+        val = ctx_values.get(mo.group(1))
+        if val is None:
+            return mo.group(0)
+        return f"{val:.4g}" if isinstance(val, float) else str(val)
+
+    return re.sub(r"\{(\w+)\}", repl, text)
 
 
 def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
@@ -384,14 +413,16 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             evidence = [_format_evidence(t, ctx_values) for t in sig.get("evidence", [])]
             fired.append({"id": sig["id"], "status_hint": sig["status_hint"],
                           "score": None, "evidence": evidence,
-                          "action_ko": sig.get("action_ko")})
+                          "action_ko": _fill_action(sig.get("action_ko"), ctx_values)})
 
     if subpop_doc is not None:
         subpop = _evaluate_subpop_gap(features)
         applies[f"{_BIMODALITY_ID}.modality_v2"] = features.get("modality_v2") is not None
         if subpop is not None:
             fired.append({"id": _BIMODALITY_ID, "status_hint" : subpop_doc["status_hint"],
-                          "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
+                          "score":None, "evidence" : subpop["evidence"],
+                          "action_ko": _fill_action(subpop_doc.get("action_ko"), ctx_values),
+                          "modality_v2":subpop["modality_v2"]})
 
     # 관계 4종은 **순서가 의미를 가진다**: 해석을 선점한 것이 있으면 나머지를 통째로 지우고
     # (단독) → 합칠 것을 합치고(대체) → 감출 것을 감춘 뒤(제거) → 남은 것들 사이에서 대표를

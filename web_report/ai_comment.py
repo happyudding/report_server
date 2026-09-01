@@ -442,6 +442,20 @@ def _prompt_enrich(best: dict, tables) -> dict:
         return {}
 
 
+def _ai_prompt_rules() -> dict:
+    """운영자 지시문(`/pe/eval` AI 지시문 탭) — 실패해도 프롬프트는 만들어야 한다.
+
+    `eval_debug` 는 엔진 import 허용 3곳 중 하나이자 룰 파일 읽기 창구다. 그쪽이 이미
+    예외를 삼키지만(빈 목록 반환), 모듈 부재 같은 import 단계 실패까지 여기서 막는다.
+    """
+    try:
+        from . import eval_debug
+        return eval_debug.ai_prompt_rules()
+    except Exception:                                   # noqa: BLE001
+        logger.warning("ai_comment: 지시문 로딩 실패 — 기본 프롬프트로 진행", exc_info=True)
+        return {}
+
+
 def build_ai_comments(tables, session, selected_items=None, fail_only=None,
                       generate_comment: bool = True):
     """tables(모드 변형 후) 를 소스별로 evaluate 해 IssueTable 입력 dict 반환.
@@ -513,7 +527,8 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
     # None 이라 재료가 없다 — 빈 dict 로 계약 키만 유지한다.
     if generate_comment:
         from .ai_prompt import build_prompts
-        out["prompts"] = build_prompts(best, _prompt_enrich(best, tables))
+        out["prompts"] = build_prompts(best, _prompt_enrich(best, tables),
+                                       _ai_prompt_rules())
     else:
         out["prompts"] = {}
     return out

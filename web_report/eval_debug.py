@@ -54,7 +54,8 @@ def rules_files() -> dict:
     return {"thresholds": Path(config.THRESHOLDS_FILE),
             "signatures": Path(config.SIGNATURES_FILE),
             "product_taxonomy": Path(config.PRODUCT_TAXONOMY_FILE),
-            "exclusions": Path(config.EXCLUSIONS_FILE)}
+            "exclusions": Path(config.EXCLUSIONS_FILE),
+            "ai_prompt": Path(config.AI_PROMPT_FILE)}
 
 
 def overlay_path(product_type, family_product=None) -> Path:
@@ -113,6 +114,45 @@ def exclusions() -> dict:
     doc = exclusions_doc()
     return {"item_contains": [str(v) for v in (doc.get("item_contains") or [])],
             "units": [str(v) for v in (doc.get("units") or [])]}
+
+
+def ai_prompt_rules() -> dict:
+    """rules/ai_prompt.yaml 정규화 — AI Comment [제안] 지시문 + 서버 금지 문구.
+
+    반환 = {"instructions": [{id, enabled, text}],
+            "deny_patterns": [{id, enabled, only_with_precedents, regex, note}]}.
+    **엔진이 아니라 서버가 소비하는 몫도 함께 담는다** — `instructions` 는 프롬프트 조립
+    (ai_prompt.build_prompts)이, `deny_patterns` 는 클라 push 수용(service)이 쓴다.
+    엔진 import 는 규칙 #8 로 3곳 고정이므로 이 파일이 읽기 창구다.
+
+    운영 조회 경로(콜드 빌드)가 요청마다 부르므로 **예외를 삼키고 빈 목록**을 준다 —
+    yaml 이 깨져도 프롬프트는 종전 형태로 나가야 한다(지시는 부가 재료).
+    """
+    try:
+        _eval_path()
+        from eval_engine.pipeline._rules import ai_prompt_doc
+        doc = ai_prompt_doc() or {}
+    except Exception:                                   # noqa: BLE001 - 조회 경로 보호
+        logger.warning("ai_prompt.yaml 로딩 실패 — 지시문 없이 진행", exc_info=True)
+        return {"instructions": [], "deny_patterns": []}
+    instructions = []
+    for item in doc.get("instructions") or []:
+        if not isinstance(item, dict):
+            continue
+        instructions.append({"id": str(item.get("id") or ""),
+                             "enabled": item.get("enabled") is not False,
+                             "text": str(item.get("text") or "")})
+    patterns = []
+    for item in doc.get("deny_patterns") or []:
+        if not isinstance(item, dict):
+            continue
+        patterns.append({"id": str(item.get("id") or ""),
+                         "enabled": item.get("enabled") is not False,
+                         "only_with_precedents":
+                             item.get("only_with_precedents") is not False,
+                         "regex": str(item.get("regex") or ""),
+                         "note": str(item.get("note") or "")})
+    return {"instructions": instructions, "deny_patterns": patterns}
 
 
 def signatures_raw() -> list:

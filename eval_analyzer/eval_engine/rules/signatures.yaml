@@ -311,6 +311,31 @@ signatures:
                "fail_spread_norm {fail_spread_norm}", "fail_count {fail_count}"]
 
 
+  # DUT(테스터 채널/소켓) 축 — **웨이퍼 좌표가 아니라 측정 하드웨어**로 fail 이 몰렸나.
+  # 공간 룰(E1/EDGE/CENTER/RING/SPOT)이 "웨이퍼 어디에서 났나" 라면 이 룰은 "어느 채널에서
+  # 났나" 다. 원인이 아예 다르다 — 공간은 공정, DUT 는 소켓 접촉·채널 회로·핸들러라
+  # 조치 부서부터 갈린다. 그래서 관계 선언(exclusive/hidden_by/suppressed_by/replaces)을
+  # 두지 않는다: 공간 룰과 함께 떠도 둘 다 사실이고 둘 다 보여야 한다.
+  # 판정자는 **점유율**(dut_fail_share) — 공간 4종이 배수에서 점유율로 갈아탄 것과 같은
+  # 이유다. 배수(dut_fail_ratio)는 상한이 채널 수(n_dut_sites)라 DUT 8개짜리와 4개짜리가
+  # 같은 임계값을 쓸 수 없다. 배수는 evidence 로만 싣는다(사용자에겐 "균등 대비 몇 배" 가
+  # 직관적이다).
+  # ⚠ DUT 가 1개면 features 가 None 을 돌려줘 미발화한다 — 채널이 하나면 점유율이 정의상
+  # 항상 1.0 이라 편중이라는 말 자체가 성립하지 않는다.
+  - id: DUT_FAIL
+    when_metric: { dut_fail_share: ">=dut_fail_share_min",
+                   fail_count: ">dut_fail_count_min" }
+    status_hint: MAJOR
+    phenomenon_ko : "특정 DUT(테스터 채널)에 Fail 이 집중되어 있습니다."
+    # 제안에 **몇 번 DUT 인지**를 싣는다 — 조치는 그 채널을 특정해야 시작된다
+    # (소켓 청소/교체·채널 correlation). {dut_top} 은 signatures._format_evidence 와 같은
+    # 치환 규약을 recommend/present 가 action_ko 에도 적용한다.
+    action_ko: "DUT {dut_top} 에 Fail 집중 — 해당 소켓/채널 Contact 및 Hardware 점검,
+      DUT 간 correlation 확인 필요"
+    evidence: ["dut_fail_share {dut_fail_share}", "dut_top {dut_top}",
+               "dut_fail_ratio {dut_fail_ratio}", "n_dut_sites {n_dut_sites}",
+               "fail_count {fail_count}"]
+
   # (WAFER_GRADIENT 는 2026-08-13 삭제 — 경사형 편중은 Map 화면으로 보는 것이 낫고,
   #  CLUSTER_FAIL 은 2026-08-19 삭제 — 사분면 격자는 실제 결함 모양과 무관한 인공 경계라
   #  같은 blob 이 위치만 달라져도 값이 반토막 났고(축 경계 2.20 vs 한가운데 4.00),

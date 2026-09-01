@@ -500,7 +500,11 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   `_eval_rules_suffix` 의 "evalcpk" 표식으로 갈았다 — 그 꼬리표는 report_key(ai 세션)와
 #   ai_comment_key 가 공유하므로 payload 안에 구워진 Signature 셀까지 한 번에 갈린다.
 #   반환 dict 구조는 그대로라 이 상수의 규약("구조 변경 때만")에도 맞다.
-AI_COMMENT_SCHEMA_VERSION = 6
+# v7 (2026-09-02): prompts 항목에 `precedents`(그 프롬프트에 실린 선례 건수) 추가 +
+#   운영자 지시문(rules/ai_prompt.yaml)이 프롬프트에 합류. 지시문 **편집**은 rules_rev 가
+#   갈아 주지만, **코드 배포로 처음 들어가는 기본 지시**는 rules_rev 가 감지하지 못한다
+#   (그건 /pe/eval 저장 카운터다) — v5·v6 과 같은 이유로 여기만 올린다(전역 bump 금지).
+AI_COMMENT_SCHEMA_VERSION = 7
 
 
 def _ai_meta_digest(session) -> str:

@@ -480,3 +480,56 @@ def test_should_store_covers_rule_only_case():
     # 종전 조건 2개는 그대로 — 발화가 없어도 저장된다.
     assert present.should_store(case, {"fail_count": 3, "cpk": 2.0}, {"signatures": []})
     assert present.should_store(case, {"fail_count": 0, "cpk": 0.9}, {"signatures": []})
+
+
+# ── DUT_FAIL (2026-09-01 신설) ────────────────────────────────────────────────
+
+def test_dut_fail_needs_share_and_count():
+    """DUT_FAIL 은 **점유율 AND 최소 fail 수**다.
+
+    fail 이 적으면 무작위로도 한 채널에 다 들어간다(채널 4개에 fail 4개면 0.4%) —
+    공간 룰이 `spatial_fail_count_min` 을 둔 것과 같은 이유로 가드가 필수다.
+    """
+    case = _case()
+    raw = {"yield": 0.95, "cpk": 1.5}
+    fired = lambda **kw: [s["id"] for s in
+                          signatures.evaluate(case, _full_features(**kw), raw)["signatures"]]
+
+    assert "DUT_FAIL" in fired(dut_fail_share=0.8, dut_top=3, fail_count=40)
+    # 점유율은 높지만 fail 이 적다 → 우연 몰림 차단
+    assert "DUT_FAIL" not in fired(dut_fail_share=1.0, dut_top=3, fail_count=6)
+    # fail 은 많지만 채널에 고루 퍼졌다
+    assert "DUT_FAIL" not in fired(dut_fail_share=0.2, dut_top=4, fail_count=60)
+    # 채널이 1개뿐이면 features 가 None → 미발화(결측을 양호로 읽지 않는 것과 별개로,
+    # 점유율이 정의상 1.0 이라 판정 자체가 성립하지 않는다)
+    assert "DUT_FAIL" not in fired(dut_fail_share=None, dut_top=None, fail_count=60)
+
+
+def test_dut_fail_action_names_the_dut():
+    """제안 문구에 **몇 번 DUT 인지**가 실제 값으로 들어간다.
+
+    `{dut_top}` 이 리터럴로 새면 사용자는 어느 채널을 점검할지 알 수 없다. 치환은 L3
+    발화 시점 1회이므로, 발화 항목의 action_ko 를 그대로 보면 된다.
+    """
+    case = _case()
+    sig = signatures.evaluate(
+        case, _full_features(dut_fail_share=0.8, dut_top=3, fail_count=40),
+        {"yield": 0.95, "cpk": 1.5})
+    dut = next(s for s in sig["signatures"] if s["id"] == "DUT_FAIL")
+    assert "DUT 3" in dut["action_ko"]
+    assert "{" not in dut["action_ko"]
+
+
+def test_dut_fail_is_independent_of_spatial_rules():
+    """공간 룰과 **관계 선언이 없다** — 원인이 다르므로(공정 vs 하드웨어) 둘 다 남는다.
+
+    한쪽이 다른 쪽을 숨기거나 primary 를 뺏도록 바꾸면 사용자가 채널 문제를 못 본다.
+    """
+    case = _case()
+    feats = _full_features(dut_fail_share=0.9, dut_top=2, fail_count=50,
+                           center_fail_share=1.0, edge_fail_share=0.0)
+    sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.5})
+    ids = [s["id"] for s in sig["signatures"]]
+    assert "DUT_FAIL" in ids and "CENTER_FAIL" in ids
+    # 둘 다 MAJOR 라 SPECIFICITY_ORDER 로 갈린다 — DUT_FAIL 이 앞이다(하드웨어 지목).
+    assert status.decide(case, feats, sig)["primary_signature"] == "DUT_FAIL"

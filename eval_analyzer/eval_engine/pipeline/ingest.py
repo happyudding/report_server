@@ -201,7 +201,8 @@ def _unit_text(unit):
 def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
                revision, lsl, usl, values, fail_mask, x_pos, y_pos, site, skewness=None,
                item_raw=None, unit=None,
-               spatial_fail_mask=None, spatial_x_pos=None, spatial_y_pos=None):
+               spatial_fail_mask=None, spatial_x_pos=None, spatial_y_pos=None,
+               spatial_dut=None):
     """fail_case context dict (raw_table/raw_df 경로 공유 — 스키마 단일 소스).
 
     `unit` 은 판정에 쓰이지 않는다(분류는 이미 value_type 으로 끝났다). value_type 이
@@ -236,6 +237,9 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
         "spatial_fail_mask": fail_mask if spatial_fail_mask is None else spatial_fail_mask,
         "spatial_x_pos": x_pos if spatial_x_pos is None else spatial_x_pos,
         "spatial_y_pos": y_pos if spatial_y_pos is None else spatial_y_pos,
+        # DUT(테스터 채널) — DUT_FAIL 판정용. 공간 축과 같은 전체 die 정렬이라
+        # `spatial_fail_mask` 와 짝으로 읽는다. 없으면 None → feature 결측(미발화).
+        "spatial_dut": spatial_dut,
     }
 
 
@@ -352,6 +356,12 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
 
     x_all = [_num_or_none(v) for v in data["XPOS"]]
     y_all = [_num_or_none(v) for v in data["YPOS"]]
+    # DUT(테스터 채널/소켓) — DUT_FAIL 판정용. 공간 좌표와 같은 **전체 die 축**이다
+    # (측정값 파싱 성공 여부와 무관 — fail 식별은 FAILTNO 로 끝나고 DUT 는 그 die 가
+    # 어느 채널에서 측정됐나일 뿐이다). 값 형태가 제품마다 숫자/문자로 갈려 _tno_norm
+    # 처럼 "숫자면 int, 문자면 strip" 으로 정규화한다 — 그룹 키로만 쓰므로 크기 비교는
+    # 하지 않는다.
+    dut_all = [_tno_norm(v) for v in data["DUT"]]
     bin_all = [_bin_or_none(v) for v in data["BIN"]]
     failtno_all = [_tno_norm(v) for v in data["FAILTNO"]]
     # fail 행 인덱스 사전 계산 (2026-08-13 콜드 빌드 최적화) — fail 은 전체 행의 소수라,
@@ -474,7 +484,8 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                           values, fail_mask, x_pos, y_pos, site,
                           item_raw=item, unit=unit_row[item],
                           spatial_fail_mask=sp_mask,
-                          spatial_x_pos=x_all, spatial_y_pos=y_all)
+                          spatial_x_pos=x_all, spatial_y_pos=y_all,
+                          spatial_dut=dut_all)
         case["_shared"] = item_shared
         # 좌표 전처리(_spatial_geometry) 공유통 — 공간 축은 **항상 소스 공용 좌표**
         # (x_all/y_all)라 item 마다 같다. 그래서 종전의 "측정값 결측이 없을 때만" 조건이

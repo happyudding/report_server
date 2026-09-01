@@ -90,7 +90,8 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 | [web_report/ai_comment.py](../web_report/ai_comment.py) | `build_ai_comments` 반환에 `prompts` 부착 · `_EMPTY_RESULT` 에 `"prompts": {}` (eval import 무변경 — 규칙 #8) · `_prompt_enrich` 가 **현재 케이스** 재료를 조립 (§선례 상세 보강) |
 | [eval_analyzer/eval_engine/store.py](../eval_analyzer/eval_engine/store.py) | `search_precedents` 가 선례 행에 **당시 수치**(최신 run 의 raw_metrics/features + unit/status)를 함께 싣는다 (§선례 상세 보강). DDL 무변경 — SELECT 확장뿐 |
 | [eval_analyzer/…/present.py](../eval_analyzer/eval_engine/pipeline/present.py) | `_precedent_result` — 선례 계약 dict(종전 5키 + 식별·당시 수치) |
-| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 6` (v4 prompts 키 추가 → v5 프롬프트 본문 확장 → **v6 지시문 확장** — ai 옵션 세션만 재평가). `ai_comment_key` 구성 불변 |
+| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 7` (v4 prompts 키 추가 → v5 프롬프트 본문 확장 → v6 지시문 확장 → **v7 운영자 지시문(yaml) 합류 + prompts 에 `precedents` 키** — ai 옵션 세션만 재평가). `ai_comment_key` 구성 불변 |
+| [eval_analyzer/…/rules/ai_prompt.yaml](../eval_analyzer/eval_engine/rules/ai_prompt.yaml) (신규) | 운영자 지시문 + 금지 문구 **정본**. 편집은 `/pe/eval` AI 지시문 탭 → [eval_panel/rules_io.py](../server/eval_panel/rules_io.py) `save_ai_prompt` · 로더 [_rules.py](../eval_analyzer/eval_engine/pipeline/_rules.py) `ai_prompt_doc`/`ai_prompt_instructions` · 서버 창구 [eval_debug.py](../web_report/eval_debug.py) `ai_prompt_rules` |
 | [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py) | 항목에 선택 키 `raw`(sanitize **이전** LLM 원문) — sanitize 결과와 **다를 때만** 저장, 상한 `MAX_RAW_CHARS`(4000). 관리자 검수에서 "모델이 이상한 것" vs "서버가 걷어낸 것" 구분용 |
 
 ### 선례 상세 보강 (2026-08-28)
@@ -125,6 +126,44 @@ base 지시문의 "최대 5줄"은 **상한**인데, 상한만 주면 근거가 
 룰 문장으로 되돌아간다(설계상 정상 — sha 게이트). 그래서 `AI_COMMENT_SCHEMA_VERSION` 을
 **반드시 함께 올린다**(v5→v6) — 안 올리면 캐시에 굳은 옛 prompt/sha 가 그대로 나가
 클라가 옛 지시문으로 계속 대행한다. 전역 bump 는 금지(규칙 14).
+
+### 지시문·금지 문구를 관리자 화면에서 (2026-09-02)
+
+**문제**: 사례가 회수됐는데도 [제안]이 "직접 적용할 수 있는 사례는 확인되지 않았습니다"로
+나온다는 신고. 그 문장은 **코드에 없다** — 선례 검색(value_type/family/유사도 0.5/자기 세션
+제외/top5)은 정상 회수했고, 프롬프트에도 실렸는데 **LLM 이 스스로 버렸다**. 2026-08-28 에
+넣은 "사례를 버리는 문장을 쓰지 마라" 지시는 강제가 아니라 계속 어긴다.
+
+**결정**(사용자): ① 사례를 버리지 말고 **제안을 다듬는 재료**로 쓰고 사실을 왜곡하지 말 것,
+② 이런 조건은 앞으로도 계속 생기므로 **코드가 아니라 관리자 모드에서 관리**할 것.
+
+**정본은 `eval_analyzer/eval_engine/rules/ai_prompt.yaml` 한 파일**이고, 편집은
+`/pe/eval` → **AI 지시문** 탭이다(thresholds·exclusions 와 같은 저장 인프라 재사용:
+검증 → 백업 → 원자적 쓰기 → `.rules_rev` +1 → mtime 캐시로 재기동 없이 반영).
+
+| 목록 | 어디서 쓰나 | 저장 효과 |
+|---|---|---|
+| `instructions` | 프롬프트 base 지시문 **뒤**에 순서대로 합류 (엔진 `recommend._build_prompt` + 서버 사본 `ai_prompt.build_prompt(rules=…)` **양쪽**) | 프롬프트가 바뀐다 → **sha 전량 갈림 → 저장된 [제안] 폐기 → 재대행**. 화면 안내에 명시 |
+| `deny_patterns` | 클라 push 수용 시 [제안]을 **줄 단위**로 거른다 (`service.apply_ai_suggestions`) | 프롬프트 밖이라 **sha 불변** — 이미 저장된 문장은 그대로, 다음 push 부터 적용 |
+
+- 금지 문구는 **줄 단위**다 — 사례를 버리는 한 줄만 빼고 나머지 점검 항목은 살린다.
+  한 줄도 안 남으면 저장하지 않고 skip 사유 **`denied`** 로 센다(룰 문장 폴백).
+  `raw`(LLM 원문)는 그대로 저장되므로 관리자 문장 검수에서 "서버가 걷어낸 것"이 보인다.
+- `only_with_precedents: true`(기본) — **선례가 실제로 프롬프트에 실린 item 에만** 적용한다.
+  사례 0건 item 의 "참고할 사례가 없습니다"는 **사실**이라 지우면 그게 왜곡이다. 판정 재료는
+  `prompts[item].precedents`(그 프롬프트에 실린 선례 수, `_precedent_count` — `_precedent_lines`
+  와 같은 기준). 두 기준이 갈리면 "줬다고 판단해 지웠는데 실은 안 준" 경우가 생긴다.
+- ⚠ 정규식은 **사례를 버리는 문장만** 잡아야 한다. `사례와 달리 …` / `사례에서 확인되지 않은
+  항목` 같은 **비교문은 통과**시킨다(그게 사례를 활용하는 문장이다).
+  회귀는 `tests/test_ai_prompt_determinism.py` (k3) 이 배포 yaml 의 실제 패턴을 읽어
+  양성 7·음성 5로 고정한다 — 손으로 베낀 사본을 쓰면 배포 패턴이 틀려도 통과한다(실제로
+  "사례는 **직접** 적용할 수 없습니다" 를 놓치던 초안이 이 방식으로 잡혔다).
+- 기본 지시가 **코드 배포로 처음 들어가는 것**은 `.rules_rev`(= `/pe/eval` 저장 카운터)가
+  감지하지 못하므로 `AI_COMMENT_SCHEMA_VERSION` v6→**v7** 로 갈았다(이후의 화면 편집은
+  rev 가 갈아 준다). 전역 bump 는 금지.
+- 함께 고친 것: `eval_panel/routes.py` `_audit` 이 `changed_fields` **list** 를 그대로
+  `log_audit` 에 넘겨 sqlite 바인딩 오류가 났고 `except: pass` 가 삼켜, **`/pe/eval` 룰 변경이
+  감사에 한 건도 남지 않고 있었다**. 문자열로 이어 붙이고 실패는 로그로 남긴다.
 
 > **초기 구현은 `eval_export.precedent_details` 가 `(product_name, human_comment)` 로 eval DB
 > 를 되짚는 match-back 이었다**(엔진 동결 전제). 동결 해제 후 엔진 정공법으로 교체하면서
@@ -209,6 +248,21 @@ UI 스레드를 막지 않도록 워커 스레드에서 돌리고 결과만 `QTi
 되돌린다(수 초 소요). 상한은 probe 20초 / 실호출 45초 — 워커의 240초를 쓰면 사용자가
 버튼을 누르고 하염없이 기다리게 된다.
 
+### ⚠ prompts 폴링이 'ai' 잡을 사용자보다 **먼저** 건다 (2026-09-02)
+
+업로드 성공 직후 워커가 `GET .../ai_comment/prompts` 를 치고, 서버
+[`get_ai_comment_prompts`](../web_report/service.py) 는 캐시 미스면
+`compute.request_build(sid, "ai")` 를 걸고 202 를 준다. 이 시점은 **업로더가 세션을
+클릭하기 전**이라, 'ai' 잡이 항상 사용자 조회보다 앞선다.
+
+종전에는 그 잡이 곧 `report_job(ai_inline=True)` 여서 부모가 report 락을 엔진 평가 내내
+(실측 100초+) 쥐었고, 뒤이은 사용자 조회의 1초짜리 pending 빌드가 그 락 뒤에 줄을 섰다 —
+"AI Model 을 claude 로 바꾼 뒤 첫 조회가 100초" 로 관찰됐지만 원인은 대행 기능이 아니라
+**잡 구조**였다(`default` 여도 프리웜·다른 사용자 조회가 같은 잡을 건다).
+지금은 그 잡이 2단계(분리 캐시 채우기 → 짧은 재빌드)라 **먼저 걸리는 것이 오히려 이득**
+이다 — 사용자가 열기 전에 평가가 진행돼 있다. 되돌리지 말 것(CLAUDE.md 규칙 17,
+perf_guard `S15`).
+
 ### (선택·미적용) boot.js 재폴링
 
 push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려 있는 화면의 자동
@@ -241,7 +295,7 @@ push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려
 |---|---|---|
 | **흐름 타임라인** | `GET /api/ai_comment/session/<sid>/timeline` | 업로드→클라 실패→push 를 시간순 한 줄씩. 맨 위 한 문장이 결론(정상 / 클라 실패 / **워커가 아예 안 돎**). "실패도 push 도 없음" 이 종전에는 못 읽던 상태다 |
 | **LLM 이 받은 프롬프트** | `GET /api/ai_comment/session/<sid>/prompts` | 서버가 조립한 본문 전문 + sha + 길이. 재료가 충분한지 눈으로 검증 |
-| **skip 사유** | 기존 `/api/ai_comment` 의 push 표 | `skipped=3` 숫자를 5종(`sha_mismatch`/`empty`/`unknown_item`/`badsha`/`badrow`)으로 분해 |
+| **skip 사유** | 기존 `/api/ai_comment` 의 push 표 | `skipped=3` 숫자를 6종(`sha_mismatch`/`empty`/`unknown_item`/`badsha`/`badrow`/**`denied`**=금지 문구로 폐기)으로 분해 |
 
 - 두 신규 라우트 모두 **`allow_build=False`** — 관리자 조회가 콜드 빌드를 유발하면 안
   된다. 캐시가 없으면 안내 문장만 돌려준다(빈 화면 금지).

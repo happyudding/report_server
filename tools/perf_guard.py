@@ -289,6 +289,32 @@ _RULES = [
         "doc": "docs/12_web_report_cache.md, web_report/service.py _compare_cached",
     },
     {
+        "id": "S15-ai-job-cache-first",
+        "kind": "forbid_remove",
+        "paths": ["web_report/compute.py"],
+        "pattern": r"ai_comment_cache_job|compare_cache_job",
+        "why": "'ai'/'compare' 잡은 **2단계**다 — ① 분리 캐시만 채우고(report 락 없음) "
+               "② payload 를 짧게 다시 굽는다. ①을 없애고 report_job(ai_inline=True) "
+               "하나로 되돌리면, 부모 소비자 스레드가 엔진 평가(실측 100초+) 내내 "
+               "report keyed_lock 을 쥐어 **사용자의 1초짜리 pending 빌드가 그 뒤에 줄을 "
+               "선다**(2026-09-02 'AI Comment 켜면 첫 조회 100초'의 실제 원인). "
+               "옮기는 것뿐이라면 면제 주석을 달 것.",
+        "doc": "CLAUDE.md §5-17, docs/12_web_report_cache.md",
+    },
+    {
+        "id": "S16-prewarm-pending-first",
+        "kind": "forbid_add",
+        "paths": ["web_report/compute.py"],
+        # 프리웜은 pending 본을 먼저 남긴다 — ai_inline=True 로 되돌리는 변경을 막는다.
+        "pattern": r"report_job\(session_id,\s*upload_root_str,\s*True\)",
+        "why": "프리웜(prewarm_job)은 ai_inline=False 로 **pending 본을 먼저** 디스크에 "
+               "남긴다. True 로 되돌리면 AI 평가가 끝날 때까지 즉시 열 수 있는 산출물이 "
+               "하나도 없어(_pending_kinds(inline=True) 는 빈 튜플), 업로드 직후 첫 클릭이 "
+               "완전 콜드로 판정돼 100초를 202 폴링한다(2026-09-02 실사례). AI·Compare 는 "
+               "prewarm_job 이 돌려주는 pending_kinds 로 백그라운드 잡에 넘긴다.",
+        "doc": "CLAUDE.md §5-17, docs/12_web_report_cache.md",
+    },
+    {
         "id": "S13-cold-poll-cheap",
         "kind": "forbid_add",
         "paths": ["web_report/service.py"],

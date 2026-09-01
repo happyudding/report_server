@@ -3651,6 +3651,8 @@ $("btnAicPrompts").onclick = loadAicPrompts;
 const AIC_SKIP_LABEL = {
   sha_mismatch: "룰 변경으로 폐기", empty: "모델이 빈 답",
   unknown_item: "서버가 모르는 항목", badsha: "형식 오류", badrow: "잘못된 요청",
+  // 사례를 줬는데 "적용할 사례 없음" 이라 답한 문장 — /pe/eval AI 지시문 탭의 금지 문구
+  denied: "금지 문구로 폐기",
 };
 function aicSkipLabel(detail) {
   return String(detail || "").split(/\s+/).filter(Boolean).map(part => {

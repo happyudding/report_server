@@ -270,6 +270,37 @@ def exclusion_reason(case_ctx: dict):
     return None
 
 
+def ai_prompt_doc() -> dict:
+    """rules/ai_prompt.yaml — AI Comment [제안] 지시문·금지 문구. 파일이 없으면 {}.
+
+    엔진이 쓰는 것은 `instructions` 뿐이다(`deny_patterns` 는 서버가 클라 push 를 받을 때
+    쓰는 금지 문구라 여기서는 읽지 않는다). exclusions_doc 과 같은 관용 로딩 —
+    파일이 없으면 종전 프롬프트가 그대로 나간다.
+    """
+    try:
+        doc = load_yaml(str(config.AI_PROMPT_FILE))
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def ai_prompt_instructions(doc=None) -> list:
+    """프롬프트에 덧붙일 지시 문장 목록 (enabled 만, 선언 순서 유지).
+
+    빈 text·비-dict 항목은 조용히 건너뛴다 — 관리자 화면이 검증하지만, 손으로 고친
+    yaml 때문에 평가가 죽어서는 안 된다(프롬프트 지시는 부가 재료다).
+    """
+    doc = ai_prompt_doc() if doc is None else doc
+    out = []
+    for item in (doc or {}).get("instructions") or []:
+        if not isinstance(item, dict) or item.get("enabled") is False:
+            continue
+        text = str(item.get("text") or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
 def outcome_taxonomy() -> dict:
     """rules/outcome_taxonomy.yaml 전체 문서(캐시) — action/result 허용 어휘의 정본."""
     return load_yaml(str(config.OUTCOME_TAXONOMY_FILE))

@@ -47,6 +47,10 @@ _FEATURE_KEYS = [
     "pass_limit_hit_ratio",
     # E1_FAIL 판정용 점유율 — v9 저장 대상
     "e1_fail_share",
+    # 파생(DB 미저장): DUT(테스터 채널) 편중 — DUT_FAIL 판정용(`_dut_features`).
+    # 공간 룰과 같은 **점유율** 판정이고, 배수(ratio)·DUT 번호·채널 수는 evidence 와
+    # 제안 문구용이다. tail_extent_* 와 같이 파생 취급이라 eval.db 스키마는 안 바꿨다.
+    "dut_fail_share", "dut_fail_ratio", "dut_top", "n_dut_sites",
 ]
 
 
@@ -650,6 +654,76 @@ def _site_cpk_delta(case_ctx):
     return float(max(cpks) - min(cpks))
 
 
+def _dut_features(case_ctx):
+    """DUT(테스터 채널/소켓) 편중 — DUT_FAIL 판정용. DUT 가 없거나 fail 이 0 이면 전부 None.
+
+    판정자는 공간 룰과 같은 **점유율**(share)이다 — "전체 fail 중 한 DUT 가 몇 %를
+    가졌나". 밀도 배수를 쓰지 않는 이유도 공간 4종을 share 로 갈아탄 것과 같다:
+    배수의 상한이 `n_dut_sites` 라 DUT 8개짜리와 2개짜리가 같은 임계값을 쓸 수 없다
+    (rules/CLAUDE.md 의 "임계값을 지표 상한 위로 두면 그 룰은 영원히 침묵한다").
+    배수(`dut_fail_ratio`)는 evidence 참고값으로만 낸다 — 사용자가 "균등 대비 몇 배" 를
+    보는 편이 직관적이라서다.
+
+    ⚠ **모집단은 공간 축(전체 die)** 이다 — `spatial_fail_mask` 와 `spatial_dut` 를 짝으로
+    읽는다. 측정값 축(`fail_mask`)으로 재면 측정값이 빈 die 가 분모에서 빠져 점유율이
+    왜곡되고, 값이 전부 빈 item(functional test 등)은 판정 자체가 불가능해진다 —
+    공간 룰이 2026-08-28 에 겪은 것과 같은 기전이다.
+
+    ⚠ **DUT 가 1개면 발화하지 않는다**(None). 채널이 하나뿐이면 share 는 정의상 항상
+    1.0 이라 "한 DUT 에 몰렸다" 가 아무 정보도 아니다. 2개여도 우연히 0.5 가 나오므로
+    실제 판정은 `dut_fail_count_min`(최소 fail 수) 과 AND 로 건다.
+
+    반환 4종:
+      dut_fail_share : 최다 fail DUT 의 fail 점유율 (판정자)
+      dut_fail_ratio : 그 점유율 / 균등 기대치(1/n_dut_sites) — 배수(evidence)
+      dut_top        : 그 DUT 번호 (제안 문구에 싣는 값)
+      n_dut_sites    : fail 유무와 무관하게 데이터에 등장한 DUT 종류 수
+    """
+    out = {"dut_fail_share": None, "dut_fail_ratio": None,
+           "dut_top": None, "n_dut_sites": None}
+    dut = case_ctx.get("spatial_dut")
+    if not dut:
+        return out
+    # 채널 수는 **fail 과 무관**하므로 아래 판정 가드보다 먼저 낸다 — 판정이 불가능해도
+    # "채널이 몇 개였나" 는 트레이스에서 그 사유를 읽는 재료가 된다(채널 1개라 미발화인지,
+    # 데이터가 어긋나 포기한 것인지).
+    sites = {d for d in dut if d is not None}
+    if not sites:
+        return out
+    out["n_dut_sites"] = len(sites)
+    # DUT 가 하나뿐이면 점유율이 항상 1.0 이라 편중을 말할 수 없다.
+    if len(sites) < 2:
+        return out
+
+    fail_mask = case_ctx.get("spatial_fail_mask")
+    if fail_mask is None:
+        fail_mask = case_ctx.get("fail_mask") or []
+    if len(fail_mask) != len(dut):
+        # 길이가 어긋나면 어느 die 가 어느 채널인지 알 수 없다 — 짝지어 세면 조용히
+        # 틀린 답이 나오므로 판정을 포기한다(결측을 양호로 읽지 않는 원칙과 같은 취급).
+        return out
+
+    fail_by_dut = {}
+    fail_total = 0
+    for d, f in zip(dut, fail_mask):
+        if not f:
+            continue
+        fail_total += 1
+        if d is not None:
+            fail_by_dut[d] = fail_by_dut.get(d, 0) + 1
+    if not fail_total or not fail_by_dut:
+        return out
+
+    # 동률은 **작은 DUT**(문자 DUT 도 섞일 수 있어 str 로 2차 정렬) — 재실행마다 흔들리면
+    # 제안 문구의 DUT 번호가 요동쳐 트레이스 diff 가 허위 변화를 보고한다(대표 bin 선정과
+    # 같은 이유로 결정성이 필수다).
+    top = min(fail_by_dut, key=lambda d: (-fail_by_dut[d], str(d)))
+    out["dut_top"] = top
+    out["dut_fail_share"] = float(fail_by_dut[top] / fail_total)
+    out["dut_fail_ratio"] = float(out["dut_fail_share"] * len(sites))
+    return out
+
+
 def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     """L2 진입점 — 측정값에서 robust 산포/spec margin/공간 feature 산출 (CODE_TO_PORT §5).
 
@@ -675,7 +749,10 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         out = _empty_features()
         if case_ctx.get("spatial_fail_mask"):
             out.update(_spatial_features(case_ctx, th))
-            out["n_dut"] = 0        # 측정 표본은 실제로 0 이다(공간만 산다)
+            # DUT 편중도 같은 이유로 낸다 — FAILTNO 와 DUT 만 보므로 측정값이 없어도
+            # "어느 채널에서 fail 이 났나" 는 그대로 알 수 있다.
+            out.update(_dut_features(case_ctx))
+            out["n_dut"] = 0        # 측정 표본은 실제로 0 이다(공간·DUT 만 산다)
         return out
 
     # item 단위 공유(_shared — ingest 가 같은 item 의 case(bin)들에 같은 dict 를 붙임):
@@ -818,6 +895,9 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
                                       lambda: _spatial_geometry(case_ctx),
                                       store=geom_store))
     site_cpk_delta = _site_cpk_delta(case_ctx)
+    # DUT 편중은 FAILTNO 와 DUT 만 보므로 측정값과 무관하다 — 공간 feature 와 같이
+    # PF(value_type) 에서도 살린다(아래 is_pf 블록에서 지우지 않는다).
+    dut = _dut_features(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
     pass_limit_hit_ratio = _pass_limit_hit_ratio(lo_hit, hi_hit, fm)
     fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(
@@ -844,7 +924,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "bimodality_score": bimodality_score, "density_gap": density_gap, "cdf_gap": cdf_gap,
         "spec_margin_low": spec_margin_low, "spec_margin_high": spec_margin_high,
         "nearest_spec_side": nearest_spec_side, "limit_hit_ratio": limit_hit_ratio,
-        **spatial,
+        **spatial, **dut,
         "n_dut": n, "site_cpk_delta": site_cpk_delta, "code_edge_hit": code_edge_hit,
         "n_modes" : n_modes, "modality_v2" : modality_v2,
         "value_gap_ratio": value_gap_ratio, "value_gap_minor_mass": value_gap_minor_mass,

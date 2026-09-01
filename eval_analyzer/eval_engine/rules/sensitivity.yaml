@@ -69,6 +69,18 @@ groups:
       # 공간 룰 최소 fail 수. count 형이라 정수 — 3% 가 1 미만이라 최소 간격 ±1 을 쓴다.
       spatial_fail_count_min: [12, 11, 10, 9, 8]
 
+  DUT_FAIL:
+    label_ko: "DUT 편중 (DUT_FAIL)"
+    signatures: [DUT_FAIL]
+    keys:
+      # 전체 fail 중 한 DUT(테스터 채널)가 차지하는 점유율. 낮출수록 민감.
+      # 공간의 region_fail_share_min(0.95)보다 기준이 훨씬 낮은 이유는 모집단 수가
+      # 다르기 때문이다 — 채널은 보통 4~16개라 균등이어도 0.06~0.25 다.
+      dut_fail_share_min: [0.53, 0.515, 0.50, 0.485, 0.47]
+      # DUT 룰 최소 fail 수. count 형이라 정수 — 3% 가 1 미만이라 최소 간격 ±1 을 쓴다
+      # (SPATIAL 의 spatial_fail_count_min 과 같은 규약).
+      dut_fail_count_min: [12, 11, 10, 9, 8]
+
   CODE_RAIL:
     label_ko: "레일 포화 (CODE_RAIL)"
     signatures: [CODE_RAIL]

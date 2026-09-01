@@ -1001,6 +1001,12 @@ class HoneyMainWindow(QMainWindow):
         self.lbl_ai_health.setVisible(False)
         self.lbl_ai_health.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lbl_ai_health.installEventFilter(self)
+        # 확인 중 문구 — 회색 깜빡임만으로는 "무엇을 기다리는지" 를 알 수 없어서
+        # (툴팁은 마우스를 올려야 보인다) 신호등 옆에 문장을 같이 띄운다.
+        # 확인 중일 때만 보이고, 결과가 오면 숨는다.
+        self.lbl_ai_health_msg = QLabel("Claude 연결중 …")
+        self.lbl_ai_health_msg.setStyleSheet("color:#9E9E9E; font-size:12px;")
+        self.lbl_ai_health_msg.setVisible(False)
         self._ai_health_busy = False
         # 확인 중 깜빡임 — 회색 고정이면 "멈춘 것"과 구분이 안 돼 진한/옅은 회색을 교대한다.
         self._ai_health_blink = QTimer(self)
@@ -1015,6 +1021,7 @@ class HoneyMainWindow(QMainWindow):
         ai_row.addWidget(self.lbl_ai_comment)
         ai_row.addWidget(self.btn_ai_sens)
         ai_row.addWidget(self.lbl_ai_health)
+        ai_row.addWidget(self.lbl_ai_health_msg)
         ai_row.addStretch(1)
         web_v.addLayout(ai_row)
 
@@ -2329,11 +2336,14 @@ class HoneyMainWindow(QMainWindow):
             f"Claude 연결 {state}\n{detail}\n\n클릭하면 다시 확인합니다.")
         # 실제로 확인 중일 때만 깜빡인다(기동 직후 "확인 전"은 제외) — 결과가 오면
         # 즉시 멈춰 고정색으로 남긴다.
-        if ok is None and self._ai_health_busy:
+        checking = ok is None and self._ai_health_busy
+        if checking:
             self._ai_health_blink_on = False
             self._ai_health_blink.start()
         else:
             self._ai_health_blink.stop()
+        # 문구는 깜빡임과 같은 조건 — 신호등이 보일 때만(체크 off 면 줄 자체가 숨는다).
+        self.lbl_ai_health_msg.setVisible(checking and self.lbl_ai_health.isVisible())
 
     def _blink_ai_health(self):
         """확인 중 깜빡임 1틱 — 진한 회색 ↔ 옅은 회색 교대."""
@@ -2346,6 +2356,8 @@ class HoneyMainWindow(QMainWindow):
         on = bool(on)
         self.btn_ai_sens.setVisible(on)
         self.lbl_ai_health.setVisible(on)
+        if not on:
+            self.lbl_ai_health_msg.setVisible(False)
         # AI Model 은 AI Comment 를 켠 업로드에만 실린다 — 꺼져 있을 땐 숨긴다
         # (종전엔 비활성 상태로 계속 보여, 못 쓰는 설정이 화면에 남아 있었다).
         self.lbl_ai_model.setVisible(on)

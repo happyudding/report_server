@@ -395,3 +395,60 @@ def test_compute_returns_exactly_the_declared_keys():
     assert set(features.compute(_case([]), {}, "ev1")) == declared
     # 2026-08-03 신설 파생값(DB 미저장) — separated 판정·트레이스 표시용
     assert {"value_gap_ratio", "value_gap_minor_mass"} <= declared
+
+
+# ── DUT 편중 (_dut_features, 2026-09-01) ──────────────────────────────────────
+
+def _dut_case(dut, fail, **kw):
+    """DUT 편중 전용 case — 공간 축(전체 die) 키만 채운다."""
+    c = {"spatial_dut": dut, "spatial_fail_mask": fail}
+    c.update(kw)
+    return c
+
+
+def test_dut_share_uses_top_channel():
+    """점유율 = 최다 fail DUT 의 fail 수 / 전체 fail 수. 배수는 채널 수를 곱한 값."""
+    dut = [0, 1, 2, 3] * 5                       # 채널 4개
+    fail = [d == 2 for d in dut]                 # 5개 전부 DUT 2
+    f = features._dut_features(_dut_case(dut, fail))
+    assert f["dut_top"] == 2
+    assert f["dut_fail_share"] == 1.0
+    assert f["dut_fail_ratio"] == 4.0            # 균등 대비 4배 (채널 4개)
+    assert f["n_dut_sites"] == 4
+
+
+def test_dut_single_channel_is_none():
+    """채널이 1개뿐이면 점유율이 항상 1.0 이라 편중을 말할 수 없다 → 미판정."""
+    f = features._dut_features(_dut_case([7] * 10, [True] * 3 + [False] * 7))
+    assert f["dut_fail_share"] is None and f["dut_fail_ratio"] is None
+    assert f["n_dut_sites"] == 1                 # 채널 수 자체는 남긴다(진단용)
+
+
+def test_dut_top_is_deterministic_on_tie():
+    """동률이면 **작은 DUT**. 재실행마다 흔들리면 제안 문구의 채널 번호가 요동친다."""
+    dut = [5, 1, 5, 1]
+    fail = [True, True, True, True]              # 두 채널 2개씩 동률
+    assert features._dut_features(_dut_case(dut, fail))["dut_top"] == 1
+
+
+def test_dut_length_mismatch_gives_none():
+    """길이가 어긋나면 어느 die 가 어느 채널인지 알 수 없다 → 조용히 틀리지 않고 포기."""
+    f = features._dut_features(_dut_case([0, 1, 2], [True, False]))
+    assert f["dut_fail_share"] is None
+
+
+def test_dut_survives_empty_values():
+    """측정값이 하나도 없어도 DUT 편중은 낸다 — FAILTNO 와 DUT 만 보기 때문.
+
+    공간 feature 가 2026-08-28 에 같은 이유로 살아난 것과 짝이다. 여기서 비우면 값이
+    전부 빈 item(functional test 등)은 채널 문제를 영영 판정할 수 없다.
+    """
+    dut = [0, 1, 2, 3] * 5
+    case = {"values": [], "fail_mask": [], "x_pos": [], "y_pos": [],
+            "spatial_dut": dut, "spatial_fail_mask": [d == 1 for d in dut],
+            "spatial_x_pos": list(range(20)), "spatial_y_pos": [0] * 20,
+            "lsl": 0.0, "usl": 10.0, "value_type": "NUM",
+            "product_type": None, "item_class": None}
+    f = features.compute(case, {"cpk": None}, "ev1")
+    assert f["n_dut"] == 0                       # 측정 표본은 실제로 0
+    assert f["dut_fail_share"] == 1.0 and f["dut_top"] == 1

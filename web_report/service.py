@@ -272,6 +272,59 @@ def run_ai_signature_build(session_id: str, *, report_db, upload_root: Path) -> 
                                report_db=report_db, upload_root=upload_root) is not None
 
 
+def run_ai_comment_build(session_id: str, *, report_db, upload_root: Path) -> bool:
+    """'ai' 잡 1단계 — AI Comment **분리 캐시만** 채운다 (report 락을 잡지 않는다).
+
+    2026-09-02. 종전에는 'ai' 잡이 곧 `report_job(ai_inline=True)` 라, 온디맨드 소비자
+    스레드가 부모에서 `load_webreport` 의 `keyed_lock(("report",)+cache_key)` 를 **엔진
+    평가가 끝날 때까지(실측 100초+) 붙잡았다**. 그 락은 사용자의 1초짜리 pending 빌드가
+    잡아야 하는 바로 그 락이라, "AI Comment 를 켜면 첫 조회가 100초" 가 됐다
+    (CLAUDE.md 규칙 17). 평가와 payload 조립을 갈라, 무거운 쪽을 락 밖에서 끝낸다.
+
+    `run_ai_signature_build` 와 같은 골격이며 차이는 두 가지다: 2단계 분리 여부와 무관하게
+    돌고(LLM off 여도 이 잡이 본체다), `generate_comment=True` 로 최종 결과를 만든다.
+    반환은 실제로 계산했는지 — False 는 "할 일 없음"(AI 옵션 아님·이미 캐시됨).
+    """
+    session = report_db.get_session(session_id)
+    if not session or not _webreport_ai_comment(session.get("webreport_options") or ""):
+        return False
+    if _ai_cache_ready(session, session_id, report_db=report_db,
+                       upload_root=upload_root):
+        return False
+    session, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                             upload_root=upload_root, session=session)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    result, _how = _ai_comment_cached(
+        session, session_id, tables, manifest, report_db=report_db,
+        upload_root=upload_root,
+        allow_build=True)   # perf-guard: allow S14-ai-inline-gate (백그라운드 캐시 채우기 잡 — 사용자 대기 경로 아님)
+    return result is not None
+
+
+def run_compare_build(session_id: str, *, report_db, upload_root: Path) -> bool:
+    """'compare' 잡 1단계 — Compare **분리 캐시만** 채운다 (run_ai_comment_build 와 대칭).
+
+    Compare 계산도 콜드 빌드의 34% 였다(2026-08-19 실측). 같은 이유로 report 락 밖에서
+    끝내고, payload 조립은 뒤이은 짧은 재빌드가 맡는다.
+    """
+    session = report_db.get_session(session_id)
+    if not session or not _compare_wanted(session):
+        return False
+    if _compare_cache_ready(session, session_id, report_db=report_db,
+                            upload_root=upload_root):
+        return False
+    session, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                             upload_root=upload_root, session=session)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    if len(tables) < 2:            # build_report_payload 와 같은 전제(소스 2개 이상)
+        return False
+    payload, _how = _compare_cached(
+        session, session_id, tables, manifest, report_db=report_db,
+        upload_root=upload_root,
+        allow_build=True)   # perf-guard: allow S14-ai-inline-gate (위와 같은 이유 — 백그라운드 잡)
+    return payload is not None
+
+
 def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -> bool:
     """AI 분리 캐시(RAM 또는 디스크)가 준비됐는가 — 값싼 판정(SELECT 1 + dict/stat).
 
@@ -396,7 +449,8 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
     # skip 은 사유별로 센다(2026-09-01) — 합계 하나로는 "왜 안 붙었나"를 알 수 없어
     # 관리자가 룰 변경(sha)·모델 형식 이탈(empty)·클라 버그(badrow)를 구분하지 못했다.
     # 감사 로그와 응답에 함께 실어 화면에서 바로 읽히게 한다.
-    skips = {"badrow": 0, "badsha": 0, "empty": 0, "sha_mismatch": 0, "unknown_item": 0}
+    skips = {"badrow": 0, "badsha": 0, "empty": 0, "sha_mismatch": 0, "unknown_item": 0,
+             "denied": 0}
     cleaned = {}
     for row in items:
         if not isinstance(row, dict):
@@ -426,6 +480,15 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
         compute.request_build(session_id, str(upload_root), "ai")
         return {"pending": True}
     prompts = result.get("prompts") or {}
+    # 금지 문구(`/pe/eval` AI 지시문 탭) — 지시만으로는 LLM 이 계속 어기므로 서버가 마지막에
+    # 한 번 더 거른다. 프롬프트에 안 들어가니 sha 는 그대로다(패턴만 바꾸면 재대행 없이
+    # 다음 push 부터 적용). 실패해도 push 는 계속돼야 한다(필터는 부가 안전장치).
+    try:
+        from . import eval_debug
+        deny = ai_prompt.compile_deny_patterns(eval_debug.ai_prompt_rules())
+    except Exception:                                   # noqa: BLE001
+        _log.warning("ai_suggest: 금지 문구 로딩 실패 — 필터 없이 진행", exc_info=True)
+        deny = []
     accepted = {}
     for key, row in cleaned.items():
         meta = prompts.get(key)
@@ -438,6 +501,15 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
             # 룰·민감도 변경으로 프롬프트가 갈렸다 — 설계상 정상 폐기다.
             skips["sha_mismatch"] += 1
             continue
+        if deny:
+            # 사례를 줬는데도 "적용할 사례 없음" 이라 답한 줄만 걷어낸다. 남는 줄이 있으면
+            # 그것만 저장하고, 전부 걸리면 저장하지 않는다(= 룰 문장 폴백).
+            # raw 는 원문 그대로라 관리자 검수에서 "서버가 걷어낸 것"을 볼 수 있다.
+            row["suggestion"] = ai_prompt.strip_denied_lines(
+                row["suggestion"], deny, bool(meta.get("precedents")))
+            if not row["suggestion"]:
+                skips["denied"] += 1
+                continue
         accepted[key] = row
     if accepted:
         akey, chash, mode, prep = _ai_suggest_coords(session, session_id,

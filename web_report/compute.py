@@ -39,6 +39,9 @@ STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
          "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
          "ondemand_retried": 0,
+         # AI 계열 잡이 상한(_AI_JOB_LIMIT)에 걸려 큐 뒤로 돌아간 횟수. 이 값이 크면
+         # AI 평가가 밀리고 있다는 뜻이고, 0 인데도 느리면 원인은 다른 데 있다.
+         "ai_deferred": 0,
          "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0,
          "rewarm_queued": 0, "consumer_restart": 0}
 
@@ -593,6 +596,33 @@ def report_job(session_id: str, upload_root_str: str, ai_inline: bool = False):
 
 
 @_job("report")
+def ai_comment_cache_job(session_id: str, upload_root_str: str):
+    """AI Comment **분리 캐시만** 채우는 잡 (payload 를 만들지 않는다 — report 락 없음).
+
+    2026-09-02. 'ai' 잡의 1단계다. 무거운 엔진 평가를 여기서 끝내 두면 뒤이은
+    report_job(ai_inline=True) 은 분리 캐시 디스크 히트라 1초 안팎에 끝나고, 부모가
+    report 락을 잡는 시간도 그만큼으로 줄어든다(CLAUDE.md 규칙 17).
+    """
+    from database import report_db
+    from . import service
+    t_start = time.time()
+    ok = service.run_ai_comment_build(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+    return ok, _stamp(t_start)
+
+
+@_job("report")
+def compare_cache_job(session_id: str, upload_root_str: str):
+    """Compare 분리 캐시만 채우는 잡 — ai_comment_cache_job 과 대칭."""
+    from database import report_db
+    from . import service
+    t_start = time.time()
+    ok = service.run_compare_build(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+    return ok, _stamp(t_start)
+
+
+@_job("report")
 def ai_signature_job(session_id: str, upload_root_str: str):
     """Signature 1단계(L1~L4) 평가 잡 — LLM 코멘트를 기다리지 않고 판정만 채운다.
 
@@ -685,13 +715,23 @@ def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False
     캐시로 열린다. dist 는 시딩된 blob 이 disk_cache 에 이미 있어 값싼 작업이다.
     payload 는 여기서 버리고 단계 기록(수 KB 미만)만 실어 보낸다.
     """
-    # ai_inline=True — 프리웜은 아무도 기다리지 않는 경로라 AI 평가까지 동기로 끝내
-    # AI 분리 캐시·최종 payload 를 미리 채운다 (pending 본을 만들 이유가 없다).
-    _, report_timing = report_job(session_id, upload_root_str, True)
+    # **ai_inline=False** (2026-09-02 — 종전 True). 프리웜이 AI 평가까지 동기로 끝내려
+    # 하면 그 100초 동안 디스크에 **즉시 열 수 있는 산출물이 하나도 없다** — pending 본은
+    # ai_inline=True 경로가 만들지 않기 때문(service._pending_kinds(inline=True) → ()).
+    # 그 사이 업로더가 세션을 클릭하면 완전 콜드로 판정돼 202 폴링을 100초 한다.
+    # 이제 pending 본을 먼저 디스크에 남기고(첫 클릭 즉시 200), 무거운 AI/Compare 는
+    # 아래 pending_kinds 로 부모에 알려 백그라운드 잡에 맡긴다. 비 AI 세션은
+    # pending_kinds 가 비어 종전과 완전히 동일한 최종본이 만들어진다.
+    report, report_timing = report_job(session_id, upload_root_str, False)
     dist_timing = None
     if dist_seeded:
         _, dist_timing = dist_job(session_id, upload_root_str)
-    return {"report": report_timing, "dist": dist_timing}
+    # 무엇이 미뤄졌는지는 payload 플래그가 그대로 말해 준다(service 가 세운 것) — 워커에서
+    # 세션 옵션을 다시 판정하지 않는다(판정이 두 벌이 되면 갈린다).
+    pending = tuple(k for k, on in (("ai", (report or {}).get("ai_comment_pending")),
+                                    ("compare", (report or {}).get("compare_pending")))
+                    if on)
+    return {"report": report_timing, "dist": dist_timing, "pending_kinds": pending}
 
 
 # ── 프리웜 큐 ────────────────────────────────────────────────────────────────
@@ -728,9 +768,15 @@ def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool,
             t_sub = time.time()
             timings = run(prewarm_job, session_id, upload_root_str, bool(dist_seeded))
             t_recv = time.time()
+            pending_kinds = (timings or {}).pop("pending_kinds", ()) or ()
             for kind, timing in (timings or {}).items():
                 if timing:      # 워커에서 실제 콜드 빌드가 일어난 경우만
                     build_log.record_offloaded(kind, session_id, "", t_sub, t_recv, timing)
+        # 프리웜이 pending 본까지만 만들었으면(AI·Compare 세션) 나머지는 백그라운드 잡에
+        # 넘긴다 (2026-09-02). 사용자 조회·Honey 프롬프트 폴링이 이미 걸어 둔 것과는
+        # _ondemand_pending 이 자연 dedup 하므로 같은 세션 평가는 여전히 1회다.
+        for kind in pending_kinds:
+            request_build(session_id, upload_root_str, kind)
         STATS["prewarm_done"] += 1
     except Exception:
         # 프리웜 실패는 조회 시 재계산으로 복구되지만, 조용히 삼키면 상시 실패를
@@ -823,6 +869,17 @@ def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) ->
 # 사용자가 화면에서 대기 중이라 버리면 그 사용자만 영영 로드되지 않는다. 대신 (session,
 # kind) 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
 _ONDEMAND_WORKERS = max(1, int(os.getenv("WEB_REPORT_ONDEMAND_WORKERS", "2") or 2))
+# AI 계열 잡(ai/aisig/compare)의 **동시 실행 상한** (2026-09-02).
+# 이 잡들은 사용자가 화면에서 기다리지 않는 대신 건당 수십~수백 초라, 캐시 세대를 가는
+# 배포(.rules_rev·스키마 bump) 직후처럼 전 세션이 한꺼번에 무효화되면 소비자 스레드와
+# 워커 슬롯을 통째로 채워 버린다. 그러면 정작 사용자가 기다리는 'report' pending 빌드가
+# 워커를 못 받아 큐 대기 타임아웃(60초)+재시도로 밀린다 — "배포하면 가끔 느려진다"의
+# 정체다(CLAUDE.md 규칙 17). 상한을 넘으면 큐 뒤로 돌린다(버리지 않는다).
+# ⚠ _WORKERS/_ONDEMAND_WORKERS 를 올리면 이 값도 함께 볼 것(perf_guard S03 과 같은 취지).
+_AI_JOB_KINDS = frozenset(("ai", "aisig", "compare"))
+_AI_JOB_LIMIT = max(1, int(os.getenv("WEB_REPORT_AI_JOB_LIMIT", "0") or 0)
+                    or max(1, _WORKERS // 3))
+_ai_jobs_running = 0
 # 등록만 남고 소비자가 풀지 못한 "유령" 을 자동 회수하는 상한 (request_build 에서 lazy
 # 판정). 정상 실행은 워커 타임아웃(_TIMEOUT_SEC) + 큐 대기 상한 안에 반드시 끝나거나
 # 실패하므로 그보다 넉넉히 잡는다.
@@ -865,21 +922,28 @@ _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
     "map": lambda sid, root: map_job(sid, root),
     # AI Comment 백그라운드 평가 (2026-08-13) — 사용자는 pending payload 로 이미 리포트를
-    # 보고 있다. ai_inline=True 라 load_webreport 가 pending 본을 미스로 취급해 AI 평가
-    # 포함 최종 payload 를 재빌드하고(워커 강제 오프로드 — GIL 비점유), 완료되면 부모
-    # RAM 의 pending 본이 최종본으로 덮인다. 실패는 build_status 의 (sid,"ai") 실패
-    # 누적으로 차단된다 — 리포트 자체는 이미 열려 있어 사용자 화면은 죽지 않는다.
-    "ai": lambda sid, root: report_job(sid, root, True),
+    # 보고 있다. 완료되면 부모 RAM 의 pending 본이 최종본으로 덮인다. 실패는 build_status
+    # 의 (sid,"ai") 실패 누적으로 차단된다 — 리포트 자체는 이미 열려 있어 화면은 죽지 않는다.
+    #
+    # **2단계다** (2026-09-02): ① 분리 캐시만 채우고(report 락 없음) ② payload 를 다시
+    # 굽는다. 종전에는 ②만 있었는데, 그 안에서 엔진 평가(실측 100초+)가 도는 내내 부모
+    # 소비자 스레드가 report 락을 쥐고 있어 **사용자의 1초짜리 pending 빌드가 그 뒤에
+    # 줄을 섰다**(= "AI Comment 켜면 첫 조회 100초"). ①을 마친 뒤의 ②는 분리 캐시
+    # 디스크 히트라 1초 안팎이다. ①이 "할 일 없음"(이미 캐시됨)이면 그냥 ②로 간다.
+    # 순서를 되돌리지 말 것 — perf_guard S15 (CLAUDE.md 규칙 17).
+    "ai": lambda sid, root: (run(ai_comment_cache_job, sid, root),
+                             report_job(sid, root, True))[1],
     # Signature 1단계 (2026-08-28) — 'ai' 와 **다른 잡**이다. payload 를 만들지 않고 분리
     # 캐시만 채우므로 'ai' 와 동시에 돌아도 콜드 빌드가 중복되지 않는다. LLM 이 켜진
     # 세션에서 'ai' 보다 훨씬 먼저 끝나 Signature 컬럼을 앞당겨 채우는 것이 목적.
     "aisig": lambda sid, root: ai_signature_job(sid, root),
-    # Compare 백그라운드 계산 (2026-08-19) — 'ai' 와 **같은 잡**이다(ai_inline=True 가
-    # 미뤄진 부분을 전부 인라인으로 계산해 최종 payload 를 만든다). kind 를 나눠 두는
-    # 이유는 ① build_status 실패 누적이 축별로 따로 세어지고 ② 관리자 화면·로그에서
-    # 무엇을 기다리는 잡인지 구분되기 때문. Compare 전용 세션(AI 옵션 없음)에서 'ai'
-    # 라는 이름의 잡이 도는 것도 진단을 헷갈리게 한다.
-    "compare": lambda sid, root: report_job(sid, root, True),
+    # Compare 백그라운드 계산 (2026-08-19) — 'ai' 와 같은 2단계 구조다(②가 미뤄진 부분을
+    # 전부 인라인으로 계산해 최종 payload 를 만든다). kind 를 나눠 두는 이유는
+    # ① build_status 실패 누적이 축별로 따로 세어지고 ② 관리자 화면·로그에서 무엇을
+    # 기다리는 잡인지 구분되기 때문. Compare 전용 세션(AI 옵션 없음)에서 'ai' 라는
+    # 이름의 잡이 도는 것도 진단을 헷갈리게 한다.
+    "compare": lambda sid, root: (run(compare_cache_job, sid, root),
+                                  report_job(sid, root, True))[1],
 }
 
 
@@ -905,6 +969,22 @@ def _ondemand_loop() -> None:
             # 202 빌드가 멈추기 때문 — 50ms 면 양쪽을 다 만족한다.
             time.sleep(min(0.05, wait_left))
             continue
+        # AI 계열 잡 동시 실행 상한 (2026-09-02) — 넘으면 **버리지 않고** 큐 뒤로 돌린다.
+        # 사용자가 기다리는 'report'/'map' 은 이 검사를 타지 않으므로 항상 먼저 집힌다.
+        global _ai_jobs_running
+        is_ai_job = kind in _AI_JOB_KINDS
+        if is_ai_job:
+            with _ondemand_lock:
+                if _ai_jobs_running >= _AI_JOB_LIMIT:
+                    _ondemand_queue.append(item)
+                    STATS["ai_deferred"] = STATS.get("ai_deferred", 0) + 1
+                    deferred = True
+                else:
+                    _ai_jobs_running += 1
+                    deferred = False
+            if deferred:
+                time.sleep(0.05)     # 위 재시도 분기와 같은 이유의 짧은 양보
+                continue
         with _ondemand_lock:
             # 실행 시작 시각으로 갱신 — TTL 유령 판정이 큐 대기까지 세면 붐빌 때 정상
             # 대기분을 유령으로 오판한다(재시도 중인 잡도 여기서 계속 갱신된다).
@@ -951,8 +1031,13 @@ def _ondemand_loop() -> None:
                 _log.warning("[ondemand] %s build failed session=%s", kind, session_id,
                              exc_info=True)
         finally:
-            if not requeued:
-                with _ondemand_lock:
+            with _ondemand_lock:
+                if is_ai_job:
+                    # 상한 카운터는 **성공·실패·재큐잉 모두** 되돌린다 — 안 그러면 슬롯이
+                    # 영구히 새어 AI 잡이 아예 안 돌게 된다(재큐잉된 잡은 다시 집힐 때
+                    # 위에서 새로 +1 한다).
+                    _ai_jobs_running = max(0, _ai_jobs_running - 1)
+                if not requeued:
                     _ondemand_pending.pop((session_id, kind), None)
 
 

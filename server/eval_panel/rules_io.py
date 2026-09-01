@@ -288,7 +288,9 @@ THRESHOLD_KINDS = {
     "region_fail_share_min": "ratio", "spot_fail_spread_max": "ratio",
     "heavy_tail_mass_min": "ratio", "heavy_tail_mass_max": "ratio",
     "tail_side_share_min": "ratio", "func_fail_pass_fix_min": "ratio",
+    "dut_fail_share_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
+    "dut_fail_count_min": "count",
     "source_min_count": "count",
     "outlier_sigma": "positive", "subpop_outlier_sigma": "positive",
     # 꼬리가 몸통 σ 의 몇 배까지 뻗었나 — 1 을 넘는 것이 정상이라 ratio 가 아니다.
@@ -869,6 +871,122 @@ def save_exclusions(payload: dict) -> dict:
     path = eval_debug.rules_files()["exclusions"]
     backup = _backup(path)
     _write_atomic(path, _head_comments(path) + _dump(out))
+    return {"saved": out, "backup": backup, "no_op": False,
+            "rules_rev": eval_debug.bump_rules_rev()}
+
+
+# ── AI Comment 지시문 · 금지 문구 ────────────────────────────────────────────
+# 저장 규약은 exclusions 와 같다(검증 → no_op → 백업 → 원자적 쓰기 → rev +1).
+# 두 목록의 성격이 다르다:
+#   instructions  = 프롬프트에 들어간다 → 저장하면 prompt sha 가 갈려 기존 [제안] 폐기
+#                   → Honey 가 재대행할 때까지 룰 문장이 보인다(설계상 정상, docs/23 ②).
+#   deny_patterns = 프롬프트 밖. push 수용 때 [제안] 을 줄 단위로 거른다 → sha 불변.
+_AIP_ID_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+_AIP_MAX_INSTRUCTIONS = 30
+_AIP_MAX_TEXT_LEN = 500
+_AIP_MAX_PATTERNS = 20
+_AIP_MAX_REGEX_LEN = 300
+_AIP_MAX_NOTE_LEN = 300
+_AIP_HEAD = (
+    "# AI Comment [제안] 지시문 · 금지 문구 — /pe/eval \"AI 지시문\" 탭에서 편집한다.\n"
+    "#\n"
+    "# instructions : 프롬프트 base 지시문 뒤에 덧붙는 문장. 저장하면 prompt sha 가 갈려\n"
+    "#                기존 [제안] 이 폐기되고 Honey 가 재대행한다.\n"
+    "# deny_patterns: 서버가 클라 push 를 받을 때 [제안] 을 줄 단위로 걷어내는 정규식.\n"
+    "#                프롬프트 밖이라 sha 불변 — 다음 push 부터 적용된다.\n")
+
+
+def read_ai_prompt() -> dict:
+    """rules/ai_prompt.yaml — 패널 표시용 (전 제품군 공통)."""
+    return {**eval_debug.ai_prompt_rules(), "rules_rev": eval_debug.rules_rev()}
+
+
+def _aip_ids(rows, kind: str) -> None:
+    """id 형식·중복 검사 — id 는 화면 표시와 감사 로그의 식별자다."""
+    seen = set()
+    for row in rows:
+        rid = row["id"]
+        if not _AIP_ID_RE.match(rid):
+            raise RuleError(f"{kind} id 는 영소문자/숫자/밑줄 1~40자 — '{rid}'")
+        if rid in seen:
+            raise RuleError(f"{kind} id 중복 — '{rid}'")
+        seen.add(rid)
+
+
+def _aip_instructions(payload: dict) -> list:
+    raw = payload.get("instructions", [])
+    if not isinstance(raw, list):
+        raise RuleError("instructions 는 배열이어야 함")
+    if len(raw) > _AIP_MAX_INSTRUCTIONS:
+        raise RuleError(f"지시문은 최대 {_AIP_MAX_INSTRUCTIONS}개")
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise RuleError("지시문 항목은 객체여야 함")
+        text = str(item.get("text") or "").strip()
+        if not text:
+            raise RuleError("빈 지시문은 저장할 수 없습니다 (지우려면 행을 삭제하세요)")
+        if len(text) > _AIP_MAX_TEXT_LEN:
+            raise RuleError(f"지시문은 {_AIP_MAX_TEXT_LEN}자 이하 — {text[:20]}…")
+        out.append({"id": str(item.get("id") or "").strip(),
+                    "enabled": bool(item.get("enabled", True)),
+                    "text": text})
+    _aip_ids(out, "지시문")
+    return out
+
+
+def _aip_patterns(payload: dict) -> list:
+    raw = payload.get("deny_patterns", [])
+    if not isinstance(raw, list):
+        raise RuleError("deny_patterns 는 배열이어야 함")
+    if len(raw) > _AIP_MAX_PATTERNS:
+        raise RuleError(f"금지 문구는 최대 {_AIP_MAX_PATTERNS}개")
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise RuleError("금지 문구 항목은 객체여야 함")
+        regex = str(item.get("regex") or "").strip()
+        if not regex:
+            raise RuleError("빈 금지 문구는 저장할 수 없습니다 (지우려면 행을 삭제하세요)")
+        if len(regex) > _AIP_MAX_REGEX_LEN:
+            raise RuleError(f"금지 문구는 {_AIP_MAX_REGEX_LEN}자 이하 — {regex[:20]}…")
+        try:                       # 저장 시점에 막는다 — 조회 경로는 깨진 패턴을 건너뛴다
+            re.compile(regex)
+        except re.error as exc:
+            raise RuleError(f"정규식 오류 — {regex[:40]}… ({exc})") from exc
+        note = str(item.get("note") or "").strip()
+        if len(note) > _AIP_MAX_NOTE_LEN:
+            raise RuleError(f"메모는 {_AIP_MAX_NOTE_LEN}자 이하")
+        out.append({"id": str(item.get("id") or "").strip(),
+                    "enabled": bool(item.get("enabled", True)),
+                    "only_with_precedents":
+                        bool(item.get("only_with_precedents", True)),
+                    "regex": regex, "note": note})
+    _aip_ids(out, "금지 문구")
+    return out
+
+
+def save_ai_prompt(payload: dict) -> dict:
+    """지시문·금지 문구 전체 재작성 (백업 → 원자적 쓰기 → rev +1).
+
+    rev 를 올리는 이유는 exclusions 와 같다 — ai_comment 옵션 세션의 캐시가 무효화돼
+    저장 즉시 새 지시문으로 프롬프트가 다시 만들어진다. 내용이 같으면 no_op 로 건너뛴다
+    (프롬프트 sha 가 갈리면 저장된 [제안] 이 전부 폐기되므로 헛되이 올리면 손해가 크다).
+    """
+    if not isinstance(payload, dict):
+        raise RuleError("payload 는 객체여야 함")
+    out = {"instructions": _aip_instructions(payload),
+           "deny_patterns": _aip_patterns(payload)}
+    current = eval_debug.ai_prompt_rules()
+    if out == {"instructions": current.get("instructions"),
+               "deny_patterns": current.get("deny_patterns")}:
+        return {"saved": out, "backup": None, "no_op": True,
+                "rules_rev": eval_debug.rules_rev()}
+    path = eval_debug.rules_files()["ai_prompt"]
+    backup = _backup(path)
+    # 파일이 아직 없으면(신규 설치·EVAL_RULES_DIR 이전) 머리말을 새로 쓴다 — 손으로 열어
+    # 본 사람이 두 목록의 성격 차이를 모르면 sha 폐기를 모르고 지시문을 자주 바꾼다.
+    _write_atomic(path, (_head_comments(path) or _AIP_HEAD) + _dump(out))
     return {"saved": out, "backup": backup, "no_op": False,
             "rules_rev": eval_debug.bump_rules_rev()}
 

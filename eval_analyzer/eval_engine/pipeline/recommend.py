@@ -8,7 +8,7 @@ make_comment:
   - LLM on → llm_client.complete(prompt) 로 자연어 합성(모델은 사용자 지정).
 """
 from .. import llm_client, precedent_client
-from ._rules import signatures_for
+from ._rules import ai_prompt_instructions, signatures_for
 from .signatures import _BIMODALITY_ID
 
 _MODALITY_V2_COMMENT = { 
@@ -54,11 +54,28 @@ def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
         text = _subpop_gap_comment(sig_result) or text
     return text or _NO_PHENOMENON_FALLBACK
 
-def _action_ko_for(verdict, case_ctx=None) -> str:
-    """[제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다."""
+def _fired_by_id(sig_result) -> dict:
+    """발화 signature 를 id → 발화 항목으로 색인.
+
+    yaml 원문(`signatures_for`)이 아니라 **발화 결과**를 봐야 하는 곳이 있다: action_ko 의
+    `{키}` 자리는 L3 가 발화 시점에 실제 값으로 채워 두므로(`signatures._fill_action`),
+    문구는 발화 항목 쪽이 정본이다.
+    """
+    return {s["id"]: s for s in (sig_result or {}).get("signatures", []) if s.get("id")}
+
+
+def _action_ko_for(verdict, case_ctx=None, sig_result=None) -> str:
+    """[제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다.
+
+    `sig_result` 가 있으면 **발화 항목의 action_ko** 를 먼저 쓴다 — L3 가 `{dut_top}` 같은
+    자리를 그 case 의 실제 값으로 이미 채워 놓았다. yaml 원문은 그 값이 비어 있는 폴백이다.
+    """
     by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
-    return (by_id[primary].get("action_ko") if primary in by_id else None) or _NO_PHENOMENON_FALLBACK
+    fired = _fired_by_id(sig_result).get(primary) or {}
+    text = fired.get("action_ko") or (
+        by_id[primary].get("action_ko") if primary in by_id else None)
+    return text or _NO_PHENOMENON_FALLBACK
 
 def _fired_signature_lines(sig_result, case_ctx=None) -> str:
     """LLM 프롬프트에 넣을 **발화 signature 전체** 목록 — 한 줄에 하나(현상+기본조치).
@@ -75,7 +92,11 @@ def _fired_signature_lines(sig_result, case_ctx=None) -> str:
         if not sid:
             continue
         meta = by_id.get(sid) or {}
-        parts = [x for x in (meta.get("phenomenon_ko"), meta.get("action_ko")) if x]
+        # action_ko 는 **발화 항목** 것을 먼저 쓴다 — L3 가 `{dut_top}` 같은 자리를 그
+        # case 의 실제 값으로 채워 두었다. yaml 원문이 들어가면 LLM 이 `{dut_top}` 을
+        # 그대로 옮기거나 값을 지어낸다.
+        parts = [x for x in (meta.get("phenomenon_ko"),
+                             s.get("action_ko") or meta.get("action_ko")) if x]
         role = s.get("role") or ""
         head = f"- {sid}" + (f"({role})" if role else "")
         out.append(f"{head}: {' / '.join(parts)}" if parts else head)
@@ -135,6 +156,13 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
        스스로 결론내 버리는 출력이 나왔다(사용자 신고). 조건이 완전히 같지 않아도 참고할
        점을 살려 쓰는 것이 이 섹션의 목적이다.
     분량은 최대 5줄 — 종합 재료가 늘어난 만큼 한 문장으로는 담기지 않는다.
+
+    2026-09-02: base 지시문 **뒤에** `rules/ai_prompt.yaml` 의 운영자 지시를 잇는다
+    (`ai_prompt_instructions`). "사례를 버리지 마라" 류의 조건은 앞으로도 계속 늘어나는데
+    그때마다 코드를 고치면 배포가 필요하고 문구 이력도 남지 않는다 — 관리자
+    `/pe/eval` "AI 지시문" 탭에서 편집·백업·rev 증가로 관리한다.
+    ⚠ lines[0] 리터럴은 **바이트 그대로 유지**할 것 — web_report/ai_prompt.py `_INSTRUCTION`
+    이 이 값의 사본이고 tests/test_ai_prompt_determinism.py (e) 가 ast 로 대조한다.
     """
     sig_lines = _fired_signature_lines(sig_result, case_ctx)
     prec_lines = _precedent_lines(precedents)
@@ -160,6 +188,9 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
         prec_lines or f"- {_NO_PRECEDENT_TEXT}",
         f"참고용 기본 조치(action_ko):{ action_ko}"
     ]
+    # 운영자 지시(yaml)는 base 지시문 **직후**에 넣는다 — 재료(item/status/…)보다 앞이어야
+    # 지시로 읽힌다. 파일이 없거나 전부 꺼져 있으면 종전 프롬프트와 바이트 동일하다.
+    lines[1:1] = ai_prompt_instructions()
 
     return "\n".join(lines)
 
@@ -174,7 +205,7 @@ def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: li
     """
     phenomenon = _phenomenon_text(verdict, sig_result, case_ctx)
     past_case = _past_case_text(precedents)
-    action_ko = _action_ko_for(verdict, case_ctx)
+    action_ko = _action_ko_for(verdict, case_ctx, sig_result)
     suggestion = action_ko
     if llm_client.is_enabled():
         try:

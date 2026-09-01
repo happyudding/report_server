@@ -100,6 +100,10 @@ ADD_CASES = [
     ("S14-ai-inline-gate", "web_report/service.py",
      "                        report_db=report_db, allow_build=True)",
      "                        report_db=report_db, allow_build=ai_inline)"),
+    # 프리웜은 pending 본 먼저 — ai_inline=True 로 되돌리면 차단.
+    ("S16-prewarm-pending-first", "web_report/compute.py",
+     "    report, t = report_job(session_id, upload_root_str, True)",
+     "    report, t = report_job(session_id, upload_root_str, False)"),
 ]
 
 REMOVE_CASES = [
@@ -125,6 +129,11 @@ REMOVE_CASES = [
      "                        if compute.force_offload_for_consumer():"),
     ("S11-ondemand-force-offload", "web_report/compute.py",
      "def force_offload_for_consumer() -> bool:"),
+    # 'ai'/'compare' 잡의 1단계(분리 캐시 채우기) 제거 차단.
+    ("S15-ai-job-cache-first", "web_report/compute.py",
+     '    "ai": lambda sid, root: (run(ai_comment_cache_job, sid, root),'),
+    ("S15-ai-job-cache-first", "web_report/compute.py",
+     "def compare_cache_job(session_id: str, upload_root_str: str):"),
 ]
 
 

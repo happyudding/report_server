@@ -319,13 +319,34 @@ payload 안에 `format` 필드로 실려 나가는 이름이다. **바꾸면 옛
     대기본을 읽으면 AI Comment 가 빈 채로 굳는다. 조회 순서는 **정본 → (AI 캐시 미준비
     시) 대기본**이고, 최종본 저장 시 `disk_cache.drop_report` 로 대기본을 회수한다.
     콜드 판정(`report_is_cold`)과 실제 로드가 같은 조건(`_pending_report_ready`)을 봐야
-    202 를 냈다가 200 이 되는 불일치가 없다. AI 평가는 온디맨드 `"ai"` 잡
-    (`compute._ONDEMAND_JOBS`, `report_job(ai_inline=True)` — 워커 강제 오프로드)이
-    백그라운드로 끝내고 최종 payload 를 재빌드·디스크 저장하며, 부모 RAM 의 pending
-    본을 최종본으로 덮는다. 프런트(boot.js `maybeStartAiPendingPoll`)는 /full 을
-    폴링하다 최종본이 오면 다시 그린다(셀 표시는 sheets.js `renderAiComment` 의
-    "계산 중…"). **프리웜·ingest 경로는 종전처럼 동기**(`ai_inline=True`) — 아무도
-    기다리지 않으므로 AI 캐시·최종본을 미리 채우는 편이 낫다.
+    202 를 냈다가 200 이 되는 불일치가 없다. 프런트(boot.js `maybeStartAiPendingPoll`)는
+    /full 을 폴링하다 최종본이 오면 다시 그린다(셀 표시는 sheets.js `renderAiComment` 의
+    "계산 중…").
+  - **온디맨드 `"ai"`/`"compare"` 잡은 2단계다** (2026-09-02 — 종전 1단계):
+    ① `service.run_ai_comment_build` / `run_compare_build` 가 **분리 캐시만** 채운다
+    (`load_webreport` 를 타지 않아 **report 락을 잡지 않는다**) →
+    ② `report_job(ai_inline=True)` 이 payload 를 다시 굽는다(이제 분리 캐시 디스크 히트라
+    1초 안팎). 종전처럼 ②만 두면 온디맨드 소비자 스레드가 **부모에서**
+    `keyed_lock(("report",)+cache_key)` 를 쥔 채 엔진 평가(실측 100초+)를 기다리고,
+    **사용자의 1초짜리 pending 빌드가 바로 그 락 뒤에 줄을 섰다** — "AI Comment 를 켜면
+    첫 조회가 100초, 뒤로가기 후 재진입은 즉시" 의 실제 원인(2026-09-02 신고).
+    가드 perf_guard `S15-ai-job-cache-first`.
+  - **프리웜은 pending 본을 먼저 만든다** (`prewarm_job` 이 `ai_inline=False`, 2026-09-02
+    — 종전 True). `_pending_kinds(inline=True)` 가 빈 튜플이라 `ai_inline=True` 경로는
+    **pending 본을 디스크에 남기지 않는다** — AI 평가가 도는 100초 동안 즉시 열 수 있는
+    산출물이 하나도 없어 업로더의 첫 클릭이 완전 콜드로 판정된다. 이제 pending 본을
+    남기고, 미뤄진 부분은 `prewarm_job` 반환의 `pending_kinds` 로 부모(`_prewarm_one`)가
+    `request_build` 에 넘긴다(사용자 조회·Honey 프롬프트 폴링이 이미 건 등록과는
+    `_ondemand_pending` 이 자연 dedup — 같은 세션 평가는 여전히 1회). 가드 `S16`.
+  - **AI 계열 잡 동시 실행 상한** `WEB_REPORT_AI_JOB_LIMIT`(기본 `_WORKERS//3`) —
+    `_ondemand_loop` 이 `{"ai","aisig","compare"}` 에만 적용하고, 넘치면 **버리지 않고**
+    큐 뒤로 돌린다(`STATS["ai_deferred"]`). 캐시 세대를 가는 배포(`.rules_rev`·스키마
+    bump)는 전 AI 세션의 분리 캐시를 동시에 무효화하므로, 상한이 없으면 `'ai'` 잡이
+    소비자·워커를 전부 채워 사용자의 `'report'` 빌드가 큐 대기 타임아웃(60초)+재시도로
+    밀린다 — "배포하면 가끔 느려진다" 의 정체다. 워커 수를 올릴 땐 함께 볼 것.
+  - 검증: [tests/test_ai_nonblocking.py](../tests/test_ai_nonblocking.py) — 엔진 스텁이
+    도는 동안 사용자 조회가 즉시 열리는지·프리웜이 엔진을 부르지 않는지·상한이 report 를
+    먼저 통과시키는지를 직접 잰다.
   - pending 응답은 response 캐시(_FULL_CACHE)에 넣지 않고 etag 도 `-ai` 꼬리로 가른다
     (완료 후 stale 304 방지). AI 잡 실패는 `build_status` (sid,"ai") 실패 누적으로
     재시도가 차단되고 리포트는 계속 열린다. 가드: perf_guard `S10-ai-comment-cache`,
@@ -459,6 +480,7 @@ perf_guard `S13-cold-poll-cheap` 이 재발을 차단한다.
 | `WEB_REPORT_DIST_CHUNK_CACHE` | `64` (운영 `128`) | dist pack chunk **디코드 결과** 캐시 개수 (distribution_batch 의 gunzip+json.loads 반복 제거) |
 | `WEB_REPORT_DIST_CHUNK_CACHE_MB` | `512` | 〃 비압축 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `8`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수. `_COMPUTE_WORKERS` 와 같은 값으로 유지 |
+| `WEB_REPORT_AI_JOB_LIMIT` | `_WORKERS//3` (운영 `2`) | AI 계열 잡(`ai`/`aisig`/`compare`)의 **동시 실행 상한**. 넘치면 큐 뒤로 돌린다(버리지 않음, `STATS["ai_deferred"]`). 캐시 세대를 가는 배포 직후 AI 잡이 소비자·워커를 모두 채워 사용자 `report` 빌드를 밀어내는 것을 막는다 — 워커 수를 올릴 땐 함께 볼 것 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_COMPARE_CACHE` | `4` | Compare 계산 결과 캐시 개수 (콜드 빌드의 34%를 차지하던 계산) |
 | `WEB_REPORT_COMPARE_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 값에 common_map 이 있어 세션당 수 MB |

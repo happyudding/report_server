@@ -56,7 +56,7 @@ def main():
             (worker_pid, parent_pid)
     finally:
         compute._reset_pool(shutdown=True)    # 테스트 워커 정리
-    print(f"(2) 워커 PID {worker_pid} != 부모 PID {parent_pid} — 프로세스 분리 ok")
+    print(f"(2) 워커 PID {worker_pid} != 부모 PID {parent_pid}: 프로세스 분리 ok")
 
     print("\n전체 통과")
 

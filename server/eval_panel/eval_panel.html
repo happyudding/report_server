@@ -192,6 +192,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
 <div class="tabs">
   <button class="tab active" data-panel="pThresholds">Thresholds</button>
   <button class="tab" data-panel="pSignatures">Signatures</button>
+  <button class="tab" data-panel="pAiPrompt">AI 지시문</button>
   <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
   <button class="tab" data-panel="pReview">표본함</button>
   <button class="tab" data-panel="pEngrSig">ENGR Signature</button>
@@ -292,6 +293,73 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
     <div class="toolbar">
       <span class="chip" id="exRev"></span>
       <span class="msg" id="exMsg"></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── AI 지시문 (AI Comment [제안] 프롬프트 지시 + 금지 문구) ──────────────── -->
+<div class="panel" id="pAiPrompt">
+  <div class="card">
+    <h2>AI Comment [제안] 지시문
+      <span class="hint">LLM 에게 주는 추가 지시 — 전 제품군 공통 · 저장 즉시 반영</span></h2>
+    <div class="note" style="margin-bottom:10px">
+      AI Comment 의 <b>[제안]</b> 문장은 업로더 PC 의 Claude 가 만듭니다. 여기 적은 문장은
+      고정 지시문 <b>뒤에</b> 그대로 붙어 나갑니다("사례를 버리지 마라" 같은 조건을 코드 수정
+      없이 추가·수정할 수 있습니다).
+      <b style="color:var(--warn)">⚠ 저장하면 이미 저장된 [제안] 이 전부 폐기됩니다</b> —
+      프롬프트가 달라져 옛 문장을 믿을 수 없기 때문이며, Honey 가 세션을 다시 열어 재생성할
+      때까지는 룰 기본 문장이 보입니다(설계상 정상).
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:60px">사용</th><th style="width:170px">id</th><th>지시 문장</th>
+          <th style="width:50px"></th>
+        </tr></thead>
+        <tbody id="aipInsBody"></tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="aipInsAdd">+ 지시문 추가</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>금지 문구 <span class="hint">LLM 이 그래도 쓰면 서버가 그 줄만 지운다 · 정규식</span></h2>
+    <div class="note" style="margin-bottom:10px">
+      생성된 [제안] 을 <b>줄 단위</b>로 검사해 걸리는 줄만 버립니다(나머지 줄은 그대로 저장).
+      한 줄도 안 남으면 그 항목은 룰 기본 문장으로 돌아갑니다. 관리자
+      <a href="/pe/admin-pte/" target="_blank">✨ AI Comment</a> 탭의 push 표에
+      <b>"금지 문구로 폐기"</b> 로 집계됩니다.
+      <b>"선례 있을 때만"</b> 을 켜면 과거 사례가 실제로 프롬프트에 들어간 항목에만 적용됩니다
+      — 사례가 0건인 항목의 "참고할 사례가 없다" 는 <b>사실</b>이라 지우면 안 되기 때문입니다.
+      금지 문구만 바꾸면 프롬프트가 그대로라 <b>이미 저장된 문장은 바뀌지 않고</b> 다음
+      생성분부터 적용됩니다.
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:60px">사용</th><th style="width:150px">id</th>
+          <th>정규식</th><th style="width:90px">선례 있을 때만</th>
+          <th style="width:200px">메모</th><th style="width:50px"></th>
+        </tr></thead>
+        <tbody id="aipDenyBody"></tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <button class="btn" id="aipDenyAdd">+ 금지 문구 추가</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <input class="inp" id="aipReason" placeholder="변경 사유(선택)" style="width:220px"
+             title="감사 로그에 함께 남습니다 — 나중에 왜 바꿨는지 추적할 수 있습니다">
+      <span class="grow"></span>
+      <span class="chip" id="aipRev"></span>
+      <button class="btn" id="aipReset">되돌리기</button>
+      <button class="btn primary" id="aipSave">저장</button>
+      <span class="msg" id="aipMsg"></span>
     </div>
   </div>
 </div>
@@ -1305,6 +1373,107 @@ function addExclusion(key, inpId) {
   $(inpId).value = '';
   saveExclusions({ ...EXCL, [key]: [...(EXCL[key] || []), v] });
 }
+
+// ── AI 지시문 · 금지 문구 (AI Comment [제안]) ─────────────────────────────
+// 편집은 **화면 상태(AIP)에 모아 두고 저장 버튼에서 한 번에** 보낸다 — 제외 목록처럼
+// 행마다 즉시 저장하면 지시문 한 줄 고칠 때마다 prompt sha 가 갈려 저장된 [제안] 이
+// 통째로 폐기된다(그때마다 전 세션 재대행). 저장 횟수 자체를 줄이는 게 목적이다.
+let AIP = null;
+
+function aipRowInstruction(r, i) {
+  return `<tr>
+    <td><input type="checkbox" class="aip-ins-on" data-i="${i}" ${r.enabled ? 'checked' : ''}></td>
+    <td><input class="inp aip-ins-id" data-i="${i}" value="${esc(r.id)}"
+         placeholder="영소문자_숫자" style="width:100%"></td>
+    <td><textarea class="inp aip-ins-text" data-i="${i}" rows="2"
+         style="width:100%;resize:vertical">${esc(r.text)}</textarea></td>
+    <td><a href="#" class="aip-ins-del" data-i="${i}" title="삭제"
+         style="color:var(--crit);text-decoration:none">✕</a></td>
+  </tr>`;
+}
+
+function aipRowDeny(r, i) {
+  return `<tr>
+    <td><input type="checkbox" class="aip-dny-on" data-i="${i}" ${r.enabled ? 'checked' : ''}></td>
+    <td><input class="inp aip-dny-id" data-i="${i}" value="${esc(r.id)}" style="width:100%"></td>
+    <td><input class="inp aip-dny-re" data-i="${i}" value="${esc(r.regex)}"
+         style="width:100%;font-family:monospace"></td>
+    <td style="text-align:center"><input type="checkbox" class="aip-dny-prec" data-i="${i}"
+         ${r.only_with_precedents ? 'checked' : ''}></td>
+    <td><input class="inp aip-dny-note" data-i="${i}" value="${esc(r.note)}" style="width:100%"></td>
+    <td><a href="#" class="aip-dny-del" data-i="${i}" title="삭제"
+         style="color:var(--crit);text-decoration:none">✕</a></td>
+  </tr>`;
+}
+
+function renderAiPrompt() {
+  if (!AIP) return;
+  $('aipRev').textContent = 'rules_rev ' + (AIP.rules_rev || '—');
+  $('aipInsBody').innerHTML = AIP.instructions.map(aipRowInstruction).join('')
+    || '<tr><td colspan="4" class="note">(지시문 없음 — 고정 지시문만 나갑니다)</td></tr>';
+  $('aipDenyBody').innerHTML = AIP.deny_patterns.map(aipRowDeny).join('')
+    || '<tr><td colspan="6" class="note">(금지 문구 없음)</td></tr>';
+  // 입력은 화면 상태에 즉시 반영한다(저장은 버튼에서) — 안 그러면 행을 추가·삭제할 때
+  // 다시 그리면서 아직 안 읽은 편집이 사라진다.
+  const bind = (sel, apply, ev) => document.querySelectorAll(sel).forEach((el) => {
+    el.addEventListener(ev || 'input', () => apply(el, Number(el.dataset.i)));
+  });
+  bind('.aip-ins-on', (el, i) => { AIP.instructions[i].enabled = el.checked; }, 'change');
+  bind('.aip-ins-id', (el, i) => { AIP.instructions[i].id = el.value.trim(); });
+  bind('.aip-ins-text', (el, i) => { AIP.instructions[i].text = el.value; });
+  bind('.aip-dny-on', (el, i) => { AIP.deny_patterns[i].enabled = el.checked; }, 'change');
+  bind('.aip-dny-id', (el, i) => { AIP.deny_patterns[i].id = el.value.trim(); });
+  bind('.aip-dny-re', (el, i) => { AIP.deny_patterns[i].regex = el.value; });
+  bind('.aip-dny-prec',
+       (el, i) => { AIP.deny_patterns[i].only_with_precedents = el.checked; }, 'change');
+  bind('.aip-dny-note', (el, i) => { AIP.deny_patterns[i].note = el.value; });
+  const del = (sel, key) => document.querySelectorAll(sel).forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      AIP[key].splice(Number(a.dataset.i), 1);
+      renderAiPrompt();
+    });
+  });
+  del('.aip-ins-del', 'instructions');
+  del('.aip-dny-del', 'deny_patterns');
+}
+
+async function loadAiPrompt() {
+  AIP = await getJSON('api/ai_prompt');
+  AIP.instructions = AIP.instructions || [];
+  AIP.deny_patterns = AIP.deny_patterns || [];
+  renderAiPrompt();
+}
+
+async function saveAiPrompt() {
+  try {
+    const r = await sendJSON('api/ai_prompt', 'PUT', editBody({
+      instructions: AIP.instructions, deny_patterns: AIP.deny_patterns,
+    }, 'aipReason'));
+    AIP = { ...r.saved, rules_rev: r.rules_rev };
+    renderAiPrompt();
+    flash($('aipMsg'), r.no_op ? '변경 없음 — 저장을 건너뛰었습니다'
+      : `저장됨 (rules_rev ${r.rules_rev}) — 저장된 [제안] 은 폐기되고 Honey 재접속 시 새로 생성됩니다`,
+      true);
+  } catch (e) { flash($('aipMsg'), e.message, false); }
+}
+
+$('aipInsAdd').addEventListener('click', () => {
+  if (!AIP) return;
+  AIP.instructions.push({ id: '', enabled: true, text: '' });
+  renderAiPrompt();
+});
+$('aipDenyAdd').addEventListener('click', () => {
+  if (!AIP) return;
+  AIP.deny_patterns.push({ id: '', enabled: true, only_with_precedents: true,
+                           regex: '', note: '' });
+  renderAiPrompt();
+});
+$('aipSave').addEventListener('click', saveAiPrompt);
+$('aipReset').addEventListener('click', () => {
+  loadAiPrompt().then(() => flash($('aipMsg'), '저장된 내용으로 되돌렸습니다', true))
+    .catch((e) => flash($('aipMsg'), e.message, false));
+});
 
 // ── Trace ────────────────────────────────────────────────────────────────
 let TRACE = null;
@@ -2683,6 +2852,7 @@ $('esResync').addEventListener('click', async () => {
 const TAB_LOADERS = {
   pThresholds: loadThresholds,
   pSignatures: async () => { await Promise.all([loadSignatures(), loadExclusions()]); },
+  pAiPrompt: loadAiPrompt,
   pTrace: loadSessions,
   pReview: loadReview,
   pEngrSig: loadEngrSignatures,

@@ -176,6 +176,72 @@ def test_search_precedents_returns_all_matches_no_cap(fresh_db):
     assert len(res) == 7  # limit 기본이 None → 전체 반환(과거의 5건 cap 없음)
 
 
+def test_search_precedents_uses_latest_evaluation_only(fresh_db):
+    """같은 case 를 여러 번 평가해도 선례는 **1행**이고 status 는 최신 평가다 (2026-09-02).
+
+    evaluation JOIN 에 최신 1건 제한이 없으면 재평가 횟수만큼 같은 case 가 복제돼
+    (실측 case 당 평균 9.5행) 반환 행이 시간이 갈수록 늘고, dedup 대표행 선정도
+    엉뚱한 행을 고른다. raw_metrics/features 가 이미 쓰는 MAX(run_id) 규약과 같다.
+    """
+    with store.get_conn() as conn:
+        case_id = _seed_precedent(conn, item_canon="vref_trim")
+        for i, st in enumerate(("MINOR", "MAJOR", "CRITICAL")):
+            run_id = store.create_ingest_run(
+                {"product_name": "P1", "lot_id": "L1"}, conn=conn)
+            store.save_evaluation(case_id, run_id, f"v{i}", "", st, 0.9, "full",
+                                  None, conn=conn)
+    res = store.search_precedents("V", "vref_trim")
+    assert len(res) == 1                      # 3회 평가해도 1행
+    assert res[0]["status"] == "CRITICAL"     # 최신 평가 기준
+
+
+def test_search_precedents_rows_cache_reuses_query(fresh_db, monkeypatch):
+    """rows_cache 를 주면 같은 파라미터의 두 번째 호출은 DB 를 열지 않는다 (2026-09-02).
+
+    이 SQL 의 파라미터에 item 이 없어(이름 매칭은 파이썬 difflib) 한 evaluate 안의 case
+    수십~수백 건이 전부 같은 쿼리를 되풀이했다. 캐시 없이는 종전과 동일해야 한다.
+    """
+    with store.get_conn() as conn:
+        _seed_precedent(conn, item_canon="vref_trim")
+        _seed_precedent(conn, product="P2", item_canon="iddq_leak")
+
+    opened = []
+    real_get_conn = store.get_conn
+    monkeypatch.setattr(store, "get_conn",
+                        lambda *a, **kw: (opened.append(1), real_get_conn(*a, **kw))[1])
+
+    cache = {}
+    a = store.search_precedents("V", "vref_trim", rows_cache=cache)
+    b = store.search_precedents("V", "iddq_leak", rows_cache=cache)   # 같은 params
+    assert len(opened) == 1, "두 번째 호출이 DB 를 다시 열었다"
+    assert len(cache) == 1
+    # item 이 다르면 결과도 달라야 한다 — 캐시가 결과까지 재사용하면 안 된다.
+    assert a and b and a[0]["item_canonical"] != b[0]["item_canonical"]
+
+    # 캐시 미전달(기본) 은 종전대로 매번 연다.
+    opened.clear()
+    store.search_precedents("V", "vref_trim")
+    store.search_precedents("V", "vref_trim")
+    assert len(opened) == 2
+
+
+def test_search_precedents_rows_cache_does_not_mutate_shared_rows(fresh_db):
+    """캐시 행은 여러 case 가 공유한다 — similarity 를 제자리에 쓰면 안 된다.
+
+    공유 행을 고치면 다른 case 의 정렬(유사도 내림차순)이 조용히 오염된다.
+    """
+    with store.get_conn() as conn:
+        _seed_precedent(conn, item_canon="vref_trim")
+    cache = {}
+    store.search_precedents("V", "vref_trim", rows_cache=cache)          # sim 1.0
+    cached_rows = next(iter(cache.values()))
+    assert all("similarity" not in r for r in cached_rows)
+    # 다른 이름으로 다시 조회해도 앞선 호출의 similarity(1.0) 가 남아 있지 않다.
+    # (vref_trim_p2 는 _p2 가 공통 토큰이라 유사도가 그대로 1.0 — 구분이 안 된다.)
+    res2 = store.search_precedents("V", "vref_bias", rows_cache=cache)
+    assert res2 and res2[0]["similarity"] < 1.0
+
+
 def test_search_precedents_excludes_own_session_and_analysis_key(fresh_db):
     """같은 세션/analysis_key 로 적재된 사례는 선례에서 제외 — 시간 누출 차단."""
     with store.get_conn() as conn:

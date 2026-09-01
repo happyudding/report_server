@@ -22,6 +22,9 @@ ai_comment/eval_export/eval_debug 3곳 고정)이라 ai_prompt.py 는 엔진을 
   (j) **엔진 선례 계약** — `store.search_precedents`(최신 run 의 raw_metrics/features
       JOIN) + `present._precedent_result` 가 상세를 실어 주는지. 임시 sqlite eval DB.
       이게 깨지면 프롬프트 선례가 조용히 한 줄로 되돌아간다.
+  (k) **운영자 지시문·금지 문구**(2026-09-02, `/pe/eval` AI 지시문 탭) — rules 인자가
+      프롬프트에 붙는 위치·결정성, `precedents` 건수, `strip_denied_lines` 가 사례를
+      버리는 줄만 지우고 비교문("사례와 달리")은 남기는지. rules 없으면 종전 바이트 동일.
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert). 서버 불필요. (j)만 임시 sqlite 를 만든다.
 """
@@ -342,7 +345,109 @@ def test_engine_precedent_contract():
     print("  (j) 엔진 선례 계약(to_result 상세 동반) OK")
 
 
+_RULES = {
+    "instructions": [
+        {"id": "keep_precedents", "enabled": True, "text": "사례를 버리지 마라."},
+        {"id": "off_rule", "enabled": False, "text": "꺼진 지시문 — 나가면 안 된다."},
+        {"id": "empty_rule", "enabled": True, "text": "   "},
+        {"id": "no_distortion", "enabled": True, "text": "사실을 왜곡하지 마라."},
+    ],
+    "deny_patterns": [
+        # ⚠ **배포 yaml 의 실제 패턴**을 읽어 쓴다 — 손으로 베낀 사본을 쓰면 배포 패턴이
+        # 잘못돼도 테스트가 통과한다(실제로 "사례는 **직접** 적용할 수 없습니다" 를 놓치던
+        # 초안이 이 방식으로 잡혔다).
+        {"id": "precedent_denial", "enabled": True, "only_with_precedents": True,
+         "regex": None, "note": ""},        # main() 에서 배포값으로 채운다
+        {"id": "off_pattern", "enabled": False, "only_with_precedents": False,
+         "regex": "절대", "note": ""},
+        {"id": "broken", "enabled": True, "only_with_precedents": False,
+         "regex": "([", "note": "컴파일 실패 — 건너뛴다"},
+    ],
+}
+
+
+def _load_shipped_deny_regex() -> str:
+    """rules/ai_prompt.yaml 의 precedent_denial 정규식(배포값)."""
+    import yaml
+    path = _ROOT / "eval_analyzer" / "eval_engine" / "rules" / "ai_prompt.yaml"
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    for row in doc.get("deny_patterns") or []:
+        if row.get("id") == "precedent_denial":
+            return str(row.get("regex") or "")
+    raise AssertionError("배포 yaml 에 precedent_denial 패턴이 없습니다")
+
+
+def test_operator_rules():
+    """(k) 운영자 지시문 — 프롬프트 위치·결정성 + rules 없으면 종전 바이트 동일."""
+    base = P.build_prompt(_CASE)
+    with_rules = P.build_prompt(_CASE, None, _RULES)
+    assert with_rules != base
+    assert with_rules == P.build_prompt(dict(_CASE), None, dict(_RULES))   # 결정성
+    # enabled 만, 선언 순서 유지, 빈 text 제외
+    assert "사례를 버리지 마라." in with_rules and "사실을 왜곡하지 마라." in with_rules
+    assert "꺼진 지시문" not in with_rules
+    assert P.instruction_lines(_RULES) == ["사례를 버리지 마라.", "사실을 왜곡하지 마라."]
+    # 위치: 고정 지시문 **뒤**, 재료(item:) **앞** — 재료 뒤에 오면 지시로 안 읽힌다
+    assert (with_rules.index(P._INSTRUCTION_EXTRA)
+            < with_rules.index("사례를 버리지 마라.")
+            < with_rules.index("item: VDD_LEAK"))
+    # rules 가 없거나 비면 종전 프롬프트와 **바이트 동일**(기존 캐시 sha 불변)
+    assert P.build_prompt(_CASE, None, None) == base
+    assert P.build_prompt(_CASE, None, {}) == base
+    assert P.build_prompt(_CASE, None, {"instructions": []}) == base
+    print("  (k1) 운영자 지시문 위치·결정성·무설정 바이트 동일 OK")
+
+
+def test_precedent_count():
+    """(k) prompts 의 `precedents` — 프롬프트에 실제로 실린 선례 수와 같아야 한다."""
+    # _CASE 는 comment 있는 선례 1건 + comment 없는 1건 → 1
+    out = P.build_prompts({"VDD Leak(A)": _CASE})
+    assert out["VDD Leak(A)"]["precedents"] == 1, out
+    assert P._precedent_count(_CASE) == 1
+    none_case = dict(_CASE, precedents=[{"comment": None, "product_name": "P2"}])
+    assert P.build_prompts({"X": none_case})["X"]["precedents"] == 0
+    two = dict(_CASE, precedents=[{"comment": "a"}, {"comment": "b"}])
+    assert P.build_prompts({"X": two})["X"]["precedents"] == 2
+    # sha 는 프롬프트만의 함수다 — precedents 키가 붙어도 값이 흔들리면 안 된다
+    assert out["VDD Leak(A)"]["sha"] == P.prompt_sha(P.build_prompt(_CASE))
+    print("  (k2) prompts.precedents 건수 OK")
+
+
+def test_strip_denied_lines():
+    """(k) 금지 문구 — 사례를 버리는 줄만 지우고 비교문은 남긴다."""
+    pat = P.compile_deny_patterns(_RULES)
+    assert [p[0] for p in pat] == ["precedent_denial"], pat   # 꺼짐·컴파일실패 제외
+    # 양성 — 사용자 신고 원문 + 흔한 변형(조사·부사 삽입·어순)
+    for bad in ("- 검색된 과거 사례 중 현재 현상에 직접 적용할 수 있는 사례는 확인되지 않았습니다.",
+                "- 참고할 사례가 없습니다.",
+                "- 유사 사례 없음",
+                "- 주어진 사례는 직접 적용할 수 없습니다.",
+                "- 사례는 적용하기 어렵습니다.",
+                "- 사례가 그대로 적용되지 않습니다.",
+                "- 관련 사례를 찾을 수 없습니다."):
+        assert P.strip_denied_lines(bad, pat, True) == "", bad
+    # 음성 — 사례를 **활용하는** 문장은 남아야 한다(지우면 안 되는 쪽)
+    for ok in ("- 과거 사례와 달리 이번에는 edge 편중이 확인되지 않으므로 중심부를 보라.",
+               "- 사례에서 확인되지 않은 항목은 별도로 점검하라.",
+               "- 사례의 조치를 참고해 edge 링 오염 이력을 확인하라.",
+               "- 사례는 P1 lot 의 edge 오염 건이며 지금과 cpk 수준이 비슷하다.",
+               "- 사례처럼 재측정으로 회복되는지 확인하라."):
+        assert P.strip_denied_lines(ok, pat, True) == ok, ok
+    # 줄 단위 — 나쁜 줄만 빠지고 나머지는 그대로
+    mixed = ("- 적용할 수 있는 사례는 확인되지 않았습니다.\n"
+             "- edge 링 오염 이력을 먼저 확인하라.")
+    assert P.strip_denied_lines(mixed, pat, True) == "- edge 링 오염 이력을 먼저 확인하라."
+    # only_with_precedents — 사례가 0건이면 "사례가 없다"는 사실이므로 지우지 않는다
+    assert P.strip_denied_lines("- 참고할 사례가 없습니다.", pat, False) \
+        == "- 참고할 사례가 없습니다."
+    # 패턴이 없으면 원문 그대로 (필터 미설정 = 종전 동작)
+    assert P.strip_denied_lines(mixed, [], True) == mixed
+    assert P.strip_denied_lines(None, pat, True) == ""
+    print("  (k3) strip_denied_lines 양성/음성/줄단위/선례게이트 OK")
+
+
 def main():
+    _RULES["deny_patterns"][0]["regex"] = _load_shipped_deny_regex()
     test_determinism()
     test_split_comment()
     test_action_ko_priority()
@@ -353,6 +458,9 @@ def main():
     test_apply_suggestions()
     test_enrich_prompt()
     test_engine_precedent_contract()
+    test_operator_rules()
+    test_precedent_count()
+    test_strip_denied_lines()
     print("test_ai_prompt_determinism: 전부 통과")
 
 

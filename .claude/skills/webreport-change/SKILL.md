@@ -56,6 +56,14 @@ server\.venv\Scripts\python.exe tools\warm_webreport.py --apply
 - 범위 조절: `--days 7 --limit 50`, 특정 1건만 `--session <session_id>`.
 - 세션 1건씩 순차·멱등(이미 캐시된 세션은 건너뜀)이라 여러 번 돌려도 안전하다.
 
+**AI Comment 세션이 섞여 있으면** (`.rules_rev`·`evalcpk` 표식·`AI_COMMENT_SCHEMA_VERSION`
+을 갈았을 때는 특히): 프리웜은 **pending 본까지만** 만들고 AI 평가는 백그라운드 `'ai'`
+잡으로 넘어간다(설계대로 — 사용자는 리포트를 먼저 본다). 그 잡들은
+`WEB_REPORT_AI_JOB_LIMIT`(기본 워커수/3) 로 동시 실행이 제한되므로, 배포 직후 몇 분간은
+Issue Table 의 AI Comment 칸이 "Loading 중…" 으로 보일 수 있다 — **정상이다.**
+관리자 현황 탭에서 `ondemand:ai` 진행 건수와 `compute.STATS["ai_deferred"]` 로 진척을
+확인한다. 리포트 자체가 느리면 그건 다른 문제다(CLAUDE.md 규칙 17).
+
 성능 영향이 의심되면 `webreport-bench` skill 로 이어간다.
 
 ## 5. 함께 걸리는 함정

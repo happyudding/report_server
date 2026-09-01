@@ -13,6 +13,7 @@
 | `outcome_taxonomy.yaml` | case_outcome 의 action/result 허용 어휘 + ko/group. | `outcome_label()` / `validate_outcome()` |
 | `item_alias.yaml` | raw item명 → item_canonical 수동 별칭. | `_alias_map()` |
 | `exclusions.yaml` | 평가 제외 목록(전 제품군 공통). `item_contains`(item명 부분일치)·`units`(UNIT 정확일치, 둘 다 대소문자 무시) 매칭 시 L3 발화 전체 차단 + L6 저장 차단(AI Comment 미생성). **⚠ 아래 경고 참조** — 2026-09-02 부터 **기본값은 빈 목록**이다. `/pe/eval` Signatures 탭에서 편집. | `exclusion_reason(case_ctx)` |
+| `ai_prompt.yaml` | **AI Comment [제안] 지시문 + 금지 문구**(2026-09-02). `instructions` = LLM 프롬프트 base 지시문 **뒤**에 붙는 문장(엔진이 읽는 유일한 키). `deny_patterns` = **엔진은 안 읽는다** — 서버가 클라 push 를 받을 때 [제안]을 줄 단위로 거르는 정규식(`web_report/service.apply_ai_suggestions`). "사례를 버리는 문장을 쓰지 마라" 류 조건이 계속 늘어나 코드 대신 `/pe/eval` **AI 지시문** 탭에서 관리한다. ⚠ **지시문**을 고치면 프롬프트 sha 가 갈려 저장된 [제안]이 전량 폐기·재대행되고, **금지 문구**만 고치면 sha 불변(다음 push 부터). 상세 ../../../docs/23 | `ai_prompt_instructions()` |
 | `sensitivity.yaml` | **민감도 게이지 1~5 단계표**(2026-08-28). signature 그룹 8개 × 키별 `[L1..L5]`. **엔진은 읽지 않는다** — 호출자(report_server)가 카탈로그로 노출하고, 사용자가 고른 단계를 구체값으로 굳혀 `evaluate(thresholds_override=…)` 로 넘긴다. | (서버 `eval_debug.sensitivity_catalog`) |
 
 ### ⚠ exclusions.yaml — 제외는 "설명 없음"이 아니라 "설명 안 함"이다
@@ -186,6 +187,24 @@ signatures:
     한가운데 4.00), 45° 격자 보완을 넣어도 원점 근처 뭉침은 다른 룰 몫이었다.
     임계값 `quadrant_imbalance_warn` 도 함께 지웠다 — 지표 `quadrant_imbalance` 는
     evidence·참고용으로 계속 계산·저장한다.)
+- **DUT 축은 공간 축과 별개다** — `DUT_FAIL`(2026-09-01 신설)은 "웨이퍼 어디에서 났나"가
+  아니라 **"어느 테스터 채널/소켓에서 났나"** 를 본다. 판정자는 공간 4종과 같은 **점유율**
+  `dut_fail_share ≥ dut_fail_share_min`(0.50) **AND** `fail_count > dut_fail_count_min`(10)
+  이고, 배수(`dut_fail_ratio` = share × 채널수)는 evidence 참고값이다 — 배수의 상한이
+  채널 수라 DUT 8개짜리와 4개짜리가 임계값을 공유할 수 없다(밀도 배수형 공간 지표가
+  겪은 것과 같은 함정).
+  - 임계가 공간(0.95)보다 훨씬 낮은 이유는 **모집단 수가 다르기 때문**이다: 영역은 4개라
+    0.95 가 "죄다 거기"지만, 채널은 보통 4~16개라 균등이어도 0.06~0.25 다.
+  - **관계 선언을 두지 않는다**(exclusive/hidden_by/suppressed_by/replaces 전부 없음) —
+    공간 룰과 함께 떠도 원인이 다르다(공정 vs 하드웨어). 둘 다 사실이고 둘 다 보여야 한다.
+  - ⚠ **채널이 1개면 발화하지 않는다**(feature None). 점유율이 정의상 항상 1.0 이라
+    "한 채널에 몰렸다" 가 아무 정보도 아니다.
+  - 모집단은 **공간 축(전체 die)** 이다 — `spatial_dut` 를 `spatial_fail_mask` 와 짝으로
+    읽는다. 측정값 축으로 재면 값이 빈 die 가 분모에서 빠진다(공간 룰 2026-08-28 과 동일).
+  - `action_ko` 에 **`{dut_top}`(몇 번 DUT)** 이 들어간다 — 조치는 채널을 특정해야 시작된다.
+    치환은 L3 발화 시점(`signatures._fill_action`)에 한 번만 하고, 하류(L5 코멘트·LLM
+    프롬프트·`present` 의 signature 목록·서버 `ai_prompt.py`)는 채워진 문구를 쓴다.
+    값이 없으면 `{키}` 를 **그대로 남긴다**(빈칸으로 지우면 누락이 안 보인다).
 - **꼬리 판정의 자(尺)는 `tail_extent_high`/`_low` 다**(2026-08-20 — 사용자 지적 "Tail 로
   죽는 건 산포가 쭉 늘어지는 그림이어야 하는데 살짝만 늘어져도 발화된다"). 꼬리 끝(P99.5)이
   **몸통 robust σ 의 몇 배**까지 뻗었나이며(정규 ≈2.58, 임계 `tail_extent_min` 5.0),

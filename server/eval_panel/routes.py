@@ -89,15 +89,24 @@ def panel_page():
 
 
 def _audit(action, changed_fields=None, result="ok"):
-    """룰 변경 감사 (best-effort). client_user='eval-panel' 로 구분."""
+    """룰 변경 감사 (best-effort). client_user='eval-panel' 로 구분.
+
+    ⚠ `changed_fields` 는 **문자열로 바꿔서** 넘긴다(2026-09-02 수정). 이 패널의 호출부는
+    전부 list 를 주는데 `log_audit` 은 sqlite 바인딩이라 list 를 받으면 ProgrammingError 가
+    난다 — best-effort 의 `except: pass` 가 그걸 삼켜서 **/pe/eval 룰 변경이 감사에 한 건도
+    남지 않고 있었다**(에러도 없이 조용히). 다른 호출부(routes_webreport 등)는 이미
+    " / " 로 이어 붙인 문자열을 준다.
+    """
     try:
         fwd = request.headers.get("X-Forwarded-For")
         ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
+        if isinstance(changed_fields, (list, tuple)):
+            changed_fields = " / ".join(str(x) for x in changed_fields if x)
         report_db.log_audit(action, changed_fields=changed_fields, client_ip=ip,
                             user_agent=str(request.user_agent),
                             client_user="eval-panel", result=result)
     except Exception:
-        pass
+        _log.warning("eval 패널 감사 기록 실패 (action=%s)", action, exc_info=True)
 
 
 def _rule_error(exc):
@@ -311,6 +320,40 @@ def api_exclusions_save():
                changed_fields=["exclusions",
                                f"item_contains={result['saved']['item_contains']}",
                                f"units={result['saved']['units']}",
+                               f"rev={result['rules_rev']}"] + _reason(body))
+    result["ok"] = True
+    return jsonify(result)
+
+
+# ── AI Comment 지시문 · 금지 문구 ────────────────────────────────────────────
+
+@eval_panel_bp.get("/api/ai_prompt")
+def api_ai_prompt():
+    return jsonify(rules_io.read_ai_prompt())
+
+
+@eval_panel_bp.put("/api/ai_prompt")
+def api_ai_prompt_save():
+    body = request.get_json(force=True, silent=True) or {}
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.save_ai_prompt(body)
+        except rules_io.RuleError as exc:
+            _audit("eval_rules_edit", changed_fields=["ai_prompt"], result="error")
+            return _rule_error(exc)
+    if not result.get("no_op"):
+        saved = result["saved"]
+        # 감사에는 **id 목록**만 남긴다 — 문장 전문은 changed_fields 1500자 관례를 넘고,
+        # 무엇이 켜/꺼졌는지가 나중에 추적할 값이다(문구 원문은 백업 파일에 있다).
+        _audit("eval_rules_edit",
+               changed_fields=["ai_prompt",
+                               "instructions=" + str([r["id"] for r in saved["instructions"]
+                                                      if r["enabled"]]),
+                               "deny=" + str([r["id"] for r in saved["deny_patterns"]
+                                              if r["enabled"]]),
                                f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)

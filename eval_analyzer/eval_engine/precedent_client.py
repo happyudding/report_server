@@ -24,6 +24,9 @@ def _sql_search(case_ctx: dict, sig_result: dict) -> list:
 
     2026-08-03: (1) 자기 세션/analysis_key 사례 제외(시간 누출 차단),
     (2) 발화 signature 겹침 정렬 부스트, (3) top-k 상한(config.EVAL_PRECEDENT_TOPK).
+    2026-09-02: (4) `_precedent_cache` — api.evaluate 가 case 마다 실어 주는 run 단위 dict.
+    이 SQL 의 파라미터에 item 이 없어 한 run 의 case 들이 같은 쿼리를 반복했다
+    (store.search_precedents 의 rows_cache 주석). 키가 없으면 None → 종전 동작.
     """
     fired = [s.get("id") for s in (sig_result or {}).get("signatures") or []]
     return store.search_precedents(
@@ -33,7 +36,8 @@ def _sql_search(case_ctx: dict, sig_result: dict) -> list:
         exclude_session_id=case_ctx.get("session_id"),
         exclude_analysis_key=case_ctx.get("analysis_key"),
         fired_signatures=fired,
-        limit=config.EVAL_PRECEDENT_TOPK)
+        limit=config.EVAL_PRECEDENT_TOPK,
+        rows_cache=case_ctx.get("_precedent_cache"))
 
 
 def _rag_search(case_ctx: dict, sig_result: dict) -> list:

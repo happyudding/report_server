@@ -615,6 +615,29 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     실제 회귀 2건: 2026-08-28 Signature 2단계 분리가 `llm_status()`(eval_engine import,
     캐시 없음)와 `load_ai_comment`(gzip 전체 파싱)를 ② 경로에 넣었다(2026-09-02 수정).
     그 전 2026-08-13 에는 ① 이 없어 콜드 빌드가 300초 타임아웃까지 갔다.
+
+    - **③ 무거운 계산은 report 락 *밖*에서.** `'ai'`/`'compare'` 백그라운드 잡은
+      **2단계**다 — ① `run_ai_comment_build`/`run_compare_build` 가 **분리 캐시만** 채우고
+      (`load_webreport` 를 타지 않으므로 report 락을 잡지 않는다) ② `report_job(ai_inline
+      =True)` 이 payload 를 짧게 다시 굽는다(이제 캐시 히트라 1초 안팎).
+      종전처럼 ②만 두면 온디맨드 소비자 스레드가 **부모에서** `keyed_lock(("report",)+key)`
+      을 쥔 채 엔진 평가(실측 100초+)를 기다리고, 사용자의 1초짜리 pending 빌드가 바로 그
+      락 뒤에 줄을 선다 — 2026-09-02 "AI Comment 켜면 첫 조회 100초, 뒤로가기 후 재진입은
+      즉시" 의 실제 원인이다. perf_guard `S15-ai-job-cache-first` 가 되돌림을 막는다.
+    - **③-b 프리웜은 pending 본을 먼저 만든다** (`prewarm_job` 은 `ai_inline=False`).
+      `_pending_kinds(inline=True)` 가 빈 튜플이라 `ai_inline=True` 경로는 **pending 본을
+      디스크에 남기지 않는다** — 그 100초 동안 즉시 열 수 있는 산출물이 하나도 없어
+      업로더의 첫 클릭이 완전 콜드가 된다. AI·Compare 는 `prewarm_job` 이 돌려주는
+      `pending_kinds` 로 부모가 백그라운드 잡에 넘긴다(perf_guard `S16`).
+    - **④ AI 계열 잡에는 동시 실행 상한이 있다** (`_AI_JOB_LIMIT`, env
+      `WEB_REPORT_AI_JOB_LIMIT`, 기본 `_WORKERS//3`). 캐시 세대를 가는 배포
+      (`.rules_rev`·스키마 bump)는 **전 AI 세션의 분리 캐시를 동시에 무효화**해서, 상한이
+      없으면 `'ai'` 잡이 소비자·워커를 전부 채우고 사용자의 `'report'` 빌드가 큐 대기
+      타임아웃(60초)+재시도로 밀린다 — "고칠 때마다 가끔 느려진다" 의 정체다.
+      워커 수를 올릴 땐 이 값도 함께 볼 것(규칙 S03 과 같은 취지).
+
+    검증은 [tests/test_ai_nonblocking.py](tests/test_ai_nonblocking.py) — "엔진이 도는
+    동안 사용자 조회가 즉시 열리는가" 를 직접 잰다.
     → [docs/12](docs/12_web_report_cache.md) · [docs/23](docs/23_ai_comment_client_llm.md)
 
 ---
@@ -648,6 +671,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 랜딩 UI (/pe) — 서버 첫 화면 | [server/landing/landing.html](server/landing/landing.html) + [landing/__init__.py](server/landing/__init__.py) · 데이터는 [routes_misc.py](server/report/routes_misc.py) `GET /api/landing` |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
+| **AI Comment [제안] 지시문·금지 문구 관리** ("사례를 버리는 문장을 쓰지 마라" 류 조건) | 정본 yaml [eval_analyzer/…/rules/ai_prompt.yaml](eval_analyzer/eval_engine/rules/ai_prompt.yaml) · 화면 `/pe/eval` **AI 지시문** 탭([rules_io.save_ai_prompt](server/eval_panel/rules_io.py)) · 로더 [_rules.ai_prompt_instructions](eval_analyzer/eval_engine/pipeline/_rules.py) · 서버 창구 [eval_debug.ai_prompt_rules](web_report/eval_debug.py) · 적용 [ai_prompt.build_prompt(rules=)](web_report/ai_prompt.py)/[strip_denied_lines](web_report/ai_prompt.py) → [docs/23](docs/23_ai_comment_client_llm.md). ⚠ **지시문**은 프롬프트에 들어가 sha 를 갈아 저장된 [제안]을 폐기(재대행), **금지 문구**는 push 수용 때만 쓰여 sha 불변 |
 | eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
 | **"룰을 고쳤는데 나아졌나" — eval 정확도·커버리지 추이** | 집계 [server/database/eval_stats.py](server/database/eval_stats.py)(cleanup 24h 편승, 덮어쓰기 UPSERT) · 저장 `report_eval_daily` · 화면 `/pe/eval` 채점 탭 추이 카드 · 라우트 `GET /pe/eval/api/eval/trend` → [docs/17](docs/17_eval_learning_loop.md) |
 | **Input File 정보 (세션 상세 ℹ) / STDF 메타 요청 스펙** | [docs/21](docs/21_input_file_info.md) — 서버 [service.py](web_report/service.py) `input_info`(manifest 만 읽음) · 화면 [input_info.js](server/report/static/webreport/input_info.js) · 클라 수집 [source_name_dialog.py](client/honey_ui/source_name_dialog.py) `source_file_info` |

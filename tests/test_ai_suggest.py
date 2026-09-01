@@ -18,6 +18,8 @@ eval_analyzer 는 이 흐름에서 무수정·무관여가 설계이므로 스�
   (h) 룰 변경 모사 — 프롬프트 sha 가 갈리면 자동 폴백(병합 안 됨)
   (i) 클라 워커(transport/ai_suggest._worker) 동기 시뮬레이션 —
       가짜 requests(Flask test_client 위임) + 가짜 call_claude 로 폴링→생성→push 전체
+  (m) **금지 문구**(2026-09-02, /pe/eval AI 지시문 탭) — 사례를 줬는데 "적용할 사례 없음"
+      이라 답한 줄을 서버가 지운다. 전부/부분/선례0건 3갈래.
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -81,13 +83,17 @@ def _stub_prompt():
     return f"스텁 프롬프트 {_PROMPT_SALT['v']} — {ITEM}"
 
 
+_PRECEDENTS = {"n": 1}   # 이 item 의 프롬프트에 선례가 실렸나 (금지 문구 게이트 재료)
+
+
 def _stub_safe_build_ex(tables, session, selected_items=None, fail_only=None,
                         generate_comment=True):
     prompt = _stub_prompt()
     result = {
         "comments": {f"Yield|5|{ITEM}": _CELL, f"CPK|{ITEM}": _CELL, f"ETC|{ITEM}": _CELL},
         "etc_auto_items": [], "row_signatures": {}, "signature_options": [],
-        "prompts": {ITEM: {"prompt": prompt, "sha": wr_ai_prompt.prompt_sha(prompt)}},
+        "prompts": {ITEM: {"prompt": prompt, "sha": wr_ai_prompt.prompt_sha(prompt),
+                           "precedents": _PRECEDENTS["n"]}},
     }
     if not generate_comment:
         result = dict(result, comments={}, prompts={})
@@ -299,6 +305,58 @@ def test_push_and_merge(prompt_item):
     assert logs, "action='ai_suggest' 감사 기록이 없다"
     assert "ai_suggest(accepted=1,skipped=0)" in {r["changed_fields"] for r in logs}
     print("  (e) push sha 게이트·rev bump·감사 action 분리 OK")
+
+
+def test_denied_lines(prompt_item):
+    """금지 문구(/pe/eval AI 지시문) — 사례를 줬는데 "사례 없음" 이라 답한 줄을 서버가 지운다.
+
+    지시문만으로는 LLM 이 계속 어겨서 넣은 마지막 안전장치다(사용자 신고). 세 갈래를 본다:
+      ① 전부 금지 문구 → 저장 안 함 + skips.denied (룰 문장 폴백)
+      ② 섞여 있으면 → 나쁜 줄만 빼고 accepted
+      ③ **선례가 0건인 item** → "사례가 없다" 는 사실이므로 지우지 않는다
+    """
+    url = f"/pe/report/session/{SID}/web_report/ai_comment/suggestions"
+    deny_only = ("- 검색된 과거 사례 중 현재 현상에 직접 적용할 수 있는 사례는 "
+                 "확인되지 않았습니다.")
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": ITEM, "sha": prompt_item["sha"],
+                                     "suggestion": deny_only}]})
+    body = r.get_json()
+    assert body["accepted"] == 0 and body["skips"]["denied"] == 1, body
+    # store 에는 직전(정상) 문장이 그대로 남아야 한다 — 폐기가 덮어쓰기가 되면 안 된다
+    session = report_db.get_session(SID)
+    coords = wr_service._ai_suggest_coords(session, SID, report_db=report_db)
+    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    assert stored[ITEM]["suggestion"].startswith("- 클로드 제안 1"), stored[ITEM]
+
+    # ② 혼합 — 나쁜 줄만 빠지고 나머지는 저장된다
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": ITEM, "sha": prompt_item["sha"],
+                                     "suggestion": deny_only + "\n- edge 링 오염 이력을 확인하라."}]})
+    body = r.get_json()
+    assert body["accepted"] == 1 and not any(body["skips"].values()), body
+    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    assert stored[ITEM]["suggestion"] == "- edge 링 오염 이력을 확인하라.", stored[ITEM]
+    assert "확인되지 않았습니다" in stored[ITEM]["raw"], "원문(raw) 이 안 남았다"
+
+    # ③ 선례 0건 item — 같은 문장이 통과해야 한다(사실을 지우면 왜곡)
+    _PRECEDENTS["n"] = 0
+    _wipe_caches(AKEY)
+    item2 = _get_prompts(SID, wait_200=True).get_json()["items"][0]
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": ITEM, "sha": item2["sha"],
+                                     "suggestion": deny_only}]})
+    body = r.get_json()
+    assert body["accepted"] == 1 and body["skips"]["denied"] == 0, body
+    _PRECEDENTS["n"] = 1
+    _wipe_caches(AKEY)
+    # 뒤 테스트(재빌드 생존)가 기대하는 상태로 되돌린다
+    item3 = _get_prompts(SID, wait_200=True).get_json()["items"][0]
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": ITEM, "sha": item3["sha"],
+                                     "suggestion": "- 클로드 제안 1\n- 클로드 제안 2"}]})
+    assert r.get_json()["accepted"] == 1
+    print("  (m) 금지 문구 폐기/부분제거/선례0건 통과 OK")
 
 
 def test_full_payload_merged():
@@ -539,6 +597,7 @@ def main():
     test_route_guards()
     prompt_item = test_prompts_flow()
     test_push_and_merge(prompt_item)
+    test_denied_lines(prompt_item)
     test_full_payload_merged()
     test_rebuild_survival()
     test_sha_drift_fallback()
