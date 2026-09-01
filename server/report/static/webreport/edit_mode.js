@@ -210,7 +210,10 @@ document.querySelector(".content").addEventListener("click", e => {
     flushPendingComments().then(ok => { if (ok && name) noteJumpToSheet(name); });
     return;
   }
-  // AI Comment 의 [과거사례] 클릭 → 4줄 클램프 펼치기/접기 (report_view.html .aic-past).
+  // 「📋 사례 N건 상세」 버튼은 sig_reason.js 가 팝오버로 처리한다 — 여기서 먼저 빠져
+  // 나가야 편집 모드에서 셀 편집이 켜지거나 클램프 토글에 걸리지 않는다.
+  if (e.target.closest(".aic-prec-btn")) return;
+  // AI Comment 의 [사례] 클릭 → 4줄 클램프 펼치기/접기 (report_view.html .aic-past).
   // hover 로 펼치면 마우스가 지나가기만 해도 셀 높이가 바뀌어 표 전체가 리플로우된다.
   const aicPast = e.target.closest(".aic-past");
   if (aicPast) {

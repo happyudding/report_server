@@ -128,6 +128,27 @@ def test_search_precedents_dedup_latest_label(fresh_db):
     assert res[0]["action"] == "spec_release"
 
 
+def test_search_precedents_comment_label_beats_newer_empty(fresh_db):
+    """코멘트 없는 **최신** 라벨이 코멘트 라벨을 밀어내면 안 된다 (2026-09-02 회귀).
+
+    한 case 에는 labeler 가 다른 라벨이 여러 개 붙는다 — `web_report`(코멘트 있음) 뒤에
+    `web-signature`(ENGR 확정 signature, human_comment=None)나 `eval-panel`(정답 라벨)이
+    더 큰 label_id 로 들어온다. 대표행 정렬이 label_id 우선이던 시절에는 그 빈 라벨이
+    이겨서 그 (제품,lot,item) 이 통째로 "코멘트 없는 선례" 가 됐고, 결과적으로
+    **프롬프트 [사례 목록] 이 비어 LLM 이 "적용할 사례 없음" 을 썼다**(사용자 신고).
+    화면 `/pe/eval` L5 선례 표에는 행이 보이므로 사람 눈에는 "있는데 무시한다" 로만 보였다.
+    """
+    with store.get_conn() as conn:
+        case_id = _seed_precedent(conn, comment="사람이 쓴 코멘트")
+        # signature 라벨 — 나중에(=더 큰 label_id) 들어오고 human_comment 가 없다.
+        store.insert_label(case_id, None, None, None, None, 0, 0,
+                           None, "web-signature", None, "web-signature", conn=conn)
+    res = store.search_precedents("V", "vref_trim")
+    assert len(res) == 1
+    assert res[0]["human_comment"] == "사람이 쓴 코멘트", \
+        "코멘트 없는 최신 라벨이 대표행을 가져갔다 — 선례가 프롬프트에서 사라진다"
+
+
 def test_search_precedents_value_type_filter(fresh_db):
     with store.get_conn() as conn:
         _seed_precedent(conn, item_canon="vref_trim", value_type="V")

@@ -134,9 +134,10 @@ function esensRender() {
         </tr>
         ${rows}
       </tbody>
-    </table>
-    <p class="esens-help" id="esensHelp">항목 이름이나 값에 마우스를 올리면 그 기준이 무슨 뜻인지 알려줍니다.</p>`
+    </table>`
     : `<p class="placeholder" style="padding:18px;">민감도 단계표를 불러오지 못했습니다.</p>`;
+  // 설명줄(#esensHelp)은 report_view.html 골격에 있다 — 스크롤 영역 밖이라 표를
+  // 스크롤해도 남아 있어야 하기 때문. 여기서 다시 그리면 id 가 두 벌이 된다.
 
   const notes = [];
   if (!data.applied) {

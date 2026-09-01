@@ -76,7 +76,8 @@ AI_OPTS_DEFAULT = json.dumps({"ai_comment": True, "ai_comment_optin": True})
 
 # ── 엔진 스텁 — 결정적 comments + prompts ────────────────────────────────────
 _PROMPT_SALT = {"v": "p1"}   # 룰 변경 모사: 값을 바꾸면 프롬프트·sha 가 갈린다
-_CELL = "[MAJOR] [현상] 스텁 현상\n[과거사례] 스텁 사례 \n [제안] 기본조치"
+# 새 토큰 3섹션(2026-09-02). [사례]/[제안] 은 코드가 만든 뼈대이고, LLM 이 오면 각각 교체된다.
+_CELL = "[MAJOR] [현상] - EDGE: 스텁 현상\n[사례] ①(P1/L1) 스텁 사례 \n [제안] - EDGE: 기본조치"
 
 
 def _stub_prompt():
@@ -84,19 +85,28 @@ def _stub_prompt():
 
 
 _PRECEDENTS = {"n": 1}   # 이 item 의 프롬프트에 선례가 실렸나 (금지 문구 게이트 재료)
+_PREC_ROWS = [{"product_name": "P1", "lot_id": "L1", "item_canonical": "itema",
+               "status": "MAJOR", "signature": "EDGE", "comment": "스텁 사례",
+               "metrics": {"cpk": 0.62}}]
 
 
 def _stub_safe_build_ex(tables, session, selected_items=None, fail_only=None,
                         generate_comment=True):
     prompt = _stub_prompt()
+    keys = [f"Yield|5|{ITEM}", f"CPK|{ITEM}", f"ETC|{ITEM}"]
+    n = _PRECEDENTS["n"]
     result = {
-        "comments": {f"Yield|5|{ITEM}": _CELL, f"CPK|{ITEM}": _CELL, f"ETC|{ITEM}": _CELL},
+        "comments": {k: _CELL for k in keys},
         "etc_auto_items": [], "row_signatures": {}, "signature_options": [],
-        "prompts": {ITEM: {"prompt": prompt, "sha": wr_ai_prompt.prompt_sha(prompt),
-                           "precedents": _PRECEDENTS["n"]}},
+        # 선례 0건이면 프롬프트를 만들지 않는다 — build_prompt 의 실제 동작과 같게 흉내낸다.
+        "prompts": ({ITEM: {"prompt": prompt, "sha": wr_ai_prompt.prompt_sha(prompt),
+                            "precedents": n}} if n else {}),
+        "precedents": ({ITEM: _PREC_ROWS} if n else {}),
+        "precedent_counts": ({k: n for k in keys} if n else {}),
     }
     if not generate_comment:
-        result = dict(result, comments={}, prompts={})
+        result = dict(result, comments={}, prompts={},
+                      precedents={}, precedent_counts={})
     return result, True
 
 
@@ -339,15 +349,12 @@ def test_denied_lines(prompt_item):
     assert stored[ITEM]["suggestion"] == "- edge 링 오염 이력을 확인하라.", stored[ITEM]
     assert "확인되지 않았습니다" in stored[ITEM]["raw"], "원문(raw) 이 안 남았다"
 
-    # ③ 선례 0건 item — 같은 문장이 통과해야 한다(사실을 지우면 왜곡)
+    # ③ 선례 0건 item — **프롬프트 자체가 안 만들어진다**(2026-09-02). LLM 을 거치지 않으니
+    #    금지 문구가 적용될 문장도 없다. 클라 워커는 빈 목록을 받고 조용히 끝낸다.
     _PRECEDENTS["n"] = 0
     _wipe_caches(AKEY)
-    item2 = _get_prompts(SID, wait_200=True).get_json()["items"][0]
-    r = client.post(url, headers=_headers(),
-                    json={"items": [{"key": ITEM, "sha": item2["sha"],
-                                     "suggestion": deny_only}]})
-    body = r.get_json()
-    assert body["accepted"] == 1 and body["skips"]["denied"] == 0, body
+    assert _get_prompts(SID, wait_200=True).get_json()["items"] == [], \
+        "선례 0건인데 프롬프트를 만들었다 — LLM 토큰·시간 낭비"
     _PRECEDENTS["n"] = 1
     _wipe_caches(AKEY)
     # 뒤 테스트(재빌드 생존)가 기대하는 상태로 되돌린다
@@ -356,13 +363,62 @@ def test_denied_lines(prompt_item):
                     json={"items": [{"key": ITEM, "sha": item3["sha"],
                                      "suggestion": "- 클로드 제안 1\n- 클로드 제안 2"}]})
     assert r.get_json()["accepted"] == 1
-    print("  (m) 금지 문구 폐기/부분제거/선례0건 통과 OK")
+    print("  (m) 금지 문구 폐기/부분제거/선례0건 프롬프트 생략 OK")
+
+
+def test_two_block_push(prompt_item):
+    """(n) 두 블록 계약 — [사례] 요약과 [제안] 이 **각각의 섹션**으로 들어간다.
+
+    사용자 결정(2026-09-02): 사례가 있으면 [사례]는 LLM 요약으로, [제안]은 통합 문장으로
+    바뀐다. 한 덩어리로 [제안]에만 들어가면 사례 요약이 화면에서 사라진다.
+    """
+    url = f"/pe/report/session/{SID}/web_report/ai_comment/suggestions"
+    reply = ("[사례]\n- P1/L1: 재측정으로 회복된 건\n"
+             "[제안]\n- edge 이력 먼저 확인\n- 이어서 산포 재측정")
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": ITEM, "sha": prompt_item["sha"],
+                                     "suggestion": reply}]})
+    body = r.get_json()
+    assert body["accepted"] == 1, body
+
+    session = report_db.get_session(SID)
+    coords = wr_service._ai_suggest_coords(session, SID, report_db=report_db)
+    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    assert stored[ITEM]["cases"] == "- P1/L1: 재측정으로 회복된 건", stored[ITEM]
+    assert stored[ITEM]["suggestion"].startswith("- edge 이력 먼저"), stored[ITEM]
+
+    text = _full_text(SID, must_contain="재측정으로 회복된 건")
+    assert "[사례] - P1/L1: 재측정으로 회복된 건" in text, "사례 요약이 [사례] 섹션에 없다"
+    assert "[제안] - edge 이력 먼저 확인" in text, "통합 제안이 [제안] 섹션에 없다"
+    assert "스텁 사례" not in text, "코드가 만든 사례 나열이 안 교체됐다"
+    print("  (n) 두 블록 push → 섹션별 반영 OK")
+
+
+def test_precedents_payload_and_route():
+    """(o) 사례 건수(payload)와 상세 목록(라우트) — 「📋 사례 N건 상세」의 재료."""
+    text = _full_text(SID, must_contain="ai_precedents")
+    payload = json.loads(text)["web_report"]
+    assert payload["ai_precedents"][f"CPK|{ITEM}"] == 1, payload["ai_precedents"]
+
+    url = f"/pe/report/session/{SID}/web_report/ai_comment/precedents"
+    # 조회 전용이라 Honey 헤더 없이도 열린다(뷰어 권한이면 충분).
+    r = client.get(url + f"?key=CPK|{ITEM}",
+                   headers={"User-Agent": f"Mozilla/5.0 HoneyUser/{USER}"})
+    assert r.status_code == 200, (r.status_code, r.data[:200])
+    items = r.get_json()["items"]
+    assert len(items) == 1 and items[0]["comment"] == "스텁 사례", items
+    assert items[0]["metrics"]["cpk"] == 0.62, items[0]
+    # 매칭 안 되는 키는 빈 목록 (에러가 아니다 — 화면은 링크를 안 그린다)
+    r = client.get(url + "?key=CPK|없는항목",
+                   headers={"User-Agent": f"Mozilla/5.0 HoneyUser/{USER}"})
+    assert r.status_code == 200 and r.get_json()["items"] == []
+    print("  (o) 사례 건수 payload + 상세 라우트 OK")
 
 
 def test_full_payload_merged():
     text = _full_text(SID, must_contain="클로드 제안 1")
     assert "클로드 제안 1" in text, "payload 에 병합된 [제안] 이 없다"
-    assert "[현상] 스텁 현상" in text          # 앞 섹션 보존
+    assert "[현상] - EDGE: 스텁 현상" in text          # 앞 섹션 보존
     print("  (f) /full payload 반영 OK")
 
 
@@ -379,9 +435,13 @@ def test_rebuild_survival():
     result, how = wr_service._ai_comment_cached(
         tables_sess, SID, tables, manifest, report_db=report_db, upload_root=UPLOAD_ROOT)
     assert how == "build", how
-    assert result["comments"][f"CPK|{ITEM}"].endswith("클로드 제안 2"), \
-        "재빌드에서 store 재병합이 안 됐다"
-    print("  (g) 재빌드 생존(재병합) OK")
+    # 직전 push(두 블록)가 **두 섹션 모두** 재빌드 뒤에도 살아 있어야 한다.
+    cell = result["comments"][f"CPK|{ITEM}"]
+    assert cell.endswith("- edge 이력 먼저 확인\n- 이어서 산포 재측정"), \
+        f"재빌드에서 store 재병합이 안 됐다: {cell!r}"
+    assert "[사례] - P1/L1: 재측정으로 회복된 건" in cell, \
+        f"사례 요약이 재빌드에서 사라졌다: {cell!r}"
+    print("  (g) 재빌드 생존(재병합 — 두 섹션) OK")
 
 
 def test_sha_drift_fallback():
@@ -598,7 +658,11 @@ def main():
     prompt_item = test_prompts_flow()
     test_push_and_merge(prompt_item)
     test_denied_lines(prompt_item)
+    test_precedents_payload_and_route()
     test_full_payload_merged()
+    # 두 블록 push 는 store 의 suggestion 을 갈아치우므로 **마지막**에 둔다 — 앞 테스트가
+    # "클로드 제안 1" 상태를 기대한다. 이후 (g)(h) 는 각자 원하는 상태를 다시 만든다.
+    test_two_block_push(prompt_item)
     test_rebuild_survival()
     test_sha_drift_fallback()
     t_ai = test_worker_simulation()

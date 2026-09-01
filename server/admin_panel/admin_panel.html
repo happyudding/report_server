@@ -1066,8 +1066,8 @@ body { position: relative; }
     <div id="aicSugNote" class="note" style="margin-bottom:8px">세션을 선택하세요.</div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th>항목</th><th>[제안] 문장</th><th>LLM 원문</th><th>보낸 사람</th>
-        <th>시각</th><th>상태</th>
+        <th>항목</th><th>[사례] 요약</th><th>[제안] 문장</th><th>LLM 원문</th>
+        <th>보낸 사람</th><th>시각</th><th>상태</th>
       </tr></thead>
       <tbody id="aicSugBody"></tbody>
     </table></div>
@@ -1083,6 +1083,7 @@ body { position: relative; }
     <div class="table-wrap"><table>
       <thead><tr>
         <th style="width:22%">항목</th><th style="width:10%">sha</th>
+        <th style="width:7%" class="num">사례</th>
         <th style="width:8%" class="num">길이</th><th>프롬프트 본문</th>
       </tr></thead>
       <tbody id="aicPromptBody"></tbody>
@@ -3634,6 +3635,7 @@ async function loadAicPrompts() {
   tb.innerHTML = items.map(r => `<tr>
     <td>${esc(r.item)}</td>
     <td><code style="font-size:11px">${esc(r.sha)}</code></td>
+    <td class="num">${r.precedents == null ? "-" : r.precedents}</td>
     <td class="num">${r.chars}</td>
     <td class="detail-cell"><div class="clamp"
       style="white-space:pre-wrap; font-family:ui-monospace,Consolas,monospace; font-size:11px"
@@ -3694,6 +3696,9 @@ async function loadAicSuggestions(sid) {
   if (!items.length) return;
   tb.innerHTML = items.map(r => `<tr>
     <td>${esc(r.item)}</td>
+    <td class="detail-cell">${r.cases
+      ? `<div class="clamp" style="white-space:pre-wrap">${esc(r.cases)}</div>`
+      : '<span style="color:var(--ink-3)">없음(룰 나열 유지)</span>'}</td>
     <td class="detail-cell"><div class="clamp" style="white-space:pre-wrap">${esc(r.suggestion)}</div></td>
     <td class="detail-cell">${r.sanitized
       ? `<div class="clamp" style="white-space:pre-wrap; color:#d97706">${esc(r.raw)}</div>`

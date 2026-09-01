@@ -99,6 +99,11 @@ def save_merge(upload_root: Path, analysis_key, content_hash, mode,
                  "suggestion": suggestion,
                  "by": str(row.get("by") or by or ""),
                  "ts": int(row.get("ts") or now)}
+        # cases = LLM 이 요약한 [사례] 블록 (2026-09-02 두 블록 계약). 없으면 키를 만들지
+        # 않는다 — 옛 저장분(제안만)과 파일 모양이 같아 하위호환이 유지된다.
+        cases = str(row.get("cases") or "")
+        if cases:
+            entry["cases"] = cases
         # 원문은 sanitize 결과와 **다를 때만** 남긴다 — 같으면 정보가 0인데 파일만 2배가
         # 된다(정상 케이스가 대부분이라 실질 용량 증가는 거의 없다).
         raw = str(row.get("raw") or "")

@@ -34,23 +34,38 @@
 같은 조건은 앞으로도 계속 늘어나므로 코드가 아니라 `/pe/eval` "AI 지시문" 탭
 (rules/ai_prompt.yaml)에서 관리한다. `instructions` 는 프롬프트 뒤에 붙고(= sha 가 갈려
 기존 [제안] 폐기 → 재대행), `deny_patterns` 는 프롬프트에 들어가지 않고 push 수용 때
-줄 단위 필터로만 쓰인다(sha 불변 — 다음 push 부터 적용). 위 `_INSTRUCTION_EXTRA` 는
-그대로 둔다(사본 계약과 무관한 이 프로젝트 고정 지시).
+줄 단위 필터로만 쓰인다(sha 불변 — 다음 push 부터 적용).
+
+**두 블록 계약** (2026-09-02 재설계, docs/23): LLM 은 `[사례]`(회수된 사례를 있는 그대로
+요약) 와 `[제안]`(action_ko + 사례 근거 + 현재 수치를 통합한 확인 순서) **두 블록**만
+낸다. 서버가 `parse_llm_blocks` 로 갈라 `patch_cell` 로 각 섹션을 교체하고, 안 온 블록은
+코드가 만든 문장이 그대로 남는다. **선례가 0건이면 `build_prompt` 가 None** — 그 item 은
+LLM 을 아예 거치지 않는다(토큰·시간 절약). 섹션 토큰 `[현상]/[사례]/[제안]` 은 불변
+계약이다(../CLAUDE.md §5 규칙 12) — 옛 `[과거사례]`/`[점검제안]` 은 읽기만 호환.
 """
 from __future__ import annotations
 
 import hashlib
 import re
 
-# ── 코멘트 평문 파싱 (형식 정본: recommend.make_comment — 바이트 불변 계약, 규칙 12) ──
-# 옛 토큰 [점검제안] 은 2026-08-28 이전 캐시에 굳은 코멘트가 계속 실어 온다 — 둘 다 받는다.
+# ── 코멘트 평문 파싱 (형식 정본: recommend.make_comment — 규칙 12) ──────────
+# 섹션 토큰은 [현상]/[사례]/[제안] 고정이고, 옛 토큰 [과거사례]/[점검제안] 은 **읽기만**
+# 계속 받는다 — 그 평문이 payload·디스크 캐시·저장된 문장·Excel 에 굳어 있어서, 한쪽만
+# 알면 그 세션들은 섹션 분리가 통째로 풀려 한 덩어리 평문이 된다(에러가 아니라 "색이
+# 사라짐"으로 보인다). 캐시를 앞당겨 갈려고 전역 bump 를 하면 콜드 폭풍이 된다.
+# ⚠ 교대는 왼쪽 우선 — 긴 옛 토큰(과거사례/점검제안)을 신 토큰보다 **앞**에 둔다.
 SECTION_RE = re.compile(
-    r"^\[현상\]\s*(?P<phen>.*?)\s*\n\[과거사례\]\s*(?P<past>.*?)\s*\n\s*"
+    r"^\[현상\]\s*(?P<phen>.*?)\s*\n\[(?:과거사례|사례)\]\s*(?P<past>.*?)\s*\n\s*"
     r"\[(?:점검제안|제안)\]\s*(?P<sugg>.*)$", re.S)
 # 마지막 섹션 값만 치환 — 토큰은 원문 것을 유지한다(옛 캐시 [점검제안] 도 그대로 치환).
 SUGGEST_TAIL_RE = re.compile(r"(\[(?:점검제안|제안)\]\s*).*$", re.S)
-# suggestion 안에 끼면 섹션 파싱을 깨뜨리는 토큰들 (sanitize 에서 제거)
-_SECTION_TOKEN_RE = re.compile(r"\[(?:현상|과거사례|점검제안|제안)\]")
+# [사례] 섹션 값만 치환 — 뒤 [제안] 토큰 직전까지가 그 섹션의 본문이다.
+CASE_SEC_RE = re.compile(
+    r"(\[(?:과거사례|사례)\]\s*)(?:.*?)(\s*\n\s*\[(?:점검제안|제안)\])", re.S)
+# suggestion 안에 끼면 섹션 파싱을 깨뜨리는 토큰들 (sanitize 에서 제거 — 블록 파싱 **뒤**)
+_SECTION_TOKEN_RE = re.compile(r"\[(?:현상|과거사례|사례|점검제안|제안)\]")
+# LLM 출력의 블록 토큰 — **recommend.parse_llm_blocks 의 사본**(규칙 #8 로 import 불가).
+_LLM_BLOCK_RE = re.compile(r"\[(과거사례|사례|점검제안|제안)\]")
 _CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")   # \n(0x0a) 은 살린다 — 아래 참조
 
 # 엔진 프롬프트가 "최대 5줄 '- ' 항목" 을 요구하므로(2026-08-28) 개행은 정상 출력이다.
@@ -74,42 +89,35 @@ _PRECEDENT_FEATURE_ORDER = ("spread_norm", "outlier_ratio", "bimodality_score",
 # 1덩어리" 를 유지한다(줄 사이 개행 없음). 원본이 바뀌면 여기도 같이 고칠 것
 # (tests/test_ai_prompt_determinism.py 가 대조).
 _INSTRUCTION = (
-    "반도체 fail item 분석 이후 다음에 확인해야 할 점검 방향을 한국어로 제안하라."
-    "발화한 signature 전체와 아래 과거 사례를 종합해서 작성하라 - 하나만 보고 쓰지 마라."
-    "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라."
-    "원인을 확정적으로 단정하지 마라"
-    "현재 입력이나 과거 사례에 없는 수치 제품명 설비 사이트 원인을 만들지 마라."
-    "과거 사례의 조치를 정답으로 단정하지마라"
-    "다만 과거 사례가 주어졌다면 조건이 완전히 같지 않더라도 참고할 점을 최대한 살려서 반영하라."
+    "반도체 fail item 분석 결과다. 아래 두 블록만 한국어로 출력하고 다른 텍스트는 쓰지 마라.\n"
+    "[사례]\n"
+    "아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약하라 - 제품/lot 당시 판단 근거 조치 결과.\n"
+    "현재 현상에 적용할 수 있는지 판단하거나 평가하거나 부정하지 마라 - 요약만 하라.\n"
+    "사례에 없는 내용을 만들지 마라.\n"
+    "[제안]\n"
+    "기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리하라.\n"
+    "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라.\n"
+    "발화한 signature 전체가 다뤄져야 한다 - 원인이 이어지는 항목은 한 줄에 묶어도 되지만 빠뜨리지는 마라.\n"
+    "원인을 확정적으로 단정하지 마라. 사례의 조치를 정답으로 단정하지 마라.\n"
+    "현재 입력이나 사례에 없는 수치 제품명 설비 사이트 원인을 만들지 마라.\n"
     "'적용할 수 있는 사례가 없다' 같이 주어진 사례를 버리는 문장은 쓰지 마라."
-    "아래 [현상] / [과거사례] 문장을 그대로 반복하지 마라."
-    "점검 순서 또는 확인 대상을 중심으로 작성하라."
-    "[현상], [과거사례], [점검 제안] 같은 섹션 제목은 출력하지 마라 - 문장만 출력하라"
 )
 
 # 이 프로젝트에서 덧붙이는 지시 (vendor copy 아님 — 위 _INSTRUCTION 은 바이트 보존).
 # 취지: 과거 Comment 는 그때 담당자가 **어떻게 판단하고 무엇으로 해결했는지** 적어 둔
-# 기록이라 사실상 정답지다. 종전 프롬프트는 그 원문 한 줄만 주고 "정답으로 단정하지 마라"
-# 로 끝나 LLM 이 사례를 흘려보냈다. 상세(당시 통계·signature·unit)를 함께 주고 현재 값과
-# 대조하도록 시켜, 단정은 계속 피하되 활용도는 올린다.
+# 기록이라 사실상 정답지다. 상세(당시 통계·signature·unit)를 현재 값과 대조하게 시켜,
+# 단정은 피하되 활용도를 올린다.
+# ⚠ 2026-09-02 에 "판단할 수 없는 부분은 … 무엇을 더 확인해야 하는지로 써라" 한 줄을
+#   **뺐다** — 그 문장이 [사례] 블록에까지 걸려 "적용 가능한지 판단할 수 없다" 류 부정문의
+#   명분이 됐다(사용자 신고의 문장). 커버리지 탈출구는 yaml `cover_all_signatures` 가
+#   "목록에 없는 항목을 만들지는 마라" 로 대신한다.
 _INSTRUCTION_EXTRA = (
-    "과거 사례의 Comment 는 그때 담당자가 무엇을 근거로 판단하고 어떻게 해결했는지 남긴 기록이다."
-    "각 사례의 당시 통계 signature unit item 명을 현재 값과 하나씩 대조해서 무엇이 닮았고 무엇이 다른지 판단하라."
-    "닮은 사례의 판단 근거와 조치를 현재 상황에 맞게 바꿔서 구체적으로 녹여 써라."
-    "사례를 요약만 하고 끝내지 말고 지금 무엇을 확인할지로 바꿔서 써라."
+    "사례의 Comment 는 그때 담당자가 무엇을 근거로 판단하고 어떻게 해결했는지 남긴 기록이다."
+    "각 사례의 당시 통계 signature unit item 명을 현재 값과 하나씩 대조해서 무엇이 닮았고 무엇이 다른지 보라."
+    "닮은 사례의 판단 근거와 조치는 [제안] 에서 현재 상황에 맞게 바꿔 구체적으로 녹여 써라."
     "비교에 쓰는 수치는 아래에 주어진 값만 쓰고 없는 값을 지어내지 마라."
-    # 아래 3줄은 "5줄을 채우려고 억지 문장을 만드는" 부류를 막는다 (2026-09-01).
-    # 최대 5줄은 상한이지 목표가 아닌데, 상한만 주면 근거가 2개뿐이어도 5줄을 채우려고
-    # 재료에 없는 점검 항목이 나온다 — 지어낸 수치보다 잡아내기 어려운 오염이다.
-    # ⚠ 단 축소의 **대상은 "발화 목록 밖"** 이다 (2026-09-01 같은 날 한정). 무조건형으로
-    # 두면 signature 가 여러 개 걸려도 primary 하나만 쓰고 끝낸다 — 뒤에 있고 더 구체적인
-    # 이 지시가 _INSTRUCTION 의 "전체를 종합하라" 를 눌러 버린다(실제 증상).
-    # 발화한 signature 는 발화 사실 + [근거: …] 가 이미 재료로 주어져 "근거 부족" 이 아니다.
     "5줄은 상한이지 채워야 하는 목표가 아니다 - 발화 signature 를 전부 덮고 나서도 쓸 근거가 없으면 줄 수를 줄여라."
     "발화 목록에 없는 항목을 지어내 줄을 채우지 마라 - 줄 수를 맞추려고 일반론을 넣지 마라."
-    # 아래 1줄은 커버리지의 탈출구다 — 발화했지만 재료가 얕은 signature 를 빼지 않고
-    # "무엇을 더 확인해야 하는지" 로 한 줄 쓰게 해 준다. 지우지 말 것.
-    "주어진 재료로 판단할 수 없는 부분은 단정하지 말고 무엇을 더 확인해야 하는지로 써라."
 )
 
 
@@ -155,12 +163,17 @@ def compile_deny_patterns(rules) -> list:
 
 
 def strip_denied_lines(text, patterns, has_precedents: bool) -> str:
-    """[제안] 에서 금지 문구에 걸리는 **줄만** 제거. 전부 걸리면 "".
+    """[사례]/[제안] 에서 금지 문구에 걸리는 **줄만** 제거. 전부 걸리면 "".
 
-    줄 단위인 이유: [제안] 은 '- ' 항목 여러 줄이라, 사례를 버리는 한 줄이 섞여 있어도
-    나머지 점검 항목은 쓸모가 있다. 통째로 버리면 사용자는 룰 문장으로 되돌아간 것만 본다.
+    줄 단위인 이유: 두 블록 모두 '- ' 항목 여러 줄이라, 사례를 버리는 한 줄이 섞여 있어도
+    나머지 항목은 쓸모가 있다. 통째로 버리면 사용자는 룰 문장으로 되돌아간 것만 본다.
     `only_with_precedents` 패턴은 선례가 실제로 프롬프트에 실린 item 에만 적용한다 —
     사례가 0건인 item 의 "참고할 사례가 없어 …" 는 **사실**이라 지우면 왜곡이 된다.
+
+    ⚠ 각 줄을 **원문과 공백 제거본 두 벌로** 검사한다(2026-09-02). 한국어는 같은 뜻이
+    띄어쓰기만 다르게 나오고("확인되지 않았습니다" ↔ "확인 되지 않았습니다"), 정규식마다
+    `\\s*` 를 빠짐없이 끼워 넣는 것은 사람이 계속 실수한다 — 실제로 사용자 신고 문장이
+    그 한 칸 때문에 필터를 통과했다. 공백 제거본에서 잡히면 그 줄을 버린다.
     """
     if not isinstance(text, str) or not text or not patterns:
         return text if isinstance(text, str) else ""
@@ -168,9 +181,37 @@ def strip_denied_lines(text, patterns, has_precedents: bool) -> str:
               if has_precedents or not only_prec]
     if not active:
         return text
-    kept = [ln for ln in text.split("\n")
-            if not any(rx.search(ln) for rx in active)]
+    def _denied(line: str) -> bool:
+        squeezed = re.sub(r"\s+", "", line)
+        return any(rx.search(line) or rx.search(squeezed) for rx in active)
+    kept = [ln for ln in text.split("\n") if not _denied(ln)]
     return "\n".join(kept).strip()
+
+
+def parse_llm_blocks(text):
+    """LLM 출력 → (사례 요약|None, 제안|None). **recommend.parse_llm_blocks 의 사본**.
+
+    규칙 #8 로 엔진을 import 할 수 없어 사본을 둔다 — 한쪽을 고치면 다른 쪽도 고칠 것
+    (tests/test_ai_prompt_determinism.py 가 두 파일의 함수 본문을 대조한다).
+    관대하게 받는다: 두 토큰이 다 있으면 각 블록, `[제안]` 만 있으면 (None, 뒤 전부),
+    토큰이 없으면 (None, 전체) — 종전(단일 [제안] 출력) 하위호환.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return None, None
+    marks = []
+    for m in _LLM_BLOCK_RE.finditer(s):
+        marks.append(("case" if m.group(1) in ("사례", "과거사례") else "sugg",
+                      m.start(), m.end()))
+    if not marks:
+        return None, s
+    blocks = {}
+    for i, (kind, _st, end) in enumerate(marks):
+        stop = marks[i + 1][1] if i + 1 < len(marks) else len(s)
+        body = s[end:stop].strip()
+        if body and kind not in blocks:      # 같은 토큰이 반복되면 첫 블록을 쓴다
+            blocks[kind] = body
+    return blocks.get("case"), blocks.get("sugg")
 
 
 def split_comment(comment) -> tuple[str, str, str] | None:
@@ -349,6 +390,25 @@ def _primary_action_ko(case: dict) -> str:
     return ""
 
 
+def _action_block(case: dict) -> str:
+    """발화 signature **전부**의 action_ko 목록 — 프롬프트의 [기본 조치 목록] 재료.
+
+    엔진 `recommend._action_lines` 의 case-dict 판이다(primary 먼저, 같은 문장 중복 제거).
+    LLM 은 이 목록을 **재료로** 통합 제안을 쓰고, 화면에는 그 통합 문장만 나간다 —
+    목록 자체가 화면에 다시 나오지는 않는다(사용자 결정 2026-09-02).
+    """
+    rows = [s for s in (case.get("signatures") or []) if s.get("id")]
+    rows.sort(key=lambda s: 0 if s.get("role") == "primary" else 1)
+    lines, seen = [], set()
+    for s in rows:
+        text = str(s.get("action_ko") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        lines.append(f"- {s['id']}: {text}")
+    return "\n".join(lines)
+
+
 def _item_head(case: dict, enrich: dict) -> str:
     """item 헤더 줄 — unit/limit 이 있으면 덧붙인다(선례의 unit 과 대조용)."""
     head = f"item: {case.get('item_canonical')} / class: {case.get('item_class')}"
@@ -378,13 +438,21 @@ def build_prompt(case: dict, enrich: dict | None = None,
     eval_export 헬퍼로 조립해 넘긴다). 형태:
         {"unit", "lsl", "usl", "stats": {raw_metrics 와 같은 이름의 키}}
     None 이면 현재 통계 줄 없이 만든다(여전히 유효한 프롬프트).
+
+    **선례가 0건이면 None** (2026-09-02 사용자 결정) — 이 프롬프트의 존재 이유가 "사례를
+    현재 수치와 대조" 라, 사례가 없으면 남는 재료는 코드가 이미 완성해 둔 것뿐이라
+    LLM 호출이 토큰·시간 낭비다. None 이면 그 item 은 prompts 에 안 실려 클라 워커가
+    아예 보내지 않는다(셀은 발화 signature 전부의 action_ko 그대로).
     """
     parsed = split_comment(case.get("comment"))
     if parsed is None:
         return None
+    if not _precedent_count(case):
+        return None
     phenomenon, _past_case, suggestion = parsed
-    action_ko = _primary_action_ko(case) or suggestion   # LLM off 상태의 [제안]==action_ko
-    if not action_ko:
+    # 프롬프트 재료용 조치 목록 — 발화 전부. 하나도 없으면 [제안] 섹션 파싱값 폴백.
+    action_block = _action_block(case) or _primary_action_ko(case) or suggestion
+    if not action_block:
         return None
     enrich = enrich or {}
     sig_lines = _sig_lines(case)
@@ -410,9 +478,10 @@ def build_prompt(case: dict, enrich: dict | None = None,
          if sig_count else "[발화 signature 전체]"),
         sig_lines or "- (없음)",
         f"[현상] {phenomenon}",
-        "[과거사례 목록]",
+        "[사례 목록]",
         prec_lines or f"- {_NO_PRECEDENT_TEXT}",
-        f"참고용 기본 조치(action_ko):{action_ko}",
+        "[기본 조치 목록(action_ko)]",
+        action_block,
     ]
     return "\n".join(lines)
 
@@ -465,17 +534,34 @@ def sanitize_suggestion(text) -> str:
     return out[:MAX_SUGGESTION_CHARS].strip()
 
 
-def patch_suggestion_text(cell_text, suggestion) -> str:
-    """셀 텍스트의 마지막 섹션 값만 suggestion 으로 치환.
+def patch_cell(cell_text, *, past=None, suggestion=None) -> str:
+    """셀 텍스트의 [사례]/[제안] 섹션 **값만** 교체 (None 인 쪽은 손대지 않는다).
 
-    `[MAJOR][이봉] ` 접두와 앞 2섹션([현상]/[과거사례])은 **바이트 그대로** 보존한다
-    (규칙 12 — 같은 평문을 sheets.js/Excel/챗봇/eval_export 가 소비). 섹션 토큰이 없는
-    문자열은 원문 그대로 반환(치환 실패를 조용히 무해화).
+    `[MAJOR][이봉] ` 접두와 [현상] 섹션, 그리고 섹션 **토큰 자체**는 바이트 그대로 둔다
+    (규칙 12 — 같은 평문을 sheets.js/Excel/챗봇/eval_export 가 소비하고, 옛 캐시의
+    `[과거사례]`/`[점검제안]` 토큰도 그 자리 그대로 유지된다).
+    **멱등**이다 — 같은 값으로 두 번 적용해도 결과가 같다(재빌드마다 재병합되므로 필수).
+    섹션 토큰이 없는 문자열은 원문 그대로 반환(치환 실패를 조용히 무해화).
     """
-    if not isinstance(cell_text, str) or not suggestion:
+    if not isinstance(cell_text, str):
         return cell_text
-    new_text, n = SUGGEST_TAIL_RE.subn(lambda m: m.group(1) + suggestion, cell_text, count=1)
-    return new_text if n else cell_text
+    out = cell_text
+    # 치환값은 **함수**로 넘긴다 — 문자열 replacement 였다면 본문의 `\1`·`\g` 가 역참조로
+    # 해석돼 사용자 문장이 깨진다(LLM 출력에 백슬래시가 섞일 수 있다).
+    if past:
+        # 뒤 [제안] 토큰(그룹 2)은 그대로 되살린다 — 이 치환이 섹션 경계를 지우면
+        # 그다음 patch 가 [제안] 을 찾지 못해 조용히 아무 일도 안 하게 된다.
+        out = CASE_SEC_RE.sub(lambda m: m.group(1) + past + m.group(2), out, count=1)
+    if suggestion:
+        out = SUGGEST_TAIL_RE.sub(lambda m: m.group(1) + suggestion, out, count=1)
+    return out
+
+
+def patch_suggestion_text(cell_text, suggestion) -> str:
+    """[제안] 섹션만 치환하는 얇은 래퍼 — 기존 호출부·테스트 호환."""
+    if not suggestion:
+        return cell_text
+    return patch_cell(cell_text, suggestion=suggestion)
 
 
 def apply_suggestions(result: dict, stored_items: dict) -> tuple[dict, int]:
@@ -500,17 +586,20 @@ def apply_suggestions(result: dict, stored_items: dict) -> tuple[dict, int]:
             continue
         if str(row.get("sha") or "") != str(meta.get("sha") or ""):
             continue
+        # 두 블록(2026-09-02) — 사례 요약만 온 경우도 반영한다(제안이 비어도 무해).
         suggestion = sanitize_suggestion(row.get("suggestion") or "")
-        if suggestion:
-            accepted[str(item)] = suggestion
+        cases = sanitize_suggestion(row.get("cases") or "")
+        if suggestion or cases:
+            accepted[str(item)] = (cases, suggestion)
     if not accepted:
         return result, 0
     new_comments = dict(comments)
     patched = 0
     for key, cell in comments.items():
-        for item, suggestion in accepted.items():
+        for item, (cases, suggestion) in accepted.items():
             if key.endswith("|" + item):
-                new_text = patch_suggestion_text(cell, suggestion)
+                new_text = patch_cell(cell, past=cases or None,
+                                      suggestion=suggestion or None)
                 if new_text != cell:
                     new_comments[key] = new_text
                     patched += 1

@@ -176,16 +176,103 @@ async function openSigReason(btn) {
   }
 }
 
+// ── AI Comment 사례 목록 팝오버 ──────────────────────────────────────────────
+// 「📋 사례 N건 상세」(sheets.js aicPrecLinkHtml) → 그 항목에 매칭된 과거 사례 원문.
+// 배치·닫기·늦은 응답 처리는 위 Signature 근거 팝업과 **같은 장치를 그대로 쓴다**
+// (_sigrEl/_sigrSeq/sigrPlace/닫기 핸들러) — 한 번에 하나만 열리는 것도 그 덕이다.
+// 셀 텍스트가 아니라 별도 라우트에서 받는 이유: 사례 원문은 payload 에 싣기엔 무겁고,
+// 셀에는 LLM 이 요약한 한 줄만 남기기 때문이다(docs/23).
+function aicPrecRowHtml(p) {
+  const head = [];
+  if (p.product_name) head.push(esc(p.product_name));
+  if (p.lot_id) head.push("lot " + esc(p.lot_id));
+  if (p.item_canonical) head.push(esc(p.item_canonical));
+  if (p.unit) head.push(esc(p.unit));
+  const tags = [];
+  if (p.status) tags.push(esc(p.status));
+  if (p.signature) tags.push(esc(p.signature));
+  const m = p.metrics || {};
+  const stats = ["cpk", "yield", "mean", "stdev", "fail_count", "total_count"]
+    .filter(k => m[k] !== undefined && m[k] !== null)
+    .map(k => `${k}=${sigrNum(m[k])}`).join(", ");
+  return `<div class="sigr-rule"><div class="sigr-rule-head">` +
+    `<b>${head.join(" / ") || "(출처 미상)"}</b>` +
+    tags.map(t => `<span class="sigr-tag">${t}</span>`).join("") + `</div>` +
+    (stats ? `<div class="sigr-desc">당시 통계: ${esc(stats)}</div>` : "") +
+    `<div class="sigr-act">${linkifyComment(String(p.comment || ""))}</div></div>`;
+}
+
+async function openAicPrec(btn) {
+  if (_sigrAnchor === btn) { closeSigReason(); return; }
+  closeSigReason();
+  const key = btn.dataset.key || "";
+  const panel = (typeof issuePanelOf === "function") ? issuePanelOf(btn) : null;
+  if (!key || !panel) return;
+
+  const pop = document.createElement("div");
+  pop.className = "sigr-pop";
+  pop.style.position = "fixed";
+  pop.style.visibility = "hidden";
+  pop.innerHTML = sigrShell(`<div class="sigr-desc">불러오는 중…</div>`, "");
+  panel.appendChild(pop);
+  sigrPlace(pop, btn);
+  btn.setAttribute("aria-expanded", "true");
+  _sigrEl = pop; _sigrAnchor = btn;
+
+  const seq = ++_sigrSeq;
+  const cacheKey = "prec|" + key;
+  try {
+    let data = _sigrCache.get(cacheKey);
+    if (!data) {
+      const url = `/pe/report/session/${SESSION_ID}/web_report/ai_comment/precedents`
+        + `?key=${encodeURIComponent(key)}`;
+      const res = await fetch(url);
+      const j = await res.json().catch(() => ({}));
+      if (res.status === 202) {
+        if (seq !== _sigrSeq || _sigrEl !== pop) return;
+        // 평가 캐시가 없어 백그라운드 잡을 예약한 상태 — 캐시하지 않는다(곧 채워진다).
+        pop.innerHTML = sigrShell(
+          `<div class="sigr-desc">평가 결과를 준비 중입니다 — 잠시 후 다시 눌러 주세요.</div>`,
+          "");
+        sigrPlace(pop, btn);
+        return;
+      }
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      data = j;
+      _sigrCache.set(cacheKey, data);
+    }
+    if (seq !== _sigrSeq || _sigrEl !== pop) return;
+    const rows = data.items || [];
+    const body = rows.length
+      ? rows.map(aicPrecRowHtml).join("")
+      : `<div class="sigr-desc">이 항목에 매칭된 과거 사례가 없습니다.</div>`;
+    pop.innerHTML = sigrShell(body, rows.length ? `${rows.length}건` : "");
+    sigrPlace(pop, btn);
+  } catch (err) {
+    if (seq !== _sigrSeq || _sigrEl !== pop) return;
+    pop.innerHTML = sigrShell(
+      `<div class="sigr-warn">사례를 불러오지 못했습니다: ${esc(err.message)}</div>` +
+      `<div><button type="button" class="btn-sm sigr-retry">다시 시도</button></div>`, "");
+    sigrPlace(pop, btn);
+  }
+}
+
 document.addEventListener("click", e => {
   const btn = e.target.closest(".sig-why");
   if (btn) { openSigReason(btn); return; }
+  const prec = e.target.closest(".aic-prec-btn");
+  if (prec) { openAicPrec(prec); return; }
   if (!_sigrEl) return;
   if (e.target.closest(".sigr-close")) { closeSigReason(); return; }
   if (e.target.closest(".sigr-retry")) {
     const anchor = _sigrAnchor;
     _sigrCache.clear();
     closeSigReason();
-    if (anchor) openSigReason(anchor);
+    // 재시도 대상이 사례 목록 버튼인지 Signature [?] 인지에 따라 여는 함수가 다르다.
+    if (anchor) {
+      if (anchor.classList.contains("aic-prec-btn")) openAicPrec(anchor);
+      else openSigReason(anchor);
+    }
     return;
   }
   if (!e.target.closest(".sigr-pop")) closeSigReason();

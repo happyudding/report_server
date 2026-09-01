@@ -131,9 +131,11 @@ def _source_only_comment(ev: dict) -> str:
     phenomenon = (f"{bad} 에서만 fail 이 집중됩니다 (정상 source: {normal}, "
                   f"fail rate 차이 {ev['source_fail_rate_gap'] * 100:.1f}%p). "
                   f"{ev['dominant_phenomenon']}")
-    return (f"[현상] {text.get('phenomenon_ko') or phenomenon}\n"
-            f"[과거사례] {recommend._NO_PRECEDENT_TEXT}\n"
-            f"[제안] {text.get('action_ko') or _DEFAULT_ACTION}")
+    # 섹션 토큰은 recommend 의 상수를 쓴다 — 이름이 갈리면 서버 파싱·화면 라벨이 이 코멘트만
+    # 못 알아본다(CLAUDE.md §5 규칙 12).
+    return (f"{recommend.SEC_PHEN} {text.get('phenomenon_ko') or phenomenon}\n"
+            f"{recommend.SEC_CASE} {recommend._NO_PRECEDENT_TEXT}\n"
+            f"{recommend.SEC_SUGG} {text.get('action_ko') or _DEFAULT_ACTION}")
 
 
 def _persist_comment(ev: dict, engine_version) -> int:

@@ -55,6 +55,9 @@ _CASE = {
     "status": "MAJOR",
     "primary_signature": "EDGE_FAIL",
     "secondary_signatures": ["LOW_CPK"],
+    # ⚠ 이 픽스처는 **옛 토큰**([과거사례])을 일부러 유지한다 — 캐시에 굳은 세션이 계속
+    # 이 모양으로 오므로, 새 코드가 옛 코멘트도 파싱하는지가 여기서 함께 검증된다.
+    # 새 토큰([사례]) 파싱은 test_split_comment / _CASE_NEW 가 본다.
     "comment": "[현상] 웨이퍼 edge 집중 fail 입니다.\n[과거사례] P1 에서  유사 사례가 "
                "확인 되었습니다 - edge ring 오염 조치. \n [제안] edge 영역 공정 이력을 확인하세요.",
     "signatures": [
@@ -76,9 +79,14 @@ def test_determinism():
     assert len(P.prompt_sha(p1)) == 12
     # 재료가 프롬프트에 실제로 들어갔는지
     assert "VDD_LEAK" in p1 and "EDGE_FAIL" in p1 and "LOW_CPK" in p1
-    assert "[현상] 웨이퍼 edge 집중 fail 입니다." in p1
+    assert "[현상] 웨이퍼 edge 집중 fail 입니다." in p1   # 옛 토큰 코멘트도 파싱된다
     assert "- P1: edge ring 오염 조치" in p1
-    assert "참고용 기본 조치(action_ko):edge 영역 공정 이력을 확인하세요." in p1
+    # [기본 조치 목록] 은 발화 signature **전부** — LLM 이 통합 제안의 재료로 쓴다.
+    assert "[기본 조치 목록(action_ko)]" in p1
+    assert "- EDGE_FAIL: edge 영역 공정 이력을 확인하세요." in p1
+    assert "- LOW_CPK: 산포 개선 여부를 확인하세요." in p1
+    # 사례 목록 헤더도 새 토큰이다(옛 "[과거사례 목록]" 아님).
+    assert "[사례 목록]" in p1 and "[과거사례 목록]" not in p1
     # 이 프로젝트 확장 지시문도 함께 나간다 (base 지시문 뒤)
     assert P._INSTRUCTION in p1 and P._INSTRUCTION_EXTRA in p1
     assert p1.index(P._INSTRUCTION) < p1.index(P._INSTRUCTION_EXTRA)
@@ -98,17 +106,26 @@ def test_split_comment():
 
 
 def test_action_ko_priority():
-    # primary 행 action_ko 가 [제안] 섹션과 다르면 primary 행이 이긴다
+    # 조치 목록은 발화 **전부**이고 primary 가 맨 앞이다(2026-09-02).
     case = dict(_CASE)
-    case["signatures"] = [{"id": "EDGE_FAIL", "role": "primary",
-                           "action_ko": "PRIMARY 조치"}]
+    case["signatures"] = [
+        {"id": "LOW_CPK", "role": "secondary", "action_ko": "SECOND 조치"},
+        {"id": "EDGE_FAIL", "role": "primary", "action_ko": "PRIMARY 조치"}]
     p = P.build_prompt(case)
-    assert "참고용 기본 조치(action_ko):PRIMARY 조치" in p
-    # primary 행에 action_ko 가 없으면 [제안] 파싱값 폴백
+    assert p.index("- EDGE_FAIL: PRIMARY 조치") < p.index("- LOW_CPK: SECOND 조치")
+    # 같은 문장이 여러 룰에 걸리면 **조치 목록에는** 한 번만 (중복은 사용자에게 잡음).
+    # [발화 signature 전체] 는 발화 사실 자체가 재료라 그대로 둘 다 남는다.
+    case["signatures"] = [{"id": "A", "role": "primary", "action_ko": "같은 조치"},
+                          {"id": "B", "role": "secondary", "action_ko": "같은 조치"}]
+    p = P.build_prompt(case)
+    action_block = p.split("[기본 조치 목록(action_ko)]")[1]
+    assert action_block.count("같은 조치") == 1, action_block
+    # action_ko 가 하나도 없으면 코멘트의 [제안] 섹션 파싱값으로 폴백한다(목록 형태 아님).
     case["signatures"] = [{"id": "EDGE_FAIL", "role": "primary", "action_ko": None}]
     p = P.build_prompt(case)
-    assert "참고용 기본 조치(action_ko):edge 영역 공정 이력을 확인하세요." in p
-    print("  (c) action_ko 우선순위 OK")
+    assert p.split("[기본 조치 목록(action_ko)]")[1].strip() \
+        == "edge 영역 공정 이력을 확인하세요."
+    print("  (c) 조치 목록 전량·primary 우선·중복 제거 OK")
 
 
 def test_missing_materials():
@@ -414,8 +431,11 @@ def test_precedent_count():
     out = P.build_prompts({"VDD Leak(A)": _CASE})
     assert out["VDD Leak(A)"]["precedents"] == 1, out
     assert P._precedent_count(_CASE) == 1
+    # 사례 0건 item 은 **프롬프트를 만들지 않는다**(2026-09-02) — LLM 호출 자체를 건너뛴다.
     none_case = dict(_CASE, precedents=[{"comment": None, "product_name": "P2"}])
-    assert P.build_prompts({"X": none_case})["X"]["precedents"] == 0
+    assert P.build_prompt(none_case) is None
+    assert P.build_prompts({"X": none_case}) == {}
+    assert P.build_prompt(dict(_CASE, precedents=[])) is None
     two = dict(_CASE, precedents=[{"comment": "a"}, {"comment": "b"}])
     assert P.build_prompts({"X": two})["X"]["precedents"] == 2
     # sha 는 프롬프트만의 함수다 — precedents 키가 붙어도 값이 흔들리면 안 된다
@@ -523,6 +543,69 @@ def test_coverage_instruction_shipped():
     print("  (m) 배포 yaml 커버리지 지시 + 축소 지시 한정 OK")
 
 
+def test_parse_llm_blocks():
+    """(n) 두 블록 계약 파서 (2026-09-02) — 관대 수용 3분기 + 엔진 사본 동치."""
+    two = "[사례]\n- P1 사례 요약\n[제안]\n- 확인 순서 1\n- 확인 순서 2"
+    assert P.parse_llm_blocks(two) == ("- P1 사례 요약", "- 확인 순서 1\n- 확인 순서 2")
+    # 옛 토큰도 받는다(모델이 프롬프트 예시를 흉내낼 수 있다)
+    assert P.parse_llm_blocks("[과거사례] 요약\n[점검제안] 제안") == ("요약", "제안")
+    # [제안] 만 오면 사례 요약은 None — 호출부가 코드 나열을 유지한다
+    assert P.parse_llm_blocks("[제안]\n- 하나") == (None, "- 하나")
+    # 토큰이 없으면 전체가 제안 (종전 단일 출력 하위호환)
+    assert P.parse_llm_blocks("- 그냥 한 줄") == (None, "- 그냥 한 줄")
+    assert P.parse_llm_blocks("") == (None, None)
+    assert P.parse_llm_blocks(None) == (None, None)
+
+    # ⚠ 엔진 사본과 **같은 동작**이어야 한다 (규칙 #8 로 import 불가 → 사본 유지)
+    sys.path.insert(0, str(_ROOT / "eval_analyzer"))
+    from eval_engine.pipeline import recommend as R                  # noqa: E402
+    for sample in (two, "[과거사례] 요약\n[점검제안] 제안", "[제안]\n- 하나",
+                   "- 그냥 한 줄", "", None):
+        assert R.parse_llm_blocks(sample) == P.parse_llm_blocks(sample), sample
+    print("  (n) parse_llm_blocks 3분기 + 엔진 사본 동치 OK")
+
+
+def test_patch_cell():
+    """(o) 섹션별 교체 — 멱등·한쪽만·토큰 보존 (2026-09-02)."""
+    cell = ("[MAJOR][이봉] [현상] - EDGE_FAIL: 현상\n[사례] ①(P1) 원문 사례 \n"
+            " [제안] - EDGE_FAIL: 룰 조치")
+    out = P.patch_cell(cell, past="요약된 사례", suggestion="- 통합 제안")
+    assert "[사례] 요약된 사례" in out and "[제안] - 통합 제안" in out
+    assert out.startswith("[MAJOR][이봉] [현상] - EDGE_FAIL: 현상")   # 접두·현상 보존
+    assert "원문 사례" not in out and "룰 조치" not in out
+    # 멱등 — 재빌드마다 재병합되므로 두 번 적용해도 같아야 한다
+    assert P.patch_cell(out, past="요약된 사례", suggestion="- 통합 제안") == out
+    # 한쪽만 주면 다른 섹션은 그대로
+    only_case = P.patch_cell(cell, past="요약만")
+    assert "[사례] 요약만" in only_case and "[제안] - EDGE_FAIL: 룰 조치" in only_case
+    only_sugg = P.patch_cell(cell, suggestion="제안만")
+    assert "[사례] ①(P1) 원문 사례" in only_sugg and "[제안] 제안만" in only_sugg
+    # 옛 토큰 셀도 **토큰을 바꾸지 않고** 값만 갈린다(캐시 세션 호환)
+    old = "[MINOR] [현상] A\n[과거사례] 옛 사례 \n [점검제안] 옛 제안"
+    o2 = P.patch_cell(old, past="새 요약", suggestion="새 제안")
+    assert "[과거사례] 새 요약" in o2 and "[점검제안] 새 제안" in o2
+    assert "[사례]" not in o2 and "[제안] " not in o2.replace("[점검제안] ", "")
+    # 백슬래시가 섞여도 역참조로 해석되지 않는다(정규식 replacement 함수 계약)
+    assert "a\\1b" in P.patch_cell(cell, suggestion="a\\1b")
+    # 섹션 토큰이 없으면 원문 그대로
+    assert P.patch_cell("섹션 없음", past="x", suggestion="y") == "섹션 없음"
+    assert P.patch_cell(None, suggestion="y") is None
+    print("  (o) patch_cell 멱등·부분 치환·토큰 보존 OK")
+
+
+def test_denied_ignores_spacing():
+    """(p) 금지 문구는 **띄어쓰기 변형**도 잡는다 — 사용자 신고 문장이 그 한 칸으로 샜다."""
+    pat = P.compile_deny_patterns(_RULES)
+    for bad in ("- 검색된 과거 사례 중 현재 현상에 직접 적용할 수 있는 사례는 확인 되지 않았습니다.",
+                "- 참고할 사례가 없 습니다.",
+                "- 사례는 적용 할 수 없습니다."):
+        assert P.strip_denied_lines(bad, pat, True) == "", bad
+    # 공백을 지워도 비교문은 여전히 통과해야 한다(과잉 차단 방지)
+    ok = "- 과거 사례와 달리 이번에는 edge 편중이 확인되지 않으므로 중심부를 보라."
+    assert P.strip_denied_lines(ok, pat, True) == ok
+    print("  (p) 금지 문구 띄어쓰기 무시 매칭 OK")
+
+
 def main():
     _RULES["deny_patterns"][0]["regex"] = _load_shipped_deny_regex()
     test_determinism()
@@ -540,6 +623,9 @@ def main():
     test_strip_denied_lines()
     test_signature_coverage_materials()
     test_coverage_instruction_shipped()
+    test_parse_llm_blocks()
+    test_patch_cell()
+    test_denied_ignores_spacing()
     print("test_ai_prompt_determinism: 전부 통과")
 
 

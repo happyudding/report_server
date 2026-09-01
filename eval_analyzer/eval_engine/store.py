@@ -880,9 +880,26 @@ def search_precedents(value_type, item_canonical, family_product=None,
                     rows = [dict(r) for r in c.execute(sql, params).fetchall()]
                 rows_cache[params] = rows
 
-    def _rank(r):  # 같은 case 의 여러 (label×outcome) 행 중 대표행: 최신 label > comment 있는 행
-        """대표행 선정 정렬키 — (label_id, human_comment 유무). 큰 쪽이 이긴다."""
-        return ((r["label_id"] or 0), r["human_comment"] is not None)
+    def _rank(r):  # 같은 case 의 여러 (label×outcome) 행 중 대표행
+        """대표행 선정 정렬키 — (**human_comment 유무**, label_id). 큰 쪽이 이긴다.
+
+        ⚠ 순서가 뒤집혀 있었다(2026-09-02 수정). `label_id` 를 1순위로 두면 **코멘트가
+        없는 최신 라벨이 코멘트 라벨을 밀어낸다.** 한 case 에는 labeler 가 다른 라벨이
+        여러 개 붙는다:
+          - `web_report`      = Issue Table PTE/개발 comment (human_comment **있음**)
+          - `web-signature`   = ENGR 확정 signature (human_comment **None**, 보통 나중 = id 큼)
+          - `eval-panel`      = 관리자 정답 라벨 (human_comment 가 None 일 수 있음)
+        SQL 이 labeler 필터 없이 LEFT JOIN 하므로 셋이 모두 후보 행이 되고, 종전 순서에서는
+        signature 라벨이 대표행이 돼 그 (제품,lot,item) 이 통째로 "코멘트 없는 선례" 가 됐다.
+        그러면 `_precedent_lines`/`_precedent_count` 가 걸러내 **프롬프트 [사례 목록] 이
+        비고**, LLM 은 "적용할 사례 없음" 을 쓰고, 서버 금지 문구 게이트
+        (`only_with_precedents`)마저 precedents=0 이라 돌지 않는다 — 사용자 신고
+        ("사례가 2건 있는데 없다고 나온다")의 실제 경로다. 화면 `/pe/eval` L5 선례 표에는
+        그 행이 보이므로 사람 눈에는 "있는데 무시한다" 로만 보였다.
+        코멘트 유무를 1순위로 두면 코멘트가 있는 라벨이 항상 이기고, 코멘트가 여럿이면
+        그중 최신(label_id 큰 것)이 대표가 된다.
+        """
+        return (r["human_comment"] is not None, (r["label_id"] or 0))
 
     fired = {s for s in (fired_signatures or []) if s}
     best = {}

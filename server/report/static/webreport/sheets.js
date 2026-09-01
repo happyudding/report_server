@@ -255,10 +255,15 @@ function linkifyComment(txt) {
 // 된다(에러가 아니라 "색이 사라짐"으로 보인다). 옛 키를 지우려면 캐시가 전부 갈린 뒤여야
 // 하는데, 그걸 앞당기려 REPORT_SCHEMA_VERSION 을 올리면 전 세션 콜드 리빌드가 된다.
 // Excel·챗봇·eval export 도 같은 평문을 소비한다.
-const AIC_SECTIONS = ["현상", "과거사례", "점검제안", "제안"];
-const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "점검제안": "aic-act", "제안": "aic-act" };
-// 화면에 찍는 라벨. 옛 "점검제안" 도 "제안" 으로 찍어 옛/새 세션이 같은 화면을 낸다.
-const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "점검제안": "제안", "제안": "제안" };
+// 서버 토큰은 [현상]/[사례]/[제안] 고정(2026-09-02, CLAUDE.md §5 규칙 12)이고, 옛
+// [과거사례]/[점검제안] 은 캐시에 굳은 세션 때문에 **읽기만** 계속 받는다.
+const AIC_SECTIONS = ["현상", "과거사례", "사례", "점검제안", "제안"];
+const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "사례": "aic-past",
+  "점검제안": "aic-act", "제안": "aic-act" };
+// 화면에 찍는 라벨. 옛 "과거사례"/"점검제안" 도 신 토큰과 같은 라벨로 찍어 옛/새 세션이
+// 같은 화면을 낸다.
+const AIC_SEC_LABEL = { "현상": "현상", "과거사례": "사례", "사례": "사례",
+  "점검제안": "제안", "제안": "제안" };
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 
 // 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
@@ -292,20 +297,26 @@ function aicIsSeverityBadge(text) { return /^[A-Za-z_]+$/.test(String(text)); }
 // txt → 섹션 div + 배지 div. 본문은 반드시 linkifyComment 를 통과시킨다(@[..] 링크와
 // *[..] 서식 토큰 유지). linkifyComment 가 이미 esc 하므로 **이중 esc 금지** — 태그·배지
 // 텍스트만 esc 한다.
-function renderAiComment(txt) {
+// precCount>0 이면 섹션들 아래에 「📋 사례 N건 상세」 링크를 단다(2026-09-02).
+// 건수는 **본문 텍스트가 아니라 payload**(DATA.web_report.ai_precedents[rowKey]) 에서
+// 온다 — 문장에 "N건" 을 박으면 LLM 이 요약하면서 숫자를 바꾸거나 지운다.
+// 목록 본문은 payload 에 없다(무겁다) — 클릭 시 라우트로 지연 조회한다(sig_reason.js).
+function renderAiComment(txt, precCount, rowKey) {
   const raw = String(txt == null ? "" : txt);
   // AI 백그라운드 계산 중(pending payload) — 빈 셀에 진행 안내를 채운다. 완료되면
   // boot.js maybeStartAiPendingPoll 이 최종 payload 로 화면을 다시 그린다.
   // ⚠ 이 분기가 실제로 도달하려면 호출부(셀 렌더)가 **빈 값에도** 이 함수를 불러야 한다
   // — 종전 `!isEmpty` 게이트 때문에 안내가 영영 안 보였다(2026-08-13 신고).
+  const precLink = aicPrecLinkHtml(precCount, rowKey);
   if (!raw.trim()) return aiWaitHtml();
   // 섹션 토큰이 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이 보인다.
-  if (raw.indexOf("[현상]") < 0) return linkifyComment(raw);
+  if (raw.indexOf("[현상]") < 0) return linkifyComment(raw) + precLink;
   const split = aicSplitBadges(raw);
   const body = split.body;
-  // 점검제안(옛) 을 제안(신) 보다 먼저 둔다 — 교대는 왼쪽 우선이라 순서를 뒤집으면
-  // "[점검제안]" 의 뒷부분만 매칭돼 태그 앞에 "[점검" 이 본문으로 새어 나온다.
-  const re = /\[(현상|과거사례|점검제안|제안)\]/g;
+  // 긴 **옛** 토큰(과거사례/점검제안)을 신 토큰(사례/제안)보다 먼저 둔다 — 교대는 왼쪽
+  // 우선이라 순서를 뒤집으면 "[과거사례]"/"[점검제안]" 의 뒷부분만 매칭돼 태그 앞에
+  // "[과거"·"[점검" 이 본문으로 새어 나온다.
+  const re = /\[(현상|과거사례|사례|점검제안|제안)\]/g;
   const parts = [];
   let last = 0, cur = null, m;
   while ((m = re.exec(body))) {
@@ -327,12 +338,22 @@ function renderAiComment(txt) {
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
       `<b class="aic-tag">[${esc(AIC_SEC_LABEL[p.tag] || p.tag)}]</b> ${linkifyComment(t)}</div>`;
   });
+  out += precLink;
   const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));
   if (shownBadges.length) {
     out += `<div class="aic-badges">` + shownBadges.map(b =>
       `<span class="${aicBadgeClass(b)}">${esc("[" + b + "]")}</span>`).join("") + `</div>`;
   }
-  return out || linkifyComment(raw);
+  return out || (linkifyComment(raw) + precLink);
+}
+
+// 「📋 사례 N건 상세」 — 건수가 없으면(옛 payload·사례 0건) 아무것도 그리지 않는다.
+function aicPrecLinkHtml(count, rowKey) {
+  const n = Number(count) || 0;
+  if (n <= 0 || !rowKey) return "";
+  return `<div class="aic-prec"><button type="button" class="aic-prec-btn"` +
+    ` data-key="${esc(rowKey)}" aria-expanded="false"` +
+    ` title="이 항목에 매칭된 과거 사례 원문">📋 사례 ${n}건 상세</button></div>`;
 }
 
 // 렌더 후 [과거사례] 가 **실제로 4줄에서 잘렸는지** 재서 .aic-clamped 를 붙인다.
@@ -1372,7 +1393,15 @@ function renderSheetTable(rows, opts) {
         // (isCommentCol 은 그대로 둬야 .st-comment 열너비 규칙이 유지된다).
         // AI Comment 는 **빈 값도** 통과시킨다 — 백그라운드 평가 중이면 renderAiComment 가
         // "Loading 중…" 을 낸다(빈 값이면 종전대로 빈 문자열). 다른 comment 컬럼은 종전 그대로.
-        cellHtml = isAiCommentCol(c) ? renderAiComment(txt) : linkifyComment(txt);
+        if (isAiCommentCol(c)) {
+          // 사례 건수는 payload(ai_precedents)에서 이 행의 키로 찾는다 — 키가 없거나
+          // 옛 payload(키 자체 없음)면 링크를 안 그린다.
+          const pk = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
+          const pmap = (DATA.web_report && DATA.web_report.ai_precedents) || {};
+          cellHtml = renderAiComment(txt, pk ? pmap[pk] : 0, pk);
+        } else {
+          cellHtml = linkifyComment(txt);
+        }
       } else if (sdOrigin) {
         // △σ% + 기원 표식. 숫자는 그대로 이스케이프하고 표식만 마크업으로 덧댄다.
         const mark = sdOrigin === "outlier" ? "▲" : "▬";

@@ -170,6 +170,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                          mode="Normal", dist_colors=None, ai_comments=None,
                          etc_auto_items=None, ai_signatures=None,
                          signature_options=None, issue_signatures=None,
+                         ai_precedents=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None,
                          temperature_groups=None, temperature_limits=None,
@@ -205,6 +206,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     ai_signatures/issue_signatures/signature_options: Issue Table Signature 컬럼
     (엔진 발화 제안 / ENGR 확정값 / 선택 목록). ai_comments 와 **같은 조건**에서만
     전달된다 — ai_comments 가 None 이면 컬럼도 payload 키도 생기지 않는다(기존 계약 유지).
+    ai_precedents: {row_key: 사례 건수} — AI Comment 셀 아래 「📋 사례 N건 상세」 링크가
+    이 값으로 그려진다(2026-09-02). **건수만** 싣는다 — 사례 상세는 payload 를 불리므로
+    별도 라우트(.../web_report/ai_comment/precedents)로 지연 조회한다. signature_options
+    와 같은 조건(ai_comments is not None)에서만 키가 생긴다.
     compare_payload: Compare 계산 결과(build_compare 반환). 호출자가 **분리 캐시**에서
     가져와 주입한다(2026-08-19) — payload 안에 박아 캐시하면 편집·스키마 bump 마다 전량
     재계산되기 때문. 안 주면 여기서 계산한다(구 호출부·테스트 호환).
@@ -352,8 +357,13 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
 
     # Signature dropdown 선택지 — ai_comment 옵션 세션에만 싣는다(그 외 세션은 키 자체가
     # 없어 종전 payload 와 완전히 동일하다).
+    # perf-guard: allow S01-report-schema — 새 키 `ai_precedents` 는 **ai_comment 옵션
+    # 세션에만** 생긴다. 무효화는 전역 REPORT_SCHEMA_VERSION 이 아니라
+    # cache_policy._eval_rules_suffix 의 "aiprec" 표식으로 한다(그 꼬리표는 report_key(ai
+    # 세션)와 ai_comment_key 가 공유). 전역 bump 는 전 세션 콜드 폭풍이다(규칙 14).
     if ai_comments is not None:
         payload["signature_options"] = list(signature_options or [])
+        payload["ai_precedents"] = dict(ai_precedents or {})
 
     # Compare 모드: source 2개 이상일 때만 비교 분석을 얹는다 (단일 source 는 비교 대상 없음).
     # compare_groups(세션 옵션의 Before/After 배치)가 없으면 compare 쪽이 legacy 폴백한다.

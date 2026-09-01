@@ -165,6 +165,10 @@ def _slim_temperature_limits(temperature):
 # 타임아웃의 예보이기 때문이다. 클라 read timeout(200초)의 절반 아래로 잡는다.
 _UPLOAD_SLOW_WAIT_SEC = 60
 
+# Claude 연결 신호등(●) 글꼴 — 색만 바꿔 다시 쓰는 곳이 두 군데(_set_ai_health /
+# _blink_ai_health)라 크기를 한 곳에서 정한다. 한쪽만 고치면 깜빡일 때 크기가 튄다.
+_AI_HEALTH_DOT_CSS = "font-size:24px; line-height:24px;"
+
 
 def _upload_timing_line(timing, verdict):
     """업로드 소요 한 줄 — 실행 로그용. 지금까지 클라는 소요를 어디에도 남기지 않아
@@ -2357,7 +2361,7 @@ class HoneyMainWindow(QMainWindow):
         """신호등 색·툴팁 갱신 — ok: True 초록 / False 빨강 / None 회색 깜빡임(확인 중)."""
         color = {True: "#2E7D32", False: "#C62828"}.get(ok, "#9E9E9E")
         state = {True: "사용 가능", False: "사용 불가"}.get(ok, "확인 중")
-        self.lbl_ai_health.setStyleSheet(f"color:{color}; font-size:15px;")
+        self.lbl_ai_health.setStyleSheet(f"color:{color}; {_AI_HEALTH_DOT_CSS}")
         self.lbl_ai_health.setToolTip(
             f"Claude 연결 {state}\n{detail}\n\n클릭하면 다시 확인합니다.")
         # 실제로 확인 중일 때만 깜빡인다(기동 직후 "확인 전"은 제외) — 결과가 오면
@@ -2368,14 +2372,26 @@ class HoneyMainWindow(QMainWindow):
             self._ai_health_blink.start()
         else:
             self._ai_health_blink.stop()
-        # 문구는 깜빡임과 같은 조건 — 신호등이 보일 때만(체크 off 면 줄 자체가 숨는다).
-        self.lbl_ai_health_msg.setVisible(checking and self.lbl_ai_health.isVisible())
+        # 신호등 옆 문구 — 확인 중엔 "연결중 …", 성공하면 "연결 완료" 로 남긴다.
+        # (색만으로는 초록/회색 구분이 약해 결과를 글자로도 남긴다.)
+        if checking:
+            self.lbl_ai_health_msg.setText("Claude 연결중 …")
+            self.lbl_ai_health_msg.setStyleSheet("color:#9E9E9E; font-size:12px;")
+            show_msg = True
+        elif ok is True:
+            self.lbl_ai_health_msg.setText("연결 완료")
+            self.lbl_ai_health_msg.setStyleSheet("color:#2E7D32; font-size:12px;")
+            show_msg = True
+        else:
+            show_msg = False
+        # 신호등이 보일 때만(체크 off 면 줄 자체가 숨는다).
+        self.lbl_ai_health_msg.setVisible(show_msg and self.lbl_ai_health.isVisible())
 
     def _blink_ai_health(self):
         """확인 중 깜빡임 1틱 — 진한 회색 ↔ 옅은 회색 교대."""
         self._ai_health_blink_on = not self._ai_health_blink_on
         color = "#E0E0E0" if self._ai_health_blink_on else "#9E9E9E"
-        self.lbl_ai_health.setStyleSheet(f"color:{color}; font-size:15px;")
+        self.lbl_ai_health.setStyleSheet(f"color:{color}; {_AI_HEALTH_DOT_CSS}")
 
     def _on_ai_comment_toggled(self, on):
         """AI Comment 체크 변화 — ⚙·신호등·AI Model 표시 + 켤 때 연결 확인 1회."""

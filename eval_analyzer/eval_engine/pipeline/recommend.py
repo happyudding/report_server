@@ -5,19 +5,43 @@ find_precedents: 선례검색을 precedent_client 어댑터에 위임(sql 기본
   코멘트 생성 판단은 human_comment 만 사용(action/result 는 benchtest 표시용 참고 metadata).
 make_comment:
   - LLM off(config.EVAL_LLM_ENABLED=False) 또는 실패 → 룰/선례 기반 템플릿 코멘트 fallback.
-  - LLM on → llm_client.complete(prompt) 로 자연어 합성(모델은 사용자 지정).
+  - LLM on **그리고 선례가 1건 이상일 때만** → llm_client.complete(prompt) 로 두 블록 합성.
+
+**설계(2026-09-02 재설계)**: 코드가 먼저 **완성된 코멘트**를 만들고, LLM 은 있을 때만 그 위에
+덧칠한다. LLM 이 무엇을 쓰든(또는 안 오든) 화면이 틀리지 않는 것이 요점이다.
+  [현상] 발화 signature **전부**의 phenomenon_ko
+  [사례]  회수된 선례 **전부**의 코멘트 원문   → LLM 이 오면 "있는 그대로 요약" 으로 교체
+  [제안] 발화 signature **전부**의 action_ko  → LLM 이 오면 "통합 제안" 으로 교체
+선례가 0건이면 LLM 을 아예 부르지 않는다 — 사례 대조가 이 프롬프트의 존재 이유라 재료가
+없으면 토큰·시간만 쓴다(사용자 결정).
 """
+import re
+
 from .. import llm_client, precedent_client
 from ._rules import ai_prompt_instructions, signatures_for
 from .signatures import _BIMODALITY_ID
 
-_MODALITY_V2_COMMENT = { 
-    "bimodal": "분포가 2개 level로 분리되는 양상입니다.", 
-    "multimodal": "분포가 여러 level로 분리되는 양상입니다.", 
+# ── 섹션 토큰 (불변 계약 — ../../../CLAUDE.md §5 규칙 12) ────────────────────
+# 프롬프트·LLM 출력 계약·엔진 출력·서버 파싱(web_report/ai_prompt.py)·화면 라벨
+# (static/webreport/sheets.js)이 **같은 이름**을 쓴다. 옛 토큰 `[과거사례]`(→사례) ·
+# `[점검제안]`(→제안) 은 캐시·저장 문장·Excel 에 굳어 있어 **읽기만** 계속 허용한다.
+SEC_PHEN = "[현상]"
+SEC_CASE = "[사례]"
+SEC_SUGG = "[제안]"
+
+_MODALITY_V2_COMMENT = {
+    "bimodal": "분포가 2개 level로 분리되는 양상입니다.",
+    "multimodal": "분포가 여러 level로 분리되는 양상입니다.",
     "separated": "분포가 하나의 중심으로 모이지 않고 분리되는 양상입니다.", }
 
-_NO_PHENOMENON_FALLBACK = "엔지니어 확인 필요" 
+_NO_PHENOMENON_FALLBACK = "엔지니어 확인 필요"
 _NO_PRECEDENT_TEXT = "참고할 수 있는 과거 사례가 없습니다."
+# 선례 나열의 번호표 — 6건 이상이면 그냥 숫자로 떨어진다(top-k 기본 5).
+_PREC_MARKS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+# LLM 출력의 블록 토큰 — 신·구 둘 다 받는다(모델이 예시를 흉내낼 수 있다).
+# 교대 왼쪽 우선이라 긴 옛 토큰을 앞에 둔다("[점검제안]" 이 "[제안]" 으로 잘리는 것 방지).
+_LLM_BLOCK_RE = re.compile(r"\[(과거사례|사례|점검제안|제안)\]")
 
 
 def find_precedents(case_ctx: dict, sig_result: dict) -> list:
@@ -41,18 +65,44 @@ def _signature_by_id(case_ctx=None) -> dict:
     return {s["id"]: s for s in signatures_for(case_ctx)}
 
 
-def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
-    """[현상] 섹션 문구 — primary signature 의 phenomenon_ko.
+def _ordered_fired(verdict, sig_result) -> list:
+    """발화 signature 를 **primary 먼저** 정렬해 돌려준다 (id 없는 행 제외).
 
-    BIMODALITY 만 modality_v2(bimodal/multimodal/separated)별 문구로 덮어쓴다. 같은
+    [현상]·[제안] 이 같은 순서를 써야 사용자가 두 섹션을 나란히 읽을 수 있다.
+    """
+    rows = [s for s in (sig_result or {}).get("signatures", []) if s.get("id")]
+    primary = verdict.get("primary_signature")
+    return sorted(rows, key=lambda s: 0 if s.get("id") == primary else 1)
+
+
+def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
+    """[현상] 섹션 문구 — 발화 signature **전부**의 phenomenon_ko (primary 먼저).
+
+    2026-09-02: 종전에는 primary 하나만 썼다. 여러 축으로 걸린 case 도 한 줄짜리 현상만
+    보여, 사용자가 "다른 룰은 왜 떴는지" 를 화면에서 알 수 없었다(사용자 요청 "현상도
+    전부 다 전달"). LLM 프롬프트에도 이 블록이 그대로 나간다.
+    BIMODALITY 만 modality_v2(bimodal/multimodal/separated)별 문구로 덮어쓴다 — 같은
     signature 라도 분포 모양이 달라 한 문장으로 뭉뚱그릴 수 없기 때문.
+    발화가 하나도 없으면 종전처럼 폴백 한 줄.
     """
     by_id = _signature_by_id(case_ctx)
-    primary = verdict.get("primary_signature")
-    text = by_id[primary].get("phenomenon_ko") if primary in by_id else None
-    if primary == _BIMODALITY_ID:
-        text = _subpop_gap_comment(sig_result) or text
-    return text or _NO_PHENOMENON_FALLBACK
+    fired = _ordered_fired(verdict, sig_result)
+    lines, seen = [], set()
+    for s in fired:
+        sid = str(s["id"])
+        text = (by_id.get(sid) or {}).get("phenomenon_ko")
+        if sid == _BIMODALITY_ID:
+            text = _subpop_gap_comment(sig_result) or text
+        text = str(text or "").strip()
+        line = f"- {sid}: {text}" if text else f"- {sid}"
+        if line not in seen:            # 같은 문구가 두 번 나오면 읽는 사람이 헷갈린다
+            seen.add(line)
+            lines.append(line)
+    if not lines:
+        return _NO_PHENOMENON_FALLBACK
+    # 1건이어도 목록 형태를 유지한다 — 건수에 따라 모양이 달라지면 파서·테스트·사람이
+    # 모두 두 경우를 따로 다뤄야 한다(화면은 [현상] 섹션을 숨기므로 손해도 없다).
+    return "\n".join(lines)
 
 def _fired_by_id(sig_result) -> dict:
     """발화 signature 를 id → 발화 항목으로 색인.
@@ -65,10 +115,11 @@ def _fired_by_id(sig_result) -> dict:
 
 
 def _action_ko_for(verdict, case_ctx=None, sig_result=None) -> str:
-    """[제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다.
+    """primary signature 의 action_ko 한 줄. (프롬프트 재료·하위호환 호출부용)
 
     `sig_result` 가 있으면 **발화 항목의 action_ko** 를 먼저 쓴다 — L3 가 `{dut_top}` 같은
     자리를 그 case 의 실제 값으로 이미 채워 놓았다. yaml 원문은 그 값이 비어 있는 폴백이다.
+    ⚠ [제안] 기본값은 2026-09-02 부터 `_action_lines`(발화 전부)다 — 이 함수가 아니다.
     """
     by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
@@ -76,6 +127,28 @@ def _action_ko_for(verdict, case_ctx=None, sig_result=None) -> str:
     text = fired.get("action_ko") or (
         by_id[primary].get("action_ko") if primary in by_id else None)
     return text or _NO_PHENOMENON_FALLBACK
+
+
+def _action_lines(verdict, case_ctx=None, sig_result=None) -> str:
+    """[제안] 의 기본값 — 발화 signature **전부**의 action_ko (primary 먼저).
+
+    2026-09-02 사용자 결정: "제안은 발화된 Signature 에 대한 모든 제안". 종전에는 primary
+    하나만 나가서, 3개 축으로 걸린 항목도 한 가지 조치만 보였다.
+    action_ko 는 **발화 항목** 것을 먼저 쓴다 — L3(`signatures._fill_action`)가 `{dut_top}`
+    같은 자리를 그 case 의 실제 값으로 이미 채워 두었다(yaml 원문은 미치환 폴백).
+    같은 문장이 여러 룰에 걸리면 한 번만 쓴다 — 사용자에게는 중복이 곧 잡음이다.
+    """
+    by_id = _signature_by_id(case_ctx)
+    lines, seen = [], set()
+    for s in _ordered_fired(verdict, sig_result):
+        sid = str(s["id"])
+        text = str(s.get("action_ko")
+                   or (by_id.get(sid) or {}).get("action_ko") or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        lines.append(f"- {sid}: {text}")
+    return "\n".join(lines) or _action_ko_for(verdict, case_ctx, sig_result)
 
 def _fired_signature_lines(sig_result, case_ctx=None) -> str:
     """LLM 프롬프트에 넣을 **발화 signature 전체** 목록 — 한 줄에 하나(현상+기본조치).
@@ -104,18 +177,32 @@ def _fired_signature_lines(sig_result, case_ctx=None) -> str:
 
 
 def _past_case_text(precedents) -> str:
-    """[과거사례] 섹션 문구 — 관련도 1위 선례의 human_comment 를 제품명과 함께 인용.
+    """[사례] 섹션 문구 — 회수된 선례 **전부**를 출처와 함께 나열.
 
+    2026-09-02: 종전에는 관련도 1위 하나만 인용했다("… 에서 유사 사례가 확인 되었습니다 -").
+    선례가 2건이어도 화면에는 1건처럼 보여, 사용자가 "사례가 있는데 왜 안 쓰나" 를 확인할
+    방법이 없었다(사용자 신고). 상한은 호출측 `config.EVAL_PRECEDENT_TOPK`(기본 5)가 이미
+    걸어 두므로 여기서 다시 자르지 않는다.
+
+    코멘트 원문은 **자르지 않는다** — 어떻게 해결했는지가 뒤에 있어 먼저 잘려 나간다.
+    다만 개행은 ` / ` 로 접는다(셀 한 섹션 안에 들어가야 하고, 개행이 있으면 서버 파싱
+    `SECTION_RE` 의 섹션 경계와 섞여 읽기 어려워진다).
     사람이 쓴 코멘트가 하나도 없으면 `_NO_PRECEDENT_TEXT`. action/result 는 쓰지 않는다
     (benchtest 표시용 참고 metadata 일 뿐 코멘트의 근거가 아니다).
     """
-    comments = [p["human_comment"] for p in precedents if p.get("human_comment")]
-    if not comments:
-        return _NO_PRECEDENT_TEXT
-    top = precedents[0]
-    product = top.get("product_name")
-    prefix = f"{product} 에서 " if product else ""
-    return f"{prefix} 유사 사례가 확인 되었습니다 - {comments[0]}"
+    parts = []
+    for p in precedents or ():
+        comment = str(p.get("human_comment") or "").strip()
+        if not comment:
+            continue
+        comment = " / ".join(x.strip() for x in comment.splitlines() if x.strip())
+        product = str(p.get("product_name") or "").strip()
+        lot = str(p.get("lot_id") or "").strip()
+        src = "/".join(x for x in (product, lot) if x)
+        mark = _PREC_MARKS[len(parts)] if len(parts) < len(_PREC_MARKS) \
+            else f"({len(parts) + 1})"
+        parts.append(f"{mark}{f'({src}) ' if src else ' '}{comment}")
+    return " ".join(parts) if parts else _NO_PRECEDENT_TEXT
 
 
 def _precedent_lines(precedents) -> str:
@@ -138,6 +225,36 @@ def _precedent_lines(precedents) -> str:
     return "\n".join(lines)
 
 
+
+
+def parse_llm_blocks(text):
+    """LLM 출력 → (사례 요약|None, 제안|None). 두 블록 계약(2026-09-02)의 파서.
+
+    프롬프트가 `[사례]` / `[제안]` 두 블록만 내라고 요구하지만 모델은 형식을 흘린다.
+    관대하게 받는다:
+      - 토큰이 둘 다 있으면 각 블록을 잘라 준다.
+      - `[제안]` 만 있으면 (None, 그 뒤 전부) — 사례 요약은 코드 나열을 유지한다.
+      - 토큰이 하나도 없으면 (None, 전체) — 종전(단일 [제안] 출력) 하위호환이다.
+    옛 토큰 `[과거사례]`/`[점검제안]` 도 받는다(모델이 프롬프트 예시를 흉내낼 수 있다).
+    ⚠ **web_report/ai_prompt.py 에 같은 함수의 사본**이 있다(규칙 #8 로 import 불가) —
+    한쪽을 고치면 다른 쪽도 고칠 것. tests/test_ai_prompt_determinism.py 가 대조한다.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return None, None
+    marks = []
+    for m in _LLM_BLOCK_RE.finditer(s):
+        marks.append(("case" if m.group(1) in ("사례", "과거사례") else "sugg",
+                      m.start(), m.end()))
+    if not marks:
+        return None, s
+    blocks = {}
+    for i, (kind, _st, end) in enumerate(marks):
+        stop = marks[i + 1][1] if i + 1 < len(marks) else len(s)
+        body = s[end:stop].strip()
+        if body and kind not in blocks:      # 같은 토큰이 반복되면 첫 블록을 쓴다
+            blocks[kind] = body
+    return blocks.get("case"), blocks.get("sugg")
 
 
 def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_case, action_ko) -> str:
@@ -167,26 +284,28 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
     sig_lines = _fired_signature_lines(sig_result, case_ctx)
     prec_lines = _precedent_lines(precedents)
     lines = [
-        "반도체 fail item 분석 이후 다음에 확인해야 할 점검 방향을 한국어로 제안하라."
-        "발화한 signature 전체와 아래 과거 사례를 종합해서 작성하라 - 하나만 보고 쓰지 마라."
-        "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라."
-        "원인을 확정적으로 단정하지 마라"
-        "현재 입력이나 과거 사례에 없는 수치 제품명 설비 사이트 원인을 만들지 마라."
-        "과거 사례의 조치를 정답으로 단정하지마라"
-        "다만 과거 사례가 주어졌다면 조건이 완전히 같지 않더라도 참고할 점을 최대한 살려서 반영하라."
-        "'적용할 수 있는 사례가 없다' 같이 주어진 사례를 버리는 문장은 쓰지 마라."
-        "아래 [현상] / [과거사례] 문장을 그대로 반복하지 마라."
-        "점검 순서 또는 확인 대상을 중심으로 작성하라."
-        "[현상], [과거사례], [점검 제안] 같은 섹션 제목은 출력하지 마라 - 문장만 출력하라",
+        "반도체 fail item 분석 결과다. 아래 두 블록만 한국어로 출력하고 다른 텍스트는 쓰지 마라.\n"
+        "[사례]\n"
+        "아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약하라 - 제품/lot 당시 판단 근거 조치 결과.\n"
+        "현재 현상에 적용할 수 있는지 판단하거나 평가하거나 부정하지 마라 - 요약만 하라.\n"
+        "사례에 없는 내용을 만들지 마라.\n"
+        "[제안]\n"
+        "기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리하라.\n"
+        "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라.\n"
+        "발화한 signature 전체가 다뤄져야 한다 - 원인이 이어지는 항목은 한 줄에 묶어도 되지만 빠뜨리지는 마라.\n"
+        "원인을 확정적으로 단정하지 마라. 사례의 조치를 정답으로 단정하지 마라.\n"
+        "현재 입력이나 사례에 없는 수치 제품명 설비 사이트 원인을 만들지 마라.\n"
+        "'적용할 수 있는 사례가 없다' 같이 주어진 사례를 버리는 문장은 쓰지 마라.",
         f"item: {case_ctx.get('item_canonical')} / class: {case_ctx.get('item_class')}",
         f"status: {verdict.get('status')} / primary: {verdict.get('primary_signature')}",
         f"secondary: {', '.join(verdict.get('secondary_signatures', []))}",
         "[발화 signature 전체]",
         sig_lines or "- (없음)",
-        f"[현상] {phenomenon}",
-        "[과거사례 목록]",
+        f"{SEC_PHEN} {phenomenon}",
+        "[사례 목록]",
         prec_lines or f"- {_NO_PRECEDENT_TEXT}",
-        f"참고용 기본 조치(action_ko):{ action_ko}"
+        "[기본 조치 목록(action_ko)]",
+        action_ko,
     ]
     # 운영자 지시(yaml)는 base 지시문 **직후**에 넣는다 — 재료(item/status/…)보다 앞이어야
     # 지시로 읽힌다. 파일이 없거나 전부 꺼져 있으면 종전 프롬프트와 바이트 동일하다.
@@ -195,27 +314,48 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
     return "\n".join(lines)
 
 
+def has_precedent_comments(precedents) -> bool:
+    """LLM 을 부를 값어치가 있나 — 코멘트가 있는 선례가 1건이라도 있는가.
+
+    사용자 결정(2026-09-02): **사례가 없으면 LLM 을 거치지 않는다.** 이 프롬프트의 존재
+    이유가 "사례를 현재 수치와 대조" 라, 사례가 없으면 남는 재료(발화 signature + action_ko)는
+    이미 코드가 완성해 둔 것이라 토큰·시간만 쓴다. 판정 기준은 `_past_case_text`/
+    `_precedent_lines` 와 같다(코멘트 없는 선례는 문장 재료가 안 되므로 세지 않는다).
+    """
+    return any(str((p or {}).get("human_comment") or "").strip()
+               for p in (precedents or ()))
+
+
 def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: list,
                  *, model_version: str | None = None) -> str:
-    """L5 진입점 — [현상]/[과거사례]/[제안] 3섹션 comment 문자열.
+    """L5 진입점 — [현상]/[사례]/[제안] 3섹션 comment 문자열.
 
-    앞 두 섹션은 항상 룰·선례에서 만든다. [제안]만 LLM 이 켜져 있을 때 자연어로
-    합성하고, **꺼져 있거나 호출이 실패하면 action_ko 로 조용히 폴백**한다 — LLM 유무와
+    **세 섹션 모두 코드가 먼저 완성한다**(2026-09-02 재설계):
+      [현상] 발화 signature 전부의 phenomenon_ko
+      [사례]  회수된 선례 전부의 코멘트 원문
+      [제안] 발화 signature 전부의 action_ko
+    LLM 이 켜져 있고 **선례가 1건 이상**일 때만 호출해, 돌려받은 두 블록으로 [사례]/[제안]을
+    각각 교체한다. 블록이 없거나 호출이 실패하면 코드 문장이 그대로 남는다 — LLM 유무와
     무관하게 코멘트는 항상 나와야 하므로 예외를 위로 던지지 않는다.
     """
     phenomenon = _phenomenon_text(verdict, sig_result, case_ctx)
     past_case = _past_case_text(precedents)
-    action_ko = _action_ko_for(verdict, case_ctx, sig_result)
-    suggestion = action_ko
-    if llm_client.is_enabled():
+    actions = _action_lines(verdict, case_ctx, sig_result)
+    suggestion = actions
+    if llm_client.is_enabled() and has_precedent_comments(precedents):
         try:
-            prompt = _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon, past_case, action_ko)
+            prompt = _build_prompt(case_ctx, verdict, sig_result, precedents,
+                                   phenomenon, past_case, actions)
             llm_out = (llm_client.complete(prompt, model_version=model_version) or "").strip()
-            suggestion = llm_out or action_ko
+            cases, sugg = parse_llm_blocks(llm_out)
+            # 블록이 안 온 쪽은 **코드 문장을 유지**한다 — 빈 섹션을 만들면 화면에서
+            # "사례가 사라진" 것으로 보인다.
+            past_case = cases or past_case
+            suggestion = sugg or actions
         except Exception:
-            suggestion = action_ko
-            
-    return f"[현상] {phenomenon}\n[과거사례] {past_case} \n [제안] {suggestion}"
+            suggestion = actions
+
+    return f"{SEC_PHEN} {phenomenon}\n{SEC_CASE} {past_case} \n {SEC_SUGG} {suggestion}"
 
 
 

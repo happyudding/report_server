@@ -1090,6 +1090,32 @@ def web_report_ai_prompts(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/ai_comment/precedents")
+def web_report_ai_precedents(session_id):
+    """AI Comment 셀의 「📋 사례 N건 상세」 목록 (docs/23) — 조회 전용.
+
+    프롬프트 라우트와 달리 **Honey 전용 가드를 걸지 않는다**: 사례 목록은 세션을 볼 수
+    있으면 누구나 보는 화면 요소다(`_require_web_report_session` 안의 `_private_guard` 가
+    비공개 세션은 이미 막는다). 평가 캐시가 없으면 'ai' 잡 예약 후 202 — 조회가 콜드
+    빌드를 유발하지 않는다.
+    """
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.get_ai_comment_precedents(
+            session_id, request.args.get("key") or "",
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report ai precedents failed for session %s", session_id)
+        abort(500, "ai precedents failed")
+    if result.get("pending"):
+        return jsonify(result), 202
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/ai_comment/suggestions")
 def web_report_ai_suggestions(session_id):
     """클라가 생성한 [제안] suggestion push (docs/23) — Honey 전용(X-Honey-Agent).

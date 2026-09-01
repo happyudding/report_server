@@ -242,6 +242,9 @@ def session_suggestions(session_id: str) -> dict:
         raw = str(row.get("raw") or "")
         items.append({"item": item, "sha": sha,
                       "suggestion": str(row.get("suggestion") or ""),
+                      # cases = LLM 이 요약한 [사례] 블록(2026-09-02 두 블록 계약).
+                      # 비어 있으면 모델이 그 블록을 안 냈거나 필터가 걷어낸 것이다.
+                      "cases": str(row.get("cases") or ""),
                       # raw 는 sanitize 결과와 다를 때만 저장된다 — 있으면 "서버가 뭔가
                       # 걷어냈다"는 신호 그 자체다(형식 이탈 탐지).
                       "raw": raw, "sanitized": bool(raw),
@@ -284,11 +287,16 @@ def session_prompts(session_id: str) -> dict:
     prompts = result.get("prompts") or {}
     if not prompts:
         return {"items": [],
-                "note": "이 세션에서는 프롬프트가 생성되지 않았습니다 "
-                        "(발화 case 가 없거나 코멘트 형식이 달라 조립에 실패)."}
+                "note": "이 세션에서는 프롬프트가 생성되지 않았습니다 — 발화 case 가 없거나, "
+                        "코멘트 형식이 달라 조립에 실패했거나, **과거 사례가 0건**입니다. "
+                        "사례가 없는 item 은 LLM 을 거치지 않고 룰 조치(action_ko)를 "
+                        "그대로 씁니다(2026-09-02)."}
+    # `precedents` = 그 프롬프트에 실린 사례 건수. 0건이면 애초에 프롬프트가 안 만들어지므로
+    # 여기 보이는 값은 모두 1 이상이어야 한다 — 0 이 보이면 게이트가 깨진 것이다.
     items = [{"item": str(k), "sha": str(v.get("sha") or ""),
               "prompt": str(v.get("prompt") or ""),
-              "chars": len(str(v.get("prompt") or ""))}
+              "chars": len(str(v.get("prompt") or "")),
+              "precedents": int(v.get("precedents") or 0)}
              for k, v in sorted(prompts.items()) if isinstance(v, dict)]
     return {"items": items, "note": "",
             "session": {"session_id": session_id,

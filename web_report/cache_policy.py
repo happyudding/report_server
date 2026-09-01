@@ -423,6 +423,11 @@ def _eval_rules_suffix() -> tuple:
     rules_rev(/pe/eval 저장 카운터)가 감지 못 하므로 여기서 갈아야 ai 옵션 세션의
     payload(Signature 셀 포함)·분리 캐시가 함께 재평가된다. 되돌리지 않는 영구 표식이며,
     전체 item 범위(env 0)는 모집단이 원래 전부라 붙지 않는다(비-AI 세션 키는 바이트 불변).
+    "aiprec" (2026-09-02): report payload 에 `ai_precedents`(행별 사례 건수) 키가 생기고
+    코멘트 3섹션이 [현상]/[사례]/[제안] 전량 형태로 바뀐 표식 — **payload 구조 변경**이라
+    전역 REPORT_SCHEMA_VERSION 이 정석이지만 그건 전 세션 콜드 폭풍이다(규칙 14).
+    이 꼬리표는 ai 옵션 세션의 report_key 에만 붙으므로 대상만 정확히 갈아낸다.
+    "evalcpk" 와 같은 영구 표식이다(되돌리지 않는다).
     """
     from .eval_debug import rules_rev
     parts = ()
@@ -432,7 +437,7 @@ def _eval_rules_suffix() -> tuple:
     from .ai_comment import fail_only_enabled
     if fail_only_enabled():
         parts += ("evalfail", "evalcpk")
-    return parts
+    return parts + ("aiprec",)
 
 
 def _eval_sensitivity_suffix(opts_raw: str) -> tuple:
@@ -512,7 +517,11 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   한정 ③ [발화 signature 전체] 헤더에 발화 건수 표기. ②③ 은 코드이고 ① 도 코드 배포로
 #   처음 들어가는 기본 지시라 rules_rev 가 감지하지 못한다 — v5·v6·v7 과 같은 이유로
 #   여기만 올린다(전역 bump 금지).
-AI_COMMENT_SCHEMA_VERSION = 8
+# v9 (2026-09-02): 반환 dict 에 `precedents`/`precedent_counts` 키 추가 + 프롬프트가
+#   **두 블록 계약**([사례] 요약 / [제안] 통합)으로 바뀌고 선례 0건 item 은 프롬프트를
+#   만들지 않는다. 구조 변경이라 규약 그대로다. payload 쪽 변화(ai_precedents 키·코멘트
+#   3섹션 전량화)는 `_eval_rules_suffix` 의 "aiprec" 표식이 담당한다 — 전역 bump 금지.
+AI_COMMENT_SCHEMA_VERSION = 9
 
 
 def _ai_meta_digest(session) -> str:

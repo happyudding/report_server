@@ -120,8 +120,9 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
 # 반환 계약(ai_comment._EMPTY_RESULT 와 동일 키). 손상/구버전 파일이 KeyError 로 빌드를
 # 죽이지 않게 키가 모자라면 미스로 취급한다.
 # prompts (2026-08-28, aicmt v4): 클라 LLM 대행 프롬프트 — docs/23.
+# precedents/precedent_counts (2026-09-02, aicmt v9): 사례 상세·행별 건수 — docs/23.
 _AI_RESULT_KEYS = ("comments", "etc_auto_items", "row_signatures",
-                   "signature_options", "prompts")
+                   "signature_options", "prompts", "precedents", "precedent_counts")
 
 
 def _ai_comment_cached(session, session_id: str, tables, manifest, *,
@@ -425,6 +426,32 @@ def get_ai_comment_prompts(session_id: str, *, report_db,
     return {"items": items}
 
 
+def get_ai_comment_precedents(session_id: str, row_key: str, *, report_db,
+                              upload_root: Path) -> dict:
+    """AI Comment 셀의 「📋 사례 N건 상세」 목록 — {"items":[…]} / {"pending":True}.
+
+    **조회 전용**이라 `_ai_suggest_wanted`(claude 대행 옵트인) 게이트를 걸지 않는다 —
+    사례는 ai_comment 옵션 세션이면 모두 있고, 보는 것은 뷰어 권한이면 된다.
+    캐시 미스면 **평가하지 않고**(allow_build=False) 'ai' 잡을 예약한 뒤 pending —
+    관리자·사용자 조회가 콜드 빌드를 유발하면 안 된다(get_ai_comment_prompts 와 같은 규약).
+    row_key 매칭은 코멘트 fan-out 과 같은 `endswith("|"+item)` 이다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    result, _how = _ai_comment_cached(session, session_id, None, None,
+                                      report_db=report_db, upload_root=upload_root,
+                                      allow_build=False)
+    if result is None:
+        compute.request_build(session_id, str(upload_root), "ai")
+        return {"pending": True}
+    key = str(row_key or "").strip()
+    for item, rows in (result.get("precedents") or {}).items():
+        if item and key.endswith("|" + str(item)):
+            return {"items": list(rows or []), "item": str(item)}
+    return {"items": []}
+
+
 def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path,
                          client_ip: str = "", user_agent: str = "",
                          client_user: str = "") -> dict | None:
@@ -459,15 +486,21 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
         key = str(row.get("key") or "").strip()
         sha = str(row.get("sha") or "").strip()
         raw = row.get("suggestion")
-        text = ai_prompt.sanitize_suggestion(raw)
+        # 두 블록 계약(2026-09-02) — 클라는 LLM 원문을 그대로 보내고, 여기서 [사례]/[제안]
+        # 으로 가른다. 블록 토큰이 없으면 전체가 [제안](종전 단일 출력 하위호환).
+        # ⚠ 분리를 sanitize **앞**에 둔다 — sanitize 가 섹션 토큰을 지우므로 순서를 바꾸면
+        # 블록 경계가 사라져 사례 요약이 통째로 [제안] 에 들어간다.
+        cases_raw, sugg_raw = ai_prompt.parse_llm_blocks(raw)
+        text = ai_prompt.sanitize_suggestion(sugg_raw)
+        cases = ai_prompt.sanitize_suggestion(cases_raw)
         if not key or not re.fullmatch(r"[0-9a-f]{12}", sha):
             skips["badsha"] += 1
             continue
-        if not text:
+        if not text and not cases:
             # 모델이 빈 답/형식만 낸 경우 — sanitize 가 전부 걷어냈다는 뜻이다.
             skips["empty"] += 1
             continue
-        cleaned[key] = {"sha": sha, "suggestion": text,
+        cleaned[key] = {"sha": sha, "suggestion": text, "cases": cases,
                         "raw": str(raw or "")}
     if not cleaned:
         return {"accepted": 0, "skipped": sum(skips.values()), "skips": skips}
@@ -503,11 +536,14 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
             continue
         if deny:
             # 사례를 줬는데도 "적용할 사례 없음" 이라 답한 줄만 걷어낸다. 남는 줄이 있으면
-            # 그것만 저장하고, 전부 걸리면 저장하지 않는다(= 룰 문장 폴백).
+            # 그것만 저장하고, 두 블록이 **다** 비면 저장하지 않는다(= 룰 문장 폴백).
             # raw 는 원문 그대로라 관리자 검수에서 "서버가 걷어낸 것"을 볼 수 있다.
+            has_prec = bool(meta.get("precedents"))
             row["suggestion"] = ai_prompt.strip_denied_lines(
-                row["suggestion"], deny, bool(meta.get("precedents")))
-            if not row["suggestion"]:
+                row["suggestion"], deny, has_prec)
+            row["cases"] = ai_prompt.strip_denied_lines(row.get("cases") or "",
+                                                        deny, has_prec)
+            if not row["suggestion"] and not row["cases"]:
                 skips["denied"] += 1
                 continue
         accepted[key] = row
@@ -825,6 +861,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             etc_auto_items = None
                             ai_signatures = None
                             signature_options = None
+                            ai_precedents = None
                             ai_how = None
                             ai_pending = False
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
@@ -863,6 +900,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # Signature 컬럼 — 엔진 발화 제안 + dropdown 선택지
                                 ai_signatures = ai_result["row_signatures"]
                                 signature_options = ai_result["signature_options"]
+                                # 셀 아래 「📋 사례 N건 상세」 링크의 건수 (상세 목록은
+                                # payload 가 아니라 별도 라우트로 지연 조회한다).
+                                # pending/sig 단계 dict 에는 키가 없다 — 링크도 없다.
+                                ai_precedents = ai_result.get("precedent_counts")
                             # Compare 계산도 분리 캐시 — AI 와 같은 이유(2026-08-19).
                             # 사용자 대기 경로(ai_inline=False)는 히트만 쓰고 미스면
                             # 백그라운드 'compare' 잡에 미룬다.
@@ -901,6 +942,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 etc_auto_items=etc_auto_items,
                                 ai_signatures=ai_signatures,
                                 signature_options=signature_options,
+                                ai_precedents=ai_precedents,
                                 # ENGR 확정 signature — 편집 상태(세션 편집 DB)가 진실.
                                 issue_signatures=edit_state["issue_signatures"],
                                 gross_die=gross_die,

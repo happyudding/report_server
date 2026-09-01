@@ -55,8 +55,18 @@ _FAIL_ONLY = (os.getenv("WEB_REPORT_EVAL_FAIL_ONLY", "1") or "1").strip().lower(
 # 평가 스킵/실패 시 반환 형태 — 키 구성은 정상 반환과 동일해야 한다(호출부 분기 없음).
 # 키를 늘릴 때 여기도 같이 늘려야 예외 폴백에서 KeyError 로 빌드가 죽지 않는다.
 # prompts (2026-08-28): 클라 LLM 대행용 {item_raw: {"prompt","sha"}} — docs/23.
+# precedents / precedent_counts (2026-09-02): 사례 상세 팝오버(라우트 조회)와 셀 아래
+# 「📋 사례 N건 상세」 링크(payload) 의 재료 — docs/23.
 _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
-                 "signature_options": [], "prompts": {}}
+                 "signature_options": [], "prompts": {},
+                 "precedents": {}, "precedent_counts": {}}
+
+# 사례 팝오버에 실을 선례 필드 — 엔진 present._precedent_result 계약의 부분집합.
+# 전량(metrics/features 전체)을 싣지 않는 이유: 화면이 읽는 것만 남겨 캐시 파일과 응답을
+# 가볍게 유지한다(선례 5건 × 세션 수백 item).
+_PREC_VIEW_KEYS = ("product_name", "lot_id", "item_canonical", "unit",
+                   "status", "signature", "similarity", "comment")
+_PREC_VIEW_METRICS = ("cpk", "yield", "mean", "stdev", "fail_count", "total_count")
 
 # ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값.
 # 2026-08-12 부터 **엔진도 같은 id 로 자동 발화한다** — fail 인데 어떤 룰도 안 뜨면
@@ -404,6 +414,51 @@ def _to_row_keys(cases_by_item, fail_bins=None, with_comments: bool = True):
             "row_signatures": sigs, "signature_options": signature_catalog()}
 
 
+def _precedent_views(best: dict) -> dict:
+    """{item_raw: [사례 dict…]} — 사례 상세 팝오버가 읽는 화면용 목록.
+
+    재료는 엔진이 case 에 실어 준 `precedents[]`(present._precedent_result 계약) 그대로다.
+    **코멘트가 없는 선례는 뺀다** — 프롬프트 재료 기준(`ai_prompt._precedent_count`)과 같아야
+    화면의 "N건" 과 LLM 이 받은 사례 수가 어긋나지 않는다.
+    """
+    out = {}
+    for item, case in (best or {}).items():
+        rows = []
+        for p in case.get("precedents") or []:
+            comment = str((p or {}).get("comment") or "").strip()
+            if not comment:
+                continue
+            row = {k: p.get(k) for k in _PREC_VIEW_KEYS if p.get(k) is not None}
+            row["comment"] = comment
+            metrics = {k: (p.get("metrics") or {}).get(k)
+                       for k in _PREC_VIEW_METRICS
+                       if (p.get("metrics") or {}).get(k) is not None}
+            if metrics:
+                row["metrics"] = metrics
+            rows.append(row)
+        if rows:
+            out[str(item)] = rows
+    return out
+
+
+def _precedent_counts(prec_views: dict, comments: dict) -> dict:
+    """{row_key: 사례 건수} — payload 로 나가 셀 아래 링크를 그린다.
+
+    row_key fan-out 규약은 `_to_row_keys` 와 **같다**(Yield|bin|item / CPK|item / ETC|item).
+    이미 만들어진 comments 의 키를 재사용해 규약 사본을 늘리지 않는다(규칙 13) — 어느
+    행에 코멘트가 붙었는지가 곧 어느 행에 링크가 붙어야 하는지다.
+    """
+    if not prec_views or not comments:
+        return {}
+    out = {}
+    for key in comments:
+        for item, rows in prec_views.items():
+            if key.endswith("|" + item):
+                out[key] = len(rows)
+                break
+    return out
+
+
 def _prompt_enrich(best: dict, tables) -> dict:
     """클라 대행 프롬프트의 **현재 케이스 재료** — {item_raw: ai_prompt 의 enrich}.
 
@@ -529,8 +584,15 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
         from .ai_prompt import build_prompts
         out["prompts"] = build_prompts(best, _prompt_enrich(best, tables),
                                        _ai_prompt_rules())
+        # 사례 상세(팝오버 라우트) + 행별 건수(payload 링크). Signature 1단계 빌드는
+        # 선례 검색 자체를 안 하므로(엔진 generate_comment=False) 빈 dict 다.
+        prec_views = _precedent_views(best)
+        out["precedents"] = prec_views
+        out["precedent_counts"] = _precedent_counts(prec_views, out.get("comments") or {})
     else:
         out["prompts"] = {}
+        out["precedents"] = {}
+        out["precedent_counts"] = {}
     return out
 
 

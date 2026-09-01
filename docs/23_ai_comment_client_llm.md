@@ -91,7 +91,7 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 | [web_report/ai_comment.py](../web_report/ai_comment.py) | `build_ai_comments` 반환에 `prompts` 부착 · `_EMPTY_RESULT` 에 `"prompts": {}` (eval import 무변경 — 규칙 #8) · `_prompt_enrich` 가 **현재 케이스** 재료를 조립 (§선례 상세 보강) |
 | [eval_analyzer/eval_engine/store.py](../eval_analyzer/eval_engine/store.py) | `search_precedents` 가 선례 행에 **당시 수치**(최신 run 의 raw_metrics/features + unit/status)를 함께 싣는다 (§선례 상세 보강). DDL 무변경 — SELECT 확장뿐 |
 | [eval_analyzer/…/present.py](../eval_analyzer/eval_engine/pipeline/present.py) | `_precedent_result` — 선례 계약 dict(종전 5키 + 식별·당시 수치) |
-| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 7` (v4 prompts 키 추가 → v5 프롬프트 본문 확장 → v6 지시문 확장 → **v7 운영자 지시문(yaml) 합류 + prompts 에 `precedents` 키** — ai 옵션 세션만 재평가). `ai_comment_key` 구성 불변 |
+| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 9` (v4 prompts 키 → v5 본문 확장 → v6 지시문 확장 → v7 운영자 지시문 합류 → v8 커버리지 → **v9 두 블록 계약 + `precedents`/`precedent_counts` 키**). `ai_comment_key` 구성 불변. payload 쪽(`ai_precedents` 키)은 `_eval_rules_suffix` 의 **"aiprec"** 표식이 담당 — 전역 bump 금지 |
 | [eval_analyzer/…/rules/ai_prompt.yaml](../eval_analyzer/eval_engine/rules/ai_prompt.yaml) (신규) | 운영자 지시문 + 금지 문구 **정본**. 편집은 `/pe/eval` AI 지시문 탭 → [eval_panel/rules_io.py](../server/eval_panel/rules_io.py) `save_ai_prompt` · 로더 [_rules.py](../eval_analyzer/eval_engine/pipeline/_rules.py) `ai_prompt_doc`/`ai_prompt_instructions` · 서버 창구 [eval_debug.py](../web_report/eval_debug.py) `ai_prompt_rules` |
 | [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py) | 항목에 선택 키 `raw`(sanitize **이전** LLM 원문) — sanitize 결과와 **다를 때만** 저장, 상한 `MAX_RAW_CHARS`(4000). 관리자 검수에서 "모델이 이상한 것" vs "서버가 걷어낸 것" 구분용 |
 
@@ -215,6 +215,52 @@ primary)에 대한 얘기만 나온다.
 > 그 함수는 제거됐다. 교체 이유는 코드가 줄어서만이 아니라 **회수율** 때문이다 — 개발 DB
 > 실측에서 match-back 은 검색된 선례 4건 중 1건만 되짚었고(코멘트 문자열 동일성에 의존),
 > 엔진 경로는 4건 전부가 상세를 갖고 온다.
+
+### 재설계 — 코드가 3섹션을 완성하고 LLM 은 덧칠만 (2026-09-02, v9)
+
+**신고**: 재기동·새 세션 뒤에도 사례가 2건 있는데 `[사례]` 에 "…직접 적용할 수 잇는 사례는
+확인 되지 않았습니다" 가 나오고, 사례를 눌러도 목록이 안 나온다.
+
+**원인 3개** (전부 코드로 확인):
+1. **선례가 프롬프트에 실리지 않는 엔진 버그** — [store.search_precedents](../eval_analyzer/eval_engine/store.py)
+   `_rank` 가 대표행을 `(label_id, 코멘트유무)` 순으로 골랐다. 한 case 에는 labeler 가 다른
+   라벨이 여러 개 붙는데(`web_report`=코멘트 있음 / `web-signature`·`eval-panel`=코멘트 None,
+   보통 **나중에** 들어와 id 가 크다), label_id 가 1순위라 **빈 라벨이 코멘트 라벨을 밀어냈다.**
+   그 결과 `[사례 목록]` 이 비고 → LLM 이 "적용할 사례 없음" 을 쓰고 → 금지 문구 게이트
+   (`only_with_precedents`)마저 `precedents=0` 이라 **돌지 않았다**. `/pe/eval` L5 선례 표에는
+   행이 보이므로 사람 눈에는 "있는데 무시한다" 로만 보였다.
+   → `(코멘트유무, label_id)` 로 **순서 교체**. 회귀는
+   `test_store.test_search_precedents_comment_label_beats_newer_empty`.
+2. **금지 문구가 띄어쓰기 변형을 놓쳤다** — `확인되지\s*않` 은 "확인 **되지** 않았습니다"를
+   못 잡는다. → `strip_denied_lines` 가 각 줄을 **원문과 공백 제거본 두 벌로** 검사한다.
+3. **[사례] 는 1위 하나만 인용했고 목록 UI 가 없었다** — 2건이어도 1건처럼 보였고,
+   "사례 링크" 로 보이던 것은 4줄 클램프 `▾ 더보기` 토글이었다.
+
+**결정**(사용자): ① [사례]는 사례가 있으면 **무조건** 요약(LLM 이 적용 가능성을 판단·부정하지
+않는다) ② [제안]은 발화 signature **전부**의 조치 + 사례 통합 ③ **사례가 없으면 LLM 을 아예
+거치지 않는다**(토큰·시간 절약).
+
+**구조** — 코드가 먼저 완성하고, LLM 은 있을 때만 덧칠한다(LLM 이 무엇을 쓰든 화면이 틀리지 않는다):
+
+| 섹션 | 코드가 만드는 것(항상) | LLM 이 오면 |
+|---|---|---|
+| `[현상]` | 발화 signature **전부**의 phenomenon_ko | (안 바뀜, 화면에선 숨김) |
+| `[사례]` | 회수된 선례 **전부**의 코멘트 원문 `①(제품/lot) …` | 있는 그대로의 **요약**으로 교체 |
+| `[제안]` | 발화 signature **전부**의 action_ko | action_ko+사례 근거+현재 수치의 **통합 제안**으로 교체 |
+
+- LLM 출력은 **두 블록**(`[사례]`/`[제안]`)이고 `parse_llm_blocks` 가 갈라 `patch_cell` 이
+  각 섹션을 교체한다. 안 온 블록은 코드 문장이 그대로 남는다(빈 섹션 금지).
+  `patch_cell` 은 **멱등**이다(재빌드마다 재병합되므로 필수).
+- **선례 0건 → `build_prompt` 가 None** → 그 item 은 `prompts` 에 없고 클라 워커가 보내지
+  않는다. 관리자 프롬프트 뷰의 `사례` 열이 그 게이트의 확인 창구다.
+- 사례 **건수**는 payload `ai_precedents{row_key: n}`(텍스트 아님 — LLM 이 숫자를 못 바꾼다),
+  **상세 목록**은 `GET .../web_report/ai_comment/precedents?key=<row_key>` 로 지연 조회해
+  팝오버로 뜬다(`sig_reason.js openAicPrec` — 근거 팝업과 같은 장치 재사용).
+  payload 는 건수만 실어 무게를 늘리지 않는다.
+- **섹션 토큰이 `[현상]/[사례]/[제안]` 으로 통일**됐다(옛 `[과거사례]`/`[점검제안]` 은 읽기
+  호환). 불변 계약이라 CLAUDE.md §5 규칙 12 에 등재 — 파서 사본 4곳을 함께 고칠 것.
+- 캐시: `AI_COMMENT_SCHEMA_VERSION` v8→**v9**, payload 쪽은 `_eval_rules_suffix` 에
+  **"aiprec"** 영구 표식(ai 세션의 report_key 에만 붙는다). **전역 bump 금지**(규칙 14).
 
 계약상 중요한 점:
 - **종전 선례 5키(action/result/comment/product_name/family_product)는 이름·의미 불변**이다 —

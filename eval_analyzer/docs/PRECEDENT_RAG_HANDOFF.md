@@ -90,28 +90,25 @@ def _rag_search(case_ctx: dict, sig_result: dict) -> list: ...
 
 ---
 
-## 9. 미구현 — RAG 선례 목록 UI (2026-08-28 사용자 요청, 보류)
+## 9. 선례 목록 UI — **구현 완료** (2026-09-02)
 
-AI Comment 셀의 **[사례] 문장 끝에 클립(📎) 모양 버튼**을 달고, 누르면 RAG 가 검색한
-선례 목록을 펼쳐 보여 달라는 요청이 있었다. **아직 구현하지 않았다** — 이유는 선행
-의존이 비어 있기 때문이다:
+AI Comment 셀의 사례를 목록으로 펼쳐 보여 달라는 요청(2026-08-28)은 구현됐다. RAG 와는
+무관하게 **SQL 백엔드 그대로** 동작한다 — `_rag_search` 를 붙여도 §4 계약만 지키면
+화면은 그대로 동작한다.
 
-- `_rag_search()` 가 여전히 `NotImplementedError` 스텁이고, 기본 백엔드는 `sql` 이다.
-  현재 화면이 인용하는 선례는 SQL 검색 결과 **1건**(`recommend._past_case_text` 가
-  관련도 1위 하나만 인용)이라, "목록" 으로 펼칠 대상 자체가 payload 에 없다.
-- 목록을 화면에 주려면 `to_result` 의 `precedents`(§4 계약대로 전량 반환됨)를
-  report payload 까지 실어 보내는 배선이 추가로 필요하다. 지금은 `web_report/ai_comment.py`
-  `_cell_text` 가 **코멘트 평문 한 덩어리**만 셀에 넣고 선례 배열은 버린다.
+현재 배선:
+- 셀 `[사례]` 섹션은 **회수된 선례 전부**를 나열한다(`recommend._past_case_text` —
+  1위 하나만 인용하던 종전 동작이 "사례가 2건인데 1건처럼 보인다" 신고의 한 축이었다).
+  LLM 이 켜져 있으면 그 자리가 **요약**으로 교체된다.
+- 셀 아래 **「📋 사례 N건 상세」** 링크 — 건수는 report payload `ai_precedents{row_key:n}`
+  (텍스트가 아니라 payload 라 LLM 이 숫자를 바꿀 수 없다), 목록 본문은 클릭 시
+  `GET /pe/report/session/<sid>/web_report/ai_comment/precedents?key=<row_key>` 로 지연
+  조회해 팝오버로 뜬다(`sig_reason.js openAicPrec` — 근거 팝업 장치 재사용).
+- 재료는 `to_result` 의 `precedents[]`(§4 계약) → `ai_comment._precedent_views` 가
+  화면용 부분집합으로 추린다. `AI_COMMENT_SCHEMA_VERSION` v9, payload 무효화는
+  `_eval_rules_suffix` 의 `"aiprec"` 표식(전역 bump 금지).
 
-구현할 때 필요한 것 (순서):
-1. `_rag_search()` 구현 (§1~§6 — 이 문서의 본래 주제).
-2. `ai_comment._to_row_keys` 반환에 선례 배열을 담는 새 키 추가
-   (⚠ `cache_policy.AI_COMMENT_SCHEMA_VERSION` 을 올려야 옛 캐시가 무효화된다 —
-   **전역 `REPORT_SCHEMA_VERSION` 은 올리지 말 것**, 전 세션 콜드 폭풍이 된다).
-3. `sheets.js renderAiComment` 의 `.aic-past` 섹션 끝에 버튼 삽입 + 팝오버.
-   근거 팝업(`sig_reason.js`)이 같은 성격의 선례라 그 패턴을 재사용하면 된다.
-
-관련: 같은 날 `recommend._build_prompt` 를 고쳐 **선례 전량**(`_precedent_lines`)과
-**발화 signature 전체**(`_fired_signature_lines`)를 LLM 프롬프트에 넣도록 했다.
-LLM 이 선례 2건을 받고도 "직접 적용할 수 있는 사례는 없다" 고 스스로 버리는 출력을
-내던 문제의 대응이다(그 문장은 코드에 없는 LLM 생성문이었다).
+⚠ **선례 회수 자체가 조용히 죽던 버그가 있었다**(2026-09-02 수정): `search_precedents` 의
+대표행 정렬이 `label_id` 우선이라, 코멘트 없는 최신 라벨(`web-signature`·`eval-panel`)이
+코멘트 라벨을 밀어냈다. RAG 로 교체할 때도 **"코멘트가 있는 행이 대표"** 규칙은 유지할 것 —
+`human_comment` 가 비면 프롬프트·화면 양쪽에서 그 사례가 통째로 사라진다.

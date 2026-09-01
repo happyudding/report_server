@@ -291,21 +291,44 @@ def test_aic_parses_old_and_new_section_tokens():
     빠질 때까지 남긴다. Excel·챗봇·eval export 도 같은 평문을 소비한다.
     """
     src = (_JS / "sheets.js").read_text(encoding="utf-8")
-    assert '"과거사례": "aic-past"' in src, "파싱 키가 바뀌었습니다 (서버 문자열과 갈립니다)"
-    for tok in ("현상", "과거사례", "점검제안", "제안"):
+    assert '"과거사례": "aic-past"' in src, "옛 파싱 키가 사라졌습니다 (캐시 세션이 깨집니다)"
+    assert '"사례": "aic-past"' in src, "새 파싱 키(사례)가 없습니다 (서버 문자열과 갈립니다)"
+    for tok in ("현상", "과거사례", "사례", "점검제안", "제안"):
         assert f'"{tok}"' in src, f"AIC_SECTIONS 에 {tok} 토큰이 없습니다"
     assert "AIC_SEC_LABEL" in src, "표시 라벨 매핑(AIC_SEC_LABEL)이 사라졌습니다"
-    # 정규식 교대는 왼쪽 우선 — 옛 토큰이 신 토큰보다 앞에 와야 "[점검" 이 새지 않는다.
-    m = re.search(r"\[\(현상\|과거사례\|([^)]*)\)\\\]", src)
+    # 정규식 교대는 왼쪽 우선 — **긴 옛 토큰**이 신 토큰보다 앞에 와야 "[점검"·"[과거" 가
+    # 본문으로 새지 않는다.
+    m = re.search(r"\[\((현상\|[^)]*)\)\\\]", src)
     assert m, "섹션 정규식을 찾지 못했습니다"
-    assert m.group(1).index("점검제안") < m.group(1).index("제안"), \
+    alts = m.group(1)
+    assert alts.index("과거사례") < alts.index("사례"), \
+        "정규식에서 '과거사례' 가 '사례' 보다 뒤에 있으면 옛 코멘트에 '[과거' 가 본문으로 샙니다"
+    assert alts.index("점검제안") < alts.index("제안"), \
         "정규식에서 '점검제안' 이 '제안' 보다 뒤에 있으면 옛 코멘트에 '[점검' 이 본문으로 샙니다"
-    # 서버 원문은 새 토큰 — 옛 토큰은 캐시에만 남는다.
+    # 서버 원문은 **새 토큰**(2026-09-02, CLAUDE.md §5 규칙 12) — 옛 토큰은 캐시에만 남는다.
     rec = (_ROOT / "eval_analyzer" / "eval_engine" / "pipeline" / "recommend.py"
            ).read_text(encoding="utf-8")
-    assert "[과거사례]" in rec and "[제안]" in rec, \
-        "서버 생성 문자열이 예상과 다릅니다 — JS 파싱 키와 짝을 다시 맞추세요"
+    assert 'SEC_CASE = "[사례]"' in rec and 'SEC_SUGG = "[제안]"' in rec, \
+        "서버 생성 토큰이 예상과 다릅니다 — JS 파싱 키와 짝을 다시 맞추세요"
     print("[정적] 섹션 토큰 옛/새 동시 파싱 OK")
+
+
+def test_prec_link_static():
+    """「📋 사례 N건 상세」 배선 — 건수는 payload, 목록은 라우트(팝오버)."""
+    src = (_JS / "sheets.js").read_text(encoding="utf-8")
+    assert "aicPrecLinkHtml" in src and "aic-prec-btn" in src, \
+        "사례 목록 링크 렌더가 사라졌습니다"
+    # 건수는 **본문 텍스트가 아니라 payload** 에서 온다 — 문장에서 세면 LLM 이 요약하면서
+    # 숫자를 바꾸거나 지운 것을 그대로 믿게 된다.
+    assert "ai_precedents" in src, "payload 의 ai_precedents 를 읽지 않습니다"
+    sig = (_JS / "sig_reason.js").read_text(encoding="utf-8")
+    assert "openAicPrec" in sig and "ai_comment/precedents" in sig, \
+        "사례 팝오버가 라우트를 부르지 않습니다"
+    # 편집 모드 클릭 위임이 버튼을 먼저 흘려보내야 클램프 토글·셀 편집에 안 걸린다.
+    edit = (_JS / "edit_mode.js").read_text(encoding="utf-8")
+    assert 'closest(".aic-prec-btn")' in edit, \
+        "edit_mode.js 가 사례 버튼을 흘려보내지 않습니다 (클릭이 클램프 토글에 먹힙니다)"
+    print("[정적] 사례 목록 링크 배선 OK")
 
 
 def test_aic_clamp_affordance_and_drag():
@@ -354,6 +377,53 @@ def test_aic_clamp_affordance_and_drag():
     print("[h] [과거사례] 클램프 어포던스 + 드래그 판정 OK")
 
 
+def test_prec_link_render():
+    """(i) 사례 링크는 **payload 건수**로만 그려진다 — 0/미상이면 없다 (2026-09-02).
+
+    새 토큰([사례])과 옛 토큰([과거사례]) 셀이 **같은 화면**을 내는지도 함께 본다.
+    """
+    new_cell = ("[MAJOR] [현상] - EDGE: 현상\n[사례] ①(P1/L1) 사례 원문 \n"
+                " [제안] - EDGE: 조치")
+    harness = (
+        "<script>(function(){var out={};"
+        "var NEW=" + js_literal(new_cell) + ", OLD=" + js_literal(SAMPLE) + ";"
+        "DATA.web_report.ai_precedents={'CPK|ItemA':2};"
+        "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
+        # 건수 2 → 링크 있음, data-key 는 그 행 키
+        "var b1=box(renderAiComment(NEW,2,'CPK|ItemA'));"
+        "var btn=b1.querySelector('.aic-prec-btn');"
+        "out.hasBtn=!!btn; out.btnText=btn?btn.textContent:'';"
+        "out.btnKey=btn?btn.dataset.key:'';"
+        # 새 토큰도 [사례] 섹션(보라)으로 그려진다
+        "out.newSecs=[].map.call(b1.querySelectorAll('.aic-sec'),"
+        "  function(d){return d.className.replace('aic-sec ','');}).join(',');"
+        "out.newLabels=[].map.call(b1.querySelectorAll('.aic-tag'),"
+        "  function(d){return d.textContent;}).join(',');"
+        # 건수 0 / 미상 → 링크 없음
+        "out.noBtnZero=!box(renderAiComment(NEW,0,'CPK|ItemA')).querySelector('.aic-prec-btn');"
+        "out.noBtnUndef=!box(renderAiComment(NEW,undefined,'CPK|ItemA'))"
+        "  .querySelector('.aic-prec-btn');"
+        # 옛 토큰 셀도 같은 라벨·같은 링크
+        "var b2=box(renderAiComment(OLD,1,'CPK|ItemA'));"
+        "out.oldLabels=[].map.call(b2.querySelectorAll('.aic-tag'),"
+        "  function(d){return d.textContent;}).join(',');"
+        "out.oldHasBtn=!!b2.querySelector('.aic-prec-btn');"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "prec_link"))
+    assert r["hasBtn"], f"사례 링크가 안 그려졌습니다: {r}"
+    assert "2건" in r["btnText"], r["btnText"]
+    assert r["btnKey"] == "CPK|ItemA", r["btnKey"]
+    assert r["newSecs"] == "aic-past,aic-act", r["newSecs"]
+    # 신·구 토큰이 **같은 라벨**을 내야 옛/새 세션이 한 화면으로 보인다.
+    assert r["newLabels"] == r["oldLabels"] == "[사례],[제안]", (r["newLabels"], r["oldLabels"])
+    assert r["noBtnZero"] and r["noBtnUndef"], \
+        f"건수가 없는데 링크가 붙었습니다(눌러도 빈 목록): {r}"
+    assert r["oldHasBtn"], "옛 토큰 셀에는 링크가 안 붙습니다"
+    print("[i] 사례 링크 렌더(건수 게이트·신구 토큰 동일 화면) OK")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -363,14 +433,16 @@ def main():
     test_script_registered()
     test_aic_past_expands_on_click()
     test_aic_parses_old_and_new_section_tokens()
+    test_prec_link_static()
     if edge_path() is None:
-        print(f"[a~h] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
+        print(f"[a~i] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
         print("\n부분 통과 (정적 검사만)")
         return
     test_ai_comment_render()
     test_signature_choices()
     test_sig_reason_render()
     test_aic_clamp_affordance_and_drag()
+    test_prec_link_render()
     print("\n전부 통과")
 
 

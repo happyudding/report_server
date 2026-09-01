@@ -469,8 +469,8 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     기존 입력이 사라지는 경로를 만들어선 안 된다.** 서비스 중인 서버라 이미 운영 DB 에
     실제 입력이 쌓여 있다는 전제로 판단한다.
 
-    가장 흔한 소실 원인은 **저장 키 변경**이다. 아래 4종은 표시 문구만 바꾸고
-    **저장 값은 고정**한다(화면 라벨 ≠ 저장 키):
+    가장 흔한 소실 원인은 **저장 키 변경**이다. 아래는 표시 문구만 바꾸고
+    **저장 값(·토큰)은 고정**한다(화면 라벨 ≠ 저장 키):
     - `row_key` 접두 — `Yield|<bin>|<item>` / `CPK|<item>` / `TEMP|<item>` / `ETC|<item>`
       (+ Compare 모드 전용 `CMPDIST|<item>` / `CMPETC|<item>` — 2026-08-20 신설,
       [tabs/compare_issue.py](web_report/tabs/compare_issue.py) 소관).
@@ -479,6 +479,16 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
       [sheets.js](server/report/static/webreport/sheets.js) `issueRowKey`/`issueHideStatusKey` ·
       [eval_export.py](web_report/eval_export.py) `_parse_row_key` ·
       [chatbot/rowkey.py](server/chatbot/rowkey.py) (+ service.py 의 숨김/Status 허용 접두 2곳).
+    - **AI Comment 섹션 토큰 — `[현상]` / `[사례]` / `[제안]` 고정** (2026-09-02 사용자 결정).
+      LLM 프롬프트의 출력 계약·엔진 생성 문자열·서버 파싱·화면 라벨이 **같은 이름**을 쓴다.
+      옛 토큰 `[과거사례]`(→사례) · `[점검제안]`(→제안) 은 payload·디스크 캐시·저장된 문장·
+      Excel 에 굳어 있어 **읽기만** 계속 허용한다 — 한쪽만 알면 그 세션들은 섹션 분리가
+      통째로 풀려 한 덩어리 평문이 된다(에러가 아니라 "색이 사라짐"으로 보인다).
+      **파서 사본이 4곳**: [recommend.py](eval_analyzer/eval_engine/pipeline/recommend.py)
+      `SEC_*`(+[cross_source.py](eval_analyzer/eval_engine/cross_source.py) 가 그 상수 사용) ·
+      [ai_prompt.py](web_report/ai_prompt.py) `SECTION_RE`/`SUGGEST_TAIL_RE`/`CASE_SEC_RE` ·
+      [sheets.js](server/report/static/webreport/sheets.js) `AIC_SECTIONS`+분리 정규식 ·
+      테스트 픽스처. 교대는 왼쪽 우선이라 **긴 옛 토큰을 신 토큰보다 앞**에 둔다.
     - comment 컬럼명 — `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 화면·Excel 헤더의
       "개발팀 Comment" 는 `COLUMN_DISPLAY_ALIAS` 표기일 뿐 **저장 키는 `"개발 comment"`**.
     - 행 숨김/Status 키 — Yield 는 **bin 단위** `Yield|<bin>`(대표행+상세행 일괄),
@@ -672,6 +682,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | **AI Comment [제안] 지시문·금지 문구 관리** ("사례를 버리는 문장을 쓰지 마라" 류 조건) | 정본 yaml [eval_analyzer/…/rules/ai_prompt.yaml](eval_analyzer/eval_engine/rules/ai_prompt.yaml) · 화면 `/pe/eval` **AI 지시문** 탭([rules_io.save_ai_prompt](server/eval_panel/rules_io.py)) · 로더 [_rules.ai_prompt_instructions](eval_analyzer/eval_engine/pipeline/_rules.py) · 서버 창구 [eval_debug.ai_prompt_rules](web_report/eval_debug.py) · 적용 [ai_prompt.build_prompt(rules=)](web_report/ai_prompt.py)/[strip_denied_lines](web_report/ai_prompt.py) → [docs/23](docs/23_ai_comment_client_llm.md). ⚠ **지시문**은 프롬프트에 들어가 sha 를 갈아 저장된 [제안]을 폐기(재대행), **금지 문구**는 push 수용 때만 쓰여 sha 불변 |
+| **AI Comment 3섹션을 코드가 완성하고 LLM 은 덧칠만** ([현상] 전부 / [사례] 전부 / [제안] 전부) | 뼈대 [recommend.make_comment](eval_analyzer/eval_engine/pipeline/recommend.py)(`_phenomenon_text`·`_past_case_text`·`_action_lines` — 셋 다 **발화·회수 전량**) · LLM 두 블록 파싱 `parse_llm_blocks`(+[ai_prompt.py](web_report/ai_prompt.py) 사본) · 섹션 교체 [ai_prompt.patch_cell](web_report/ai_prompt.py) · **사례 0건이면 LLM 미호출**(`has_precedent_comments`/`build_prompt`→None) · 사례 목록 팝오버 `GET .../web_report/ai_comment/precedents`([service.get_ai_comment_precedents](web_report/service.py)+[sig_reason.js](server/report/static/webreport/sig_reason.js)) · 건수는 payload `ai_precedents` → [docs/23](docs/23_ai_comment_client_llm.md) |
 | eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
 | **"룰을 고쳤는데 나아졌나" — eval 정확도·커버리지 추이** | 집계 [server/database/eval_stats.py](server/database/eval_stats.py)(cleanup 24h 편승, 덮어쓰기 UPSERT) · 저장 `report_eval_daily` · 화면 `/pe/eval` 채점 탭 추이 카드 · 라우트 `GET /pe/eval/api/eval/trend` → [docs/17](docs/17_eval_learning_loop.md) |
 | **Input File 정보 (세션 상세 ℹ) / STDF 메타 요청 스펙** | [docs/21](docs/21_input_file_info.md) — 서버 [service.py](web_report/service.py) `input_info`(manifest 만 읽음) · 화면 [input_info.js](server/report/static/webreport/input_info.js) · 클라 수집 [source_name_dialog.py](client/honey_ui/source_name_dialog.py) `source_file_info` |
