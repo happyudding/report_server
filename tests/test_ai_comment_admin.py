@@ -226,11 +226,83 @@ def test_html_wiring():
     # 로더가 $() 로 만지는 id 가 마크업에 전부 있어야 한다 (eval_panel 테스트와 같은 취지)
     for dom_id in ("aicTiles", "aicDays", "btnAicRefresh", "aicFailCard", "aicFailKinds",
                    "aicFailBody", "aicCovNote", "aicCovBody", "aicSugNote", "aicSugBody",
-                   "aicPushBody"):
+                   "aicPushBody",
+                   # 디버깅 3종 (2026-09-01) — 타임라인 · 프롬프트 본문
+                   "aicTlNote", "aicTlBody", "aicPromptNote", "aicPromptBody",
+                   "btnAicPrompts"):
         assert f'id="{dom_id}"' in html, f"DOM id 누락: {dom_id}"
+    for fn in ("loadAicTimeline", "loadAicPrompts", "aicSkipLabel"):
+        assert f"function {fn}" in html, f"함수 누락: {fn}"
     # 감사 화면 필터·라벨
     assert '<option value="ai_suggest">' in html and 'ai_suggest: "AI 제안 반영"' in html
     print("  (h) 화면 정합(탭·패널·로더·DOM id·감사 라벨) OK")
+
+
+def test_debug_views():
+    """디버깅 3종 — 프롬프트 본문 조회 / 타임라인 / skip 사유 파싱 (2026-09-01).
+
+    이 셋이 없으면 "[제안] 이 이상하다" 는 신고에서 프롬프트·모델·서버 중 어디가
+    문제인지 가를 수 없다. 각각의 **빈 상태 안내**까지 검증한다 — 빈 화면은 원인을
+    말해 주지 않으면 디버깅 도구로서 쓸모가 없다.
+    """
+    from web_report import service as web_report_service
+
+    # ① 프롬프트: 대상 아님 / 캐시 없음 / prompts 비어 있음 / 정상 4분기
+    _session("s-po", "ak-po", DEFAULT_OPTS)
+    out = A.session_prompts("s-po")
+    assert out["items"] == [] and "대상 세션이 아닙니다" in out["note"], out
+
+    _session("s-p1", "ak-p1", AI_OPTS)
+    real_cached = web_report_service._ai_comment_cached
+    try:
+        web_report_service._ai_comment_cached = lambda *a, **k: (None, "miss")
+        out = A.session_prompts("s-p1")
+        assert out["items"] == [] and "평가 캐시가 없습니다" in out["note"], out
+
+        web_report_service._ai_comment_cached = lambda *a, **k: ({"prompts": {}}, "hit")
+        out = A.session_prompts("s-p1")
+        assert out["items"] == [] and "생성되지 않았습니다" in out["note"], out
+
+        web_report_service._ai_comment_cached = lambda *a, **k: (
+            {"prompts": {"ITEM_B": {"sha": "b" * 12, "prompt": "본문B"},
+                         "ITEM_A": {"sha": "a" * 12, "prompt": "본문A 한글"}}}, "hit")
+        out = A.session_prompts("s-p1")
+        assert [r["item"] for r in out["items"]] == ["ITEM_A", "ITEM_B"], out  # 정렬 고정
+        assert out["items"][0]["prompt"] == "본문A 한글"
+        assert out["items"][0]["chars"] == len("본문A 한글")
+    finally:
+        web_report_service._ai_comment_cached = real_cached
+
+    # ② 타임라인: 업로드만 있는 세션 → 이벤트 1건, target=True
+    out = A.session_timeline("s-p1")
+    assert out["target"] is True
+    assert [e["kind"] for e in out["events"]] == ["upload"], out
+    # push 를 넣으면 시간순으로 뒤에 붙는다
+    _audit("s-p1", changed="ai_suggest(accepted=2,skipped=1) [sha_mismatch=1]")
+    out = A.session_timeline("s-p1")
+    assert [e["kind"] for e in out["events"]] == ["upload", "push"], out
+    ts = [e["ts"] or 0 for e in out["events"]]
+    assert ts == sorted(ts), ts
+    push_ev = out["events"][-1]
+    assert push_ev["ok"] is True and "sha_mismatch=1" in push_ev["detail"]
+    # 대상 아닌 세션도 타임라인은 뜬다 — "왜 아무 일도 안 났나"의 답이 target 이다
+    assert A.session_timeline("s-po")["target"] is False
+    try:
+        A.session_timeline("no-such-session")
+        raise AssertionError("없는 세션은 KeyError 여야 한다")
+    except KeyError:
+        pass
+
+    # ③ skip 사유 파싱 — 확장 형식은 읽고, 옛 형식(내역 없음)도 깨지지 않는다
+    rows = {r["session_id"]: r for r in A._push(30)["rows"]}
+    assert rows["s-p1"]["skip_detail"] == "sha_mismatch=1", rows["s-p1"]
+    assert rows["s-p1"]["accepted"] == 2 and rows["s-p1"]["skipped"] == 1
+    _session("s-p2", "ak-p2", AI_OPTS)
+    _audit("s-p2", changed="ai_suggest(accepted=1,skipped=0)")
+    rows = {r["session_id"]: r for r in A._push(30)["rows"]}
+    assert rows["s-p2"]["skip_detail"] == "", rows["s-p2"]
+    assert rows["s-p2"]["accepted"] == 1
+    print("  (i) 디버깅 3종(프롬프트 본문·타임라인·skip 사유) OK")
 
 
 def main():
@@ -241,6 +313,7 @@ def main():
     test_session_suggestions()
     test_overview_isolation()
     test_routes()
+    test_debug_views()
     test_html_wiring()
     print("test_ai_comment_admin: 전부 통과")
     shutil.rmtree(_TMP, ignore_errors=True)

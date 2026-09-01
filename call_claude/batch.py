@@ -19,6 +19,29 @@ import secrets
 
 _FENCE_RE = re.compile(r"^\s*```[a-zA-Z0-9_-]*\s*\n|\n\s*```\s*$")
 
+# 배치 응답의 JSON Schema — CLI 가 `--json-schema` 를 지원할 때만 부착한다(runner 게이팅).
+# 목적은 파싱 강화가 아니라 **형식 이탈 제거**다: 관대 파싱은 서두("네, 알겠습니다")나
+# 코드펜스를 걷어낼 수 있지만, 모델이 배열 대신 객체를 내거나 id 를 빠뜨리면 그 건은
+# 통째로 None 이 된다. 스키마를 주면 그 부류가 애초에 안 생긴다.
+# 지원하지 않는 버전에서는 이 상수가 쓰이지 않고 현행 관대 파싱만 동작한다.
+BATCH_JSON_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer"},
+            "text": {"type": "string"},
+        },
+        "required": ["id", "text"],
+        "additionalProperties": False,
+    },
+}
+
+
+def batch_schema_json() -> str:
+    """`--json-schema` 인자로 넘길 문자열 — 키 순서 고정(결정성)."""
+    return json.dumps(BATCH_JSON_SCHEMA, ensure_ascii=False, sort_keys=True)
+
 
 def build_meta_prompt(prompts, nonce=None):
     """프롬프트 목록 → (메타 프롬프트, nonce).

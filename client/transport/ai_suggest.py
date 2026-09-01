@@ -51,6 +51,56 @@ _HARD_DEADLINE_SEC = 20 * 60  # 워커 전체 벽시계 상한
 _PUSH_RETRY_WAIT_SEC = 10    # POST 202(aicmt 축출 레이스) 재시도 대기
 _CLI_LOG_KEEP = 6            # 실패 보고에 실을 call_claude 로그 줄 수 상한
 
+# HTTP 상태 → 사용자가 읽고 **다음에 뭘 할지 알 수 있는** 한 줄 (2026-09-01).
+# 종전에는 워커 실패가 전부 조용해서 사용자는 "AI 문장이 왜 안 왔는지" 를 알 방법이
+# 없었다(화면엔 룰 문장이 정상처럼 나온다). 숫자만 보여 주는 것도 같은 문제라 —
+# 404 를 보고 무엇을 해야 하는지 아는 사용자는 없다 — 조치를 함께 적는다.
+_HTTP_HINT = {
+    401: "서버 인증이 필요합니다 (Honey 를 다시 실행해 보세요)",
+    403: "이 세션을 편집할 권한이 없습니다 (업로더 본인 PC 인지 확인)",
+    404: "서버가 이 기능을 모릅니다 (서버 버전이 낮거나 AI Model=claude 세션이 아님)",
+    413: "보낼 내용이 너무 큽니다",
+    423: "세션이 잠겨 있습니다 (다른 작업이 끝난 뒤 재시도)",
+    429: "요청이 너무 많습니다 (잠시 후 자동 재시도)",
+    500: "서버 내부 오류입니다 (관리자에게 event_id 를 알려 주세요)",
+    502: "서버에 연결할 수 없습니다 (네트워크·프록시 확인)",
+    503: "서버가 바쁩니다 (잠시 후 재시도)",
+    504: "서버 응답이 지연됩니다 (네트워크 확인)",
+}
+
+
+def http_hint(status) -> str:
+    """HTTP 상태 코드 → 사용자용 안내 문장. 모르는 코드는 코드만 돌려준다."""
+    try:
+        code = int(status or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not code:
+        return "서버에 요청을 보내지 못했습니다 (네트워크·주소 확인)"
+    hint = _HTTP_HINT.get(code)
+    if hint:
+        return f"HTTP {code} — {hint}"
+    if 500 <= code < 600:
+        return f"HTTP {code} — 서버 오류입니다 (잠시 후 재시도)"
+    if 400 <= code < 500:
+        return f"HTTP {code} — 요청이 거부됐습니다"
+    return f"HTTP {code}"
+
+
+def _notify(on_progress, text: str) -> None:
+    """진행/실패 한 줄을 호출부(Honey UI 실행 로그)로 — 콜백 실패는 무시한다.
+
+    워커는 UI 를 절대 만지지 않는다는 규약을 유지하려고, 문자열만 넘기고 위젯 접근은
+    호출부에 맡긴다(honey_main 이 시그널로 UI 스레드에 넘긴다).
+    """
+    _log.info("%s", text)
+    if on_progress is None:
+        return
+    try:
+        on_progress(str(text))
+    except Exception:  # noqa: BLE001 — 알림 실패가 본 흐름을 막지 않는다
+        pass
+
 # 기본 모델 — 별칭('sonnet')이 아니라 **정식명**을 쓴다. 별칭은 "최신 sonnet" 을 가리켜
 # 새 버전이 나오면 말없이 바뀌는데, 이 값은 프롬프트 sha 와 무관해 캐시로도 안 걸린다
 # (= 같은 세션이 어제와 다른 모델로 생성될 수 있다). 사용자가 바꾸려면 honey.env
@@ -164,16 +214,18 @@ def _headers():
     return headers
 
 
-def _fetch_prompts(base: str, session_id: str, headers: dict):
-    """prompts 폴링 — (items|None, reason). 202 는 재시도, 404/403 은 3회 후 포기.
+def _fetch_prompts(base: str, session_id: str, headers: dict, on_progress=None):
+    """prompts 폴링 — (items|None, reason, status). 202 는 재시도, 404/403 은 3회 후 포기.
 
     reason 은 실패 사유 문자열("denied"/"timeout"/"badbody")이며 성공 시 "". 관리자
     모니터링(진단 사건)이 "왜 못 받았나"를 구분하려면 None 하나로는 부족하다.
+    status 는 마지막 HTTP 상태 — 사용자 안내(`http_hint`)에 쓴다.
     """
     url = f"{base}/pe/report/session/{session_id}/web_report/ai_comment/prompts"
     deadline = time.monotonic() + _POLL_MAX_SEC
     denied = 0
     last_status = 0
+    waited_notified = False
     while time.monotonic() < deadline:
         try:
             resp = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT_SEC)
@@ -186,25 +238,31 @@ def _fetch_prompts(base: str, session_id: str, headers: dict):
             try:
                 data = resp.json()
             except ValueError:
-                return None, "badbody"
+                return None, "badbody", last_status
             items = data.get("items")
-            return (items, "") if isinstance(items, list) else (None, "badbody")
+            if isinstance(items, list):
+                return items, "", last_status
+            return None, "badbody", last_status
         if resp.status_code == 202:
+            # 서버가 아직 평가 중 — 길어지면 한 번만 알린다(반복 알림은 로그를 덮는다).
+            if not waited_notified:
+                waited_notified = True
+                _notify(on_progress, "AI Comment: 서버 평가를 기다리는 중…")
             time.sleep(_POLL_INTERVAL_SEC)
             continue
         if resp.status_code in (403, 404):
-            # 구 서버(라우트 없음)/대상 아님/권한 문제 — 몇 번 더 확인 후 조용히 포기.
+            # 구 서버(라우트 없음)/대상 아님/권한 문제 — 몇 번 더 확인 후 포기.
             denied += 1
             if denied >= 3:
                 _log.info("ai_suggest 포기: HTTP %s (구 서버 또는 대상 아님)",
                           resp.status_code)
-                return None, "denied"
+                return None, "denied", last_status
             time.sleep(_POLL_INTERVAL_SEC)
             continue
         # 5xx 등 — 재시도
         time.sleep(_POLL_INTERVAL_SEC)
     _log.info("ai_suggest prompts 대기 시간 초과 — 포기 (session=%s)", session_id)
-    return None, f"timeout(last={last_status})"
+    return None, f"timeout(last={last_status})", last_status
 
 
 def _post_suggestions(base: str, session_id: str, headers: dict, items: list):
@@ -241,12 +299,14 @@ def _post_suggestions(base: str, session_id: str, headers: dict, items: list):
     return False, last_status
 
 
-def _worker(session_id: str, base_url: str) -> None:
+def _worker(session_id: str, base_url: str, on_progress=None) -> None:
     """백그라운드 본체 — 어떤 실패도 조용히 끝난다(폴백 무해 계약).
 
-    단 **실패 사유는 서버 진단 사건으로 보고한다**(`_report_failure`). 로컬 로그만
-    남기면 관리자는 "왜 AI Comment 가 룰 문장인지" 를 영영 알 수 없다 — 화면에 에러가
-    아니라 그냥 폴백 문장이 나오기 때문에 발견 자체가 늦는다.
+    단 **사유는 두 곳에 남긴다**:
+    - 서버 진단 사건(`_report_failure`) — 관리자가 "왜 룰 문장인지" 를 볼 근거.
+    - `on_progress` 콜백 — **사용자가 보는 실행 로그** 한 줄(2026-09-01). 종전에는
+      워커가 전부 조용해서, 화면에 룰 문장이 정상처럼 나오는 탓에 사용자는 실패를
+      알아챌 방법이 아예 없었다. 콜백은 문자열만 넘긴다(위젯 접근 금지 규약 유지).
     """
     started = time.monotonic()
     cli_log: list = []          # call_claude 가 남긴 마지막 줄들 — 실패 보고의 핵심 단서
@@ -256,7 +316,9 @@ def _worker(session_id: str, base_url: str) -> None:
             return
         call_claude, bin_path = _resolve_cli()
         if not bin_path:
-            _log.info("ai_suggest 포기: claude CLI 없음 (HONEY_CLAUDE_BIN/PATH 확인)")
+            _notify(on_progress,
+                    "AI Comment 대행 실패: claude 실행 파일을 찾지 못했습니다 "
+                    "(PATH 또는 honey.env 의 HONEY_CLAUDE_BIN 확인)")
             _report_failure("ai_suggest_no_cli",
                             "claude CLI 를 찾지 못했습니다 (HONEY_CLAUDE_BIN/PATH 확인)",
                             session_id,
@@ -264,13 +326,22 @@ def _worker(session_id: str, base_url: str) -> None:
             return
         headers = _headers()
         base = (base_url or SERVER_BASE_URL).rstrip("/")
-        items, reason = _fetch_prompts(base, session_id, headers)
+        items, reason, status = _fetch_prompts(base, session_id, headers, on_progress)
         if not items:
             if reason:
+                hint = http_hint(status) if reason == "denied" else ""
+                if reason == "timeout":
+                    hint = "서버 평가가 제한 시간 안에 끝나지 않았습니다"
+                elif reason == "badbody":
+                    hint = "서버 응답 형식이 예상과 다릅니다"
+                _notify(on_progress,
+                        "AI Comment 대행 실패: 서버에서 프롬프트를 받지 못했습니다"
+                        + (f" — {hint}" if hint else f" ({reason})"))
                 _report_failure("ai_suggest_no_prompts",
                                 f"서버에서 프롬프트를 받지 못했습니다 ({reason})",
-                                session_id, {"reason": reason})
+                                session_id, {"reason": reason, "status": status})
             return
+        _notify(on_progress, f"AI Comment: {len(items)}개 항목 문장 생성 중…")
         max_items = int(env_value("HONEY_CLAUDE_MAX_ITEMS", "50") or 50)
         if len(items) > max_items:
             _log.info("ai_suggest 상한 초과: %d/%d 건만 처리 (초과분 폴백 유지)",
@@ -298,11 +369,17 @@ def _worker(session_id: str, base_url: str) -> None:
                 bin_path=bin_path, model=model, timeout=timeout, log=_cli_log)
             for row, reply in zip(chunk, replies):
                 if reply:
+                    # suggestion 은 서버가 sanitize 한다 — 여기서는 원문 그대로 보낸다.
+                    # 서버가 sanitize 전후를 비교해 "모델이 이상하게 답한 것"과 "서버가
+                    # 걷어낸 것"을 관리자 화면에서 구분할 수 있게 하기 위함이다(docs/23).
                     out.append({"key": row.get("key"), "sha": row.get("sha"),
                                 "suggestion": reply})
         if not out:
             # CLI 는 찾았는데 한 건도 못 만든 경우 — 현장에서 인증·정책 실패의 1순위 신호다.
-            _log.info("ai_suggest 생성 결과 없음 — 폴백 유지 (session=%s)", session_id)
+            _notify(on_progress,
+                    "AI Comment 대행 실패: Claude 가 문장을 만들지 못했습니다 "
+                    "(인증·정책·네트워크 확인 — AI Comment 체크 옆 신호등을 눌러 보세요)"
+                    + (f" [{cli_log[-1]}]" if cli_log else ""))
             _report_failure("ai_suggest_empty",
                             "claude CLI 호출에서 결과를 하나도 받지 못했습니다",
                             session_id,
@@ -312,21 +389,36 @@ def _worker(session_id: str, base_url: str) -> None:
             return
         ok, status = _post_suggestions(base, session_id, headers, out)
         if not ok:
+            _notify(on_progress,
+                    f"AI Comment 대행 실패: 만든 문장 {len(out)}건을 서버에 저장하지 "
+                    f"못했습니다 — {http_hint(status)}")
             _report_failure("ai_suggest_push_failed",
                             f"생성한 문장을 서버에 저장하지 못했습니다 (HTTP {status})",
                             session_id, {"status": status, "items": len(out)})
+            return
+        # 성공 — 사용자는 여기서 처음으로 "대행이 실제로 됐다"를 안다. 새로고침 안내를
+        # 함께 붙인다(push 는 payload_rev 만 올리므로 열려 있는 화면은 자동 갱신이 없다).
+        _notify(on_progress,
+                f"AI Comment 대행 완료: {len(out)}건 반영됨 "
+                "(리포트 화면을 새로고침하면 보입니다)")
     except Exception as exc:  # noqa: BLE001 — 부가 기능: 예외가 업로드 흐름 밖으로 안 나간다
         _log.info("ai_suggest 워커 예외 — 조용히 종료 (session=%s)",
                   session_id, exc_info=True)
+        _notify(on_progress,
+                f"AI Comment 대행 중 오류가 발생했습니다 ({type(exc).__name__})")
         _report_failure("ai_suggest_worker_error", f"{type(exc).__name__}: {exc}",
                         session_id, {"error_type": type(exc).__name__})
 
 
-def start_background(session_id: str, options: dict, base_url: str | None = None) -> bool:
+def start_background(session_id: str, options: dict, base_url: str | None = None,
+                     on_progress=None) -> bool:
     """업로드 성공 직후 호출 — 옵트인 세션에만 daemon 스레드 기동, 즉시 반환.
 
     게이트: options 의 ai_comment_optin + ai_model=="claude" (둘 다 참일 때만).
     반환은 기동 여부(로그·테스트용) — 호출부는 결과를 기다리지 않는다.
+
+    `on_progress(str)` 는 워커 스레드에서 호출되는 진행/실패 알림 콜백이다(선택).
+    **호출부가 UI 스레드로 넘길 책임을 진다** — 워커는 위젯을 만지지 않는다.
     """
     try:
         opts = options or {}
@@ -335,7 +427,8 @@ def start_background(session_id: str, options: dict, base_url: str | None = None
         sid = str(session_id or "").strip()
         if not sid or sid == "?":
             return False
-        threading.Thread(target=_worker, args=(sid, base_url or SERVER_BASE_URL),
+        threading.Thread(target=_worker,
+                         args=(sid, base_url or SERVER_BASE_URL, on_progress),
                          name="ai-suggest", daemon=True).start()
         return True
     except Exception:  # noqa: BLE001

@@ -661,6 +661,29 @@ def api_ai_comment_session(session_id):
         return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
 
 
+@admin_panel_bp.get("/api/ai_comment/session/<session_id>/prompts")
+def api_ai_comment_prompts(session_id):
+    """LLM 이 실제로 받은 프롬프트 본문 — 재료 검증용(디버깅 3종 ①)."""
+    from admin_panel import ai_comment_admin
+    try:
+        return jsonify(ai_comment_admin.session_prompts(session_id))
+    except KeyError:
+        return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
+
+
+@admin_panel_bp.get("/api/ai_comment/session/<session_id>/timeline")
+def api_ai_comment_timeline(session_id):
+    """업로드→push→실패를 시간순으로 — 어디서 멎었는지(디버깅 3종 ③)."""
+    from admin_panel import ai_comment_admin
+    try:
+        out = ai_comment_admin.session_timeline(session_id)
+    except KeyError:
+        return jsonify({"error": "세션을 찾을 수 없습니다."}), 404
+    if out.get("events"):
+        users_admin.attach_names(out["events"], "user")
+    return jsonify(out)
+
+
 # ── 세션 컨트롤 ──────────────────────────────────────────────────────────────
 
 @admin_panel_bp.get("/api/sessions")

@@ -29,8 +29,12 @@ call_claude.find_cli(env=None) -> str | None
     # ③ %USERPROFILE%\.local\bin\claude.exe / %APPDATA%\npm\claude.cmd
 
 call_claude.probe(*, bin_path=None, timeout=30, log=None) -> dict
-    # {"ok", "bin", "version", "flags", "error"} — --version + --help 스캔으로 이 버전이
-    # 지원하는 선택 플래그를 확정. **인증 여부는 판정하지 않는다**(실호출로만 확인 — §7).
+    # {"ok", "bin", "version", "flags", "json_schema", "error"} — --version + --help
+    # 스캔으로 이 버전이 지원하는 선택 플래그를 확정.
+    # **인증 여부는 판정하지 않는다**(실호출로만 확인 — §7).
+
+call_claude.supports_json_schema(*, bin_path=None, env=None, log=None) -> bool
+    # 이 CLI 가 --json-schema 를 지원하나 (실행 경로와 같은 --help 캐시를 본다).
 
 call_claude.run_prompt(prompt, *, bin_path=None, model=None, timeout=240, log=None) -> str | None
 
@@ -72,6 +76,12 @@ call_claude.run_batch(prompts, *, bin_path=None, model=None, timeout=240, log=No
 | `--disable-slash-commands` | 스킬 차단 | |
 | `--safe-mode` | CLAUDE.md·훅·플러그인·커스텀 전부 off — **인증·모델·권한은 정상** | 오염 차단의 핵심 |
 | `--setting-sources ""` | settings 소스 0개 | --safe-mode 미지원 구버전 폴백으로만 부착 |
+| `--json-schema <배열스키마>` | 배치 응답을 구조화 출력으로 강제 | **배치(run_batch) 전용** — 2026-09-01 추가 |
+
+⚠ `--json-schema` 는 **단건(`run_prompt`)에는 붙이지 않는다** — 단건은 자유 문장이
+정상이라 스키마를 씌우면 오히려 형식이 깨진다. 배치만 "JSON 배열"이라는 고정 형식을
+요구하므로 거기서만 의미가 있다. 미지원 버전에서는 부착 없이 종전 관대 파싱이 그대로
+동작한다(§5) — 스키마는 파싱을 대체하는 게 아니라 **형식 이탈을 사전에 줄이는** 장치다.
 
 ⚠ **`--bare` 는 절대 쓰지 않는다** — help 에 명시된 대로 인증이 `ANTHROPIC_API_KEY`
 전용이 되어 **OAuth/keychain 을 읽지 않는다**. Enterprise/개인 OAuth 인증이 깨진다.
@@ -115,5 +125,8 @@ call_claude.run_batch(prompts, *, bin_path=None, model=None, timeout=240, log=No
    AI Model=claude 선택 → 업로드 → 클라 로그 "AI Comment 대행 시작" → 리포트 새로고침
    시 `[제안]` 이 LLM 문장인지 → `/pe/eval` 룰 저장 후 재조회로 sha 폴백 확인 →
    AI Model=default 업로드가 종전과 동일한지 대조.
-8. (선택) `--json-schema` 지원 버전이면 배치 응답을 구조화 출력으로 강제해 파싱을
-   더 견고하게 할 수 있다 — 현재는 관대 파싱으로 충분해 미사용.
+8. **`--json-schema` 자동 게이팅 확인** (2026-09-01 구현 — 더 이상 선택지가 아니다):
+   현장 CLI 가 지원하면 배치 호출에 자동 부착된다. `probe()["json_schema"]` 로 어느
+   쪽인지 확인하고(관리자 `✨ AI Comment` 탭에도 노출), **지원 버전에서 배치가 정상
+   동작하는지** 실측할 것 — 미지원이면 종전 관대 파싱으로 조용히 폴백하므로 어느
+   쪽이든 결과는 나오지만, 스키마를 붙였을 때 그 버전이 거부하는지는 현장에서만 안다.

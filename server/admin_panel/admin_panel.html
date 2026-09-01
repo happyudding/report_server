@@ -1047,15 +1047,45 @@ body { position: relative; }
     </table></div>
   </div>
   <div class="card" style="margin-bottom:16px">
+    <h2>흐름 타임라인 <span class="hint">위 표에서 세션을 클릭하면 업로드 → 클라 실패 →
+      push 가 시간순으로 나온다. <b>어느 단계까지 갔는지</b>가 곧 어디를 고칠지다 —
+      실패가 없는데 push 도 없으면 클라 워커가 아예 안 돌았다는 뜻이다</span></h2>
+    <div id="aicTlNote" class="note" style="margin-bottom:8px">세션을 선택하세요.</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>단계</th><th>내용</th><th>사용자</th>
+      </tr></thead>
+      <tbody id="aicTlBody"></tbody>
+    </table></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
     <h2>저장된 문장 <span class="hint">위 표에서 세션을 클릭하면 그 세션의 항목별
       [제안] 문장이 나온다. <b>폐기</b>는 룰이 바뀌어 sha 가 갈린 것 —
-      화면에는 룰 문장이 나가고 있다는 뜻이다</span></h2>
+      화면에는 룰 문장이 나가고 있다는 뜻이다. <b>원문</b> 열에 값이 있으면 서버
+      sanitize 가 뭔가 걷어냈다는 뜻이다(모델 형식 이탈 신호)</span></h2>
     <div id="aicSugNote" class="note" style="margin-bottom:8px">세션을 선택하세요.</div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th>항목</th><th>[제안] 문장</th><th>보낸 사람</th><th>시각</th><th>상태</th>
+        <th>항목</th><th>[제안] 문장</th><th>LLM 원문</th><th>보낸 사람</th>
+        <th>시각</th><th>상태</th>
       </tr></thead>
       <tbody id="aicSugBody"></tbody>
+    </table></div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <h2>LLM 이 받은 프롬프트 <span class="hint">서버가 조립해 클라로 보낸 본문 그대로 —
+      <b>재료가 충분한지</b>를 눈으로 확인하는 곳이다. [제안] 이 이상할 때
+      "프롬프트가 나빴나 / 모델이 이상했나" 를 여기서 가른다. 행을 클릭하면 펼쳐진다</span></h2>
+    <div class="toolbar" style="margin-bottom:8px">
+      <button class="btn" id="btnAicPrompts">선택한 세션의 프롬프트 보기</button>
+      <span id="aicPromptNote" class="note"></span>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th style="width:22%">항목</th><th style="width:10%">sha</th>
+        <th style="width:8%" class="num">길이</th><th>프롬프트 본문</th>
+      </tr></thead>
+      <tbody id="aicPromptBody"></tbody>
     </table></div>
   </div>
   <div class="card">
@@ -1064,9 +1094,9 @@ body { position: relative; }
     <div class="table-wrap"><table>
       <thead><tr>
         <th>시각</th><th>사용자</th><th>세션</th><th>제품 / LOT</th>
-        <th class="num">수용</th><th class="num">스킵</th>
+        <th class="num">수용</th><th class="num">스킵</th><th>스킵 사유</th>
       </tr></thead>
-      <tbody id="aicPushBody"><tr class="empty-row"><td colspan="6">로딩 중…</td></tr></tbody>
+      <tbody id="aicPushBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
   </div>
 </div>
@@ -3537,13 +3567,102 @@ function renderAicCoverage(cov) {
 }
 $("aicCovBody").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-sid]");
-  if (tr) { aicSelectedSid = tr.dataset.sid; loadAicSuggestions(aicSelectedSid); }
+  if (!tr) return;
+  aicSelectedSid = tr.dataset.sid;
+  // 세션 하나를 고르면 그 세션의 흐름·문장을 함께 채운다. 프롬프트 본문만은 버튼으로
+  // 미룬다 — 수 KB × 항목 수라 매 클릭마다 받으면 화면이 무거워진다.
+  loadAicTimeline(aicSelectedSid);
+  loadAicSuggestions(aicSelectedSid);
+  $("aicPromptNote").textContent = `세션 ${aicSelectedSid} 선택됨 — 버튼을 누르면 불러옵니다.`;
+  $("aicPromptBody").innerHTML = "";
 });
+
+// 단계별 색 — 실패는 빨강, 성공 push 는 초록, 나머지는 기본. "어디서 멎었나" 가
+// 색으로 먼저 읽혀야 표를 정독하지 않아도 된다.
+const AIC_TL_STYLE = {
+  upload: ["업로드", "var(--ink-2)"], push: ["push", "#16a34a"],
+  failure: ["실패", "#dc2626"], error: ["조회 오류", "#d97706"],
+};
+
+async function loadAicTimeline(sid) {
+  const tb = $("aicTlBody");
+  $("aicTlNote").textContent = `세션 ${sid} 조회 중…`;
+  tb.innerHTML = "";
+  let o;
+  try { o = await getJSON("api/ai_comment/session/" + encodeURIComponent(sid) + "/timeline"); }
+  catch (e) { $("aicTlNote").textContent = `조회 실패: ${e}`; return; }
+  const evs = o.events || [];
+  const pushed = evs.some(e => e.kind === "push" && e.ok);
+  const failed = evs.some(e => e.kind === "failure");
+  // 이 한 줄이 이 카드의 요점이다 — 표를 읽기 전에 결론부터 준다.
+  let verdict;
+  if (!o.target) verdict = "이 세션은 대행 대상이 아닙니다 (AI Model=default).";
+  else if (pushed) verdict = "정상 — 문장이 서버까지 도달했습니다.";
+  else if (failed) verdict = "클라이언트 단계에서 실패했습니다 (아래 빨간 줄 참고).";
+  else verdict = "push 도 실패 기록도 없습니다 — 클라 워커가 아예 돌지 않았거나 아직 진행 중입니다.";
+  $("aicTlNote").textContent =
+    `세션 ${sid}${o.session && o.session.file_name ? ` (${o.session.file_name})` : ""} — ${verdict}`;
+  if (!evs.length) return;
+  tb.innerHTML = evs.map(e => {
+    const [label, color] = AIC_TL_STYLE[e.kind] || [e.kind, "var(--ink-2)"];
+    return `<tr>
+      <td>${e.ts ? fmtDate(e.ts) : "-"}</td>
+      <td style="color:${color}">${esc(label)}</td>
+      <td class="detail-cell"><div class="clamp"><b>${esc(e.title || "")}</b>${
+        e.detail ? " — " + esc(e.detail) : ""}${
+        e.event_id ? ` <code style="font-size:11px">${esc(e.event_id)}</code>` : ""}</div></td>
+      <td>${e.user ? whoLabel(e.user, e.name) : "-"}</td>
+    </tr>`;
+  }).join("");
+}
+$("aicTlBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+
+async function loadAicPrompts() {
+  if (!aicSelectedSid) { $("aicPromptNote").textContent = "먼저 위 표에서 세션을 선택하세요."; return; }
+  const sid = aicSelectedSid, tb = $("aicPromptBody");
+  $("aicPromptNote").textContent = `세션 ${sid} 조회 중…`;
+  tb.innerHTML = "";
+  let o;
+  try { o = await getJSON("api/ai_comment/session/" + encodeURIComponent(sid) + "/prompts"); }
+  catch (e) { $("aicPromptNote").textContent = `조회 실패: ${e}`; return; }
+  const items = o.items || [];
+  $("aicPromptNote").textContent = `세션 ${sid} — ${items.length}건. ${o.note || ""}`;
+  if (!items.length) return;
+  tb.innerHTML = items.map(r => `<tr>
+    <td>${esc(r.item)}</td>
+    <td><code style="font-size:11px">${esc(r.sha)}</code></td>
+    <td class="num">${r.chars}</td>
+    <td class="detail-cell"><div class="clamp"
+      style="white-space:pre-wrap; font-family:ui-monospace,Consolas,monospace; font-size:11px"
+      >${esc(r.prompt)}</div></td>
+  </tr>`).join("");
+}
+$("aicPromptBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnAicPrompts").onclick = loadAicPrompts;
+
+// skip 사유 코드 → 사람이 읽는 말. 코드를 그대로 보여 주면 "sha_mismatch 가 뭔가"를
+// 또 물어봐야 한다 — 이 표의 목적은 다음에 뭘 할지 바로 아는 것이다.
+const AIC_SKIP_LABEL = {
+  sha_mismatch: "룰 변경으로 폐기", empty: "모델이 빈 답",
+  unknown_item: "서버가 모르는 항목", badsha: "형식 오류", badrow: "잘못된 요청",
+};
+function aicSkipLabel(detail) {
+  return String(detail || "").split(/\s+/).filter(Boolean).map(part => {
+    const [k, v] = part.split("=");
+    return `${AIC_SKIP_LABEL[k] || k} ${v}`;
+  }).join(", ");
+}
 
 function renderAicPush(push) {
   const tb = $("aicPushBody"), rows = push.rows || [];
   if (!rows.length) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="6">${
+    tb.innerHTML = `<tr class="empty-row"><td colspan="7">${
       esc(push.error || "기간 내 push 기록이 없습니다.")}</td></tr>`;
     return;
   }
@@ -3554,6 +3673,9 @@ function renderAicPush(push) {
     <td>${esc(r.product || "-")}${r.lot_id ? " / " + esc(r.lot_id) : ""}</td>
     <td class="num">${r.accepted == null ? "?" : r.accepted}</td>
     <td class="num">${r.skipped == null ? "?" : r.skipped}</td>
+    <td>${r.skip_detail
+      ? `<span style="color:#d97706">${esc(aicSkipLabel(r.skip_detail))}</span>`
+      : '<span style="color:var(--ink-3)">-</span>'}</td>
   </tr>`).join("");
 }
 
@@ -3570,7 +3692,10 @@ async function loadAicSuggestions(sid) {
   if (!items.length) return;
   tb.innerHTML = items.map(r => `<tr>
     <td>${esc(r.item)}</td>
-    <td class="detail-cell"><div class="clamp">${esc(r.suggestion)}</div></td>
+    <td class="detail-cell"><div class="clamp" style="white-space:pre-wrap">${esc(r.suggestion)}</div></td>
+    <td class="detail-cell">${r.sanitized
+      ? `<div class="clamp" style="white-space:pre-wrap; color:#d97706">${esc(r.raw)}</div>`
+      : '<span style="color:var(--ink-3)">원문 그대로</span>'}</td>
     <td>${esc(r.by || "-")}</td>
     <td>${fmtDate(r.ts)}</td>
     <td>${r.stale === null ? '<span style="color:var(--ink-3)">확인불가</span>'

@@ -3,6 +3,10 @@
 > **상태**: **서버·클라·call_claude 구현 완료 (2026-08-28)** — 개발 환경에서 검증 가능한
 > 전부를 검증했고, **남은 것은 현장(Enterprise gateway) 검증뿐**이다
 > (→ §현장 검증 항목, [call_claude/README.md §7](../call_claude/README.md)).
+> **2026-09-01 보강**: 배치 구조화 출력(`--json-schema` 자동 게이팅) · 지시문 확장
+> (근거 없는 줄 채우기 차단, `AI_COMMENT_SCHEMA_VERSION` v6) · 관리자 흐름 디버깅 3종
+> (프롬프트 본문·타임라인·skip 사유) · **사용자에게 보이는 실패 알림**(종전엔 워커가
+> 전부 조용해 사용자가 실패를 인지할 방법이 없었다).
 > **저장소**: `f:\COINAPI\report_server` — **서비스 중인 서버**라 기존 세션 조회에 지장을
 > 주면 안 된다.
 > **관련 문서**: [19_llm_wiring.md](19_llm_wiring.md)(현행 LLM 배선) ·
@@ -70,6 +74,13 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 **`--bare` 금지** — OAuth 차단), 배치 = nonce 구분 메타 프롬프트 1회 호출 + 관대 파싱
 (실패 배치는 전건 None — 폴백 무해).
 
+**구조화 출력**(2026-09-01): 지원 버전이면 배치에 `--json-schema` 를 자동 부착한다
+(`batch.BATCH_JSON_SCHEMA` — `[{"id":int,"text":str}]`). 목적은 파싱 대체가 아니라
+**형식 이탈 제거**다 — 관대 파싱은 코드펜스·서두를 걷어낼 수 있지만 모델이 배열 대신
+객체를 내거나 id 를 빠뜨리면 그 배치가 통째로 None 이 된다. **단건에는 붙이지 않는다**
+(자유 문장이 정상). 미지원 버전은 종전 동작 그대로 — `probe()["json_schema"]` 로
+어느 쪽인지 확인한다.
+
 ### 서버
 
 | 파일 | 내용 |
@@ -79,7 +90,8 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 | [web_report/ai_comment.py](../web_report/ai_comment.py) | `build_ai_comments` 반환에 `prompts` 부착 · `_EMPTY_RESULT` 에 `"prompts": {}` (eval import 무변경 — 규칙 #8) · `_prompt_enrich` 가 **현재 케이스** 재료를 조립 (§선례 상세 보강) |
 | [eval_analyzer/eval_engine/store.py](../eval_analyzer/eval_engine/store.py) | `search_precedents` 가 선례 행에 **당시 수치**(최신 run 의 raw_metrics/features + unit/status)를 함께 싣는다 (§선례 상세 보강). DDL 무변경 — SELECT 확장뿐 |
 | [eval_analyzer/…/present.py](../eval_analyzer/eval_engine/pipeline/present.py) | `_precedent_result` — 선례 계약 dict(종전 5키 + 식별·당시 수치) |
-| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 5` (v4 prompts 키 추가 → v5 프롬프트 본문 확장 — ai 옵션 세션만 재평가). `ai_comment_key` 구성 불변 |
+| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 6` (v4 prompts 키 추가 → v5 프롬프트 본문 확장 → **v6 지시문 확장** — ai 옵션 세션만 재평가). `ai_comment_key` 구성 불변 |
+| [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py) | 항목에 선택 키 `raw`(sanitize **이전** LLM 원문) — sanitize 결과와 **다를 때만** 저장, 상한 `MAX_RAW_CHARS`(4000). 관리자 검수에서 "모델이 이상한 것" vs "서버가 걷어낸 것" 구분용 |
 
 ### 선례 상세 보강 (2026-08-28)
 
@@ -101,6 +113,18 @@ signature(`case_signature`)·lot_id(`fail_case`)는 **eval DB 에 전부 저장�
 | 현재 | unit/LSL/USL + L1 통계(`[현재 통계]` 줄) | `eval_export._find_item_meta` / `_dist_metrics` / `_yield_metrics` **재사용** — 선례 `raw_metrics` 를 만든 바로 그 산식이라 같은 자로 잰 값이 된다(규칙 13) |
 | 현재 | L2 근거값(signature 줄의 `[근거: …]`) | 엔진이 이미 case dict 에 싣는 `signatures[].evidence` — 추가 계산 없음 |
 | 지시 | 정답지로 대조·활용하라 | `ai_prompt._INSTRUCTION_EXTRA` (base `_INSTRUCTION` 은 사본이라 **바이트 그대로** 두고 뒤에 잇는다 → 드리프트 감지 테스트 (e) 무변경) |
+
+### 지시문 확장 — 근거 없는 줄 채우기 차단 (2026-09-01)
+
+base 지시문의 "최대 5줄"은 **상한**인데, 상한만 주면 근거가 2개뿐인 케이스에서도 5줄을
+채우려고 재료에 없는 점검 항목이 나온다. 지어낸 *수치* 는 프롬프트와 대조하면 잡히지만
+지어낸 *일반론* 은 그렇지 않아 오히려 더 위험하다. `_INSTRUCTION_EXTRA` 에 3줄을 덧붙여
+막는다(5줄은 목표가 아님 / 근거 부족한 항목은 빼라 / 판단 불가는 확인 대상으로 써라).
+
+⚠ 지시문을 한 글자라도 바꾸면 **프롬프트 sha 가 전량 갈려 저장된 suggestion 이 폐기**되고
+룰 문장으로 되돌아간다(설계상 정상 — sha 게이트). 그래서 `AI_COMMENT_SCHEMA_VERSION` 을
+**반드시 함께 올린다**(v5→v6) — 안 올리면 캐시에 굳은 옛 prompt/sha 가 그대로 나가
+클라가 옛 지시문으로 계속 대행한다. 전역 bump 는 금지(규칙 14).
 
 > **초기 구현은 `eval_export.precedent_details` 가 `(product_name, human_comment)` 로 eval DB
 > 를 되짚는 match-back 이었다**(엔진 동결 전제). 동결 해제 후 엔진 정공법으로 교체하면서
@@ -158,8 +182,8 @@ secondary: ...
 
 | 파일 | 내용 |
 |---|---|
-| [client/honey_main.py](../client/honey_main.py) | ① `_build_controls_panel` 의 AI Comment 행 아래 **AI Model 콤보**(`cbo_ai_model`, chk 연동 활성화, `app_settings("ai_model")` 로 **모델 선택만 영속** — on/off 비영속 유지) ② 옵션 주입: `ai_on && claude` 일 때만 `options["ai_model"]="claude"` (**default 는 키 미탑재** — report_key 바이트 보존) ③ 업로드 성공 직후 `ai_suggest.start_background` (try/except — 업로드 흐름 불침해) ④ **Claude 연결 신호등**(`lbl_ai_health` + `_check_ai_health` — 아래 절) |
-| [client/transport/ai_suggest.py](../client/transport/ai_suggest.py) (신규) | daemon 워커: prompts 폴링(3s 간격·상한 300s, 202 재시도, 403/404 ×3 후 조용히 포기=구서버 호환) → `call_claude.run_batch` 배치 10건씩 **순차**(병렬 없음 — 업로더 PC 부하 억제, 전체 상한 20분) → POST push(202 는 10s 후 1회 재시도 — merge 멱등). 모든 예외 삼킴. **위치가 구 설계의 report_flow 가 아니라 transport 인 이유**: 🟢 자유수정 + 모듈의 일이 "서버와 말하기"라 transport 역할 정의와 일치 |
+| [client/honey_main.py](../client/honey_main.py) | ① `_build_controls_panel` 의 AI Comment 행 아래 **AI Model 콤보**(`cbo_ai_model`, chk 연동 활성화, `app_settings("ai_model")` 로 **모델 선택만 영속** — on/off 비영속 유지) ② 옵션 주입: `ai_on && claude` 일 때만 `options["ai_model"]="claude"` (**default 는 키 미탑재** — report_key 바이트 보존) ③ 업로드 성공 직후 `ai_suggest.start_background(..., on_progress=self._ai_suggest_progress)` (try/except — 업로드 흐름 불침해) ④ **Claude 연결 신호등**(`lbl_ai_health` + `_check_ai_health` — 아래 절) ⑤ `_ai_suggest_progress` — 워커 알림을 UI 스레드로 넘겨 실행 로그·상태바에 표시 |
+| [client/transport/ai_suggest.py](../client/transport/ai_suggest.py) (신규) | daemon 워커: prompts 폴링(3s 간격·상한 300s, 202 재시도, 403/404 ×3 후 조용히 포기=구서버 호환) → `call_claude.run_batch` 배치 10건씩 **순차**(병렬 없음 — 업로더 PC 부하 억제, 전체 상한 20분) → POST push(202 는 10s 후 1회 재시도 — merge 멱등). 모든 예외 삼킴. **위치가 구 설계의 report_flow 가 아니라 transport 인 이유**: 🟢 자유수정 + 모듈의 일이 "서버와 말하기"라 transport 역할 정의와 일치. **`on_progress` 콜백**(2026-09-01)으로 진행·실패를 사용자 실행 로그에 남긴다(위 §사용자에게 보이는 알림) · `http_hint` 가 상태 코드를 조치 문장으로 |
 | [client/transport/config.py](../client/transport/config.py) | `env_value(name)` — PC env > honey.env 공용 헬퍼 |
 | [client/build_honey.spec](../client/build_honey.spec) | `collect_submodules('call_claude')` (조건부 import 정적 분석 보강 — [LIB_HANDOFF.md](../client/LIB_HANDOFF.md) 이력 기재) |
 
@@ -205,7 +229,25 @@ push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려
 | 대상 세션 / 문장 반영 | `report_session.webreport_options`(대상 판정) + `report_webreport_edit` 의 push marker(`kind=ai_suggest, item_key=push`) | claude 로 올린 세션 중 몇 개가 실제로 문장을 받았나 |
 | 최근 N일 push | 감사 로그 `action='ai_suggest'` 의 `changed_fields` 파싱 | 서버가 무엇을 수용/스킵했나 (형식 불명은 `unparsed` 로 드러낸다) |
 | 클라이언트 실패 | 진단 사건 `component=honey` + `event` 가 `ai_suggest` 로 시작 | **생성이 안 된 이유** — 아래 5종 |
-| 저장된 문장 | `ai_suggest_store` 파일(세션 1개만 읽음) | 실제 문장 품질 + `stale`(룰이 바뀌어 폐기 중인지) |
+| 저장된 문장 | `ai_suggest_store` 파일(세션 1개만 읽음) | 실제 문장 품질 + `stale`(룰이 바뀌어 폐기 중인지) + **LLM 원문**(`raw` — 있으면 sanitize 가 뭔가 걷어냈다는 뜻) |
+
+### 흐름 디버깅 3종 (2026-09-01 신설)
+
+통계만으로는 `[제안]` 이 이상할 때 **프롬프트가 나빴나 / 모델이 이상했나 / 서버가
+걸렀나** 를 가를 수 없었다 — 3단계 중 첫 단계(프롬프트)가 아예 안 보였다. 새 저장소
+없이 기존 데이터원 조합으로 셋을 추가한다:
+
+| 화면 | 라우트 | 무엇을 답하나 |
+|---|---|---|
+| **흐름 타임라인** | `GET /api/ai_comment/session/<sid>/timeline` | 업로드→클라 실패→push 를 시간순 한 줄씩. 맨 위 한 문장이 결론(정상 / 클라 실패 / **워커가 아예 안 돎**). "실패도 push 도 없음" 이 종전에는 못 읽던 상태다 |
+| **LLM 이 받은 프롬프트** | `GET /api/ai_comment/session/<sid>/prompts` | 서버가 조립한 본문 전문 + sha + 길이. 재료가 충분한지 눈으로 검증 |
+| **skip 사유** | 기존 `/api/ai_comment` 의 push 표 | `skipped=3` 숫자를 5종(`sha_mismatch`/`empty`/`unknown_item`/`badsha`/`badrow`)으로 분해 |
+
+- 두 신규 라우트 모두 **`allow_build=False`** — 관리자 조회가 콜드 빌드를 유발하면 안
+  된다. 캐시가 없으면 안내 문장만 돌려준다(빈 화면 금지).
+- skip 사유는 감사 `changed_fields` 에 `ai_suggest(accepted=N,skipped=M) [sha_mismatch=1 …]`
+  로 실린다. **접두는 `_AUDIT_RE` 파싱 대상이라 바이트 불변**이고 내역은 뒤에 덧붙인
+  확장이라, 옛 기록도 그대로 파싱된다.
 
 ### 클라 실패 kind 5종과 대응
 
@@ -223,6 +265,24 @@ push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려
 ⚠ **`call_claude/` 는 이 배선에 관여하지 않는다** — 그 패키지는 다른 프로젝트에도 붙는
 범용 모듈이라 서버 보고를 모른다. `log` 콜백만 넘겨주고, 그 로그를 워커가 모아
 실패 사건 context 에 싣는다. 경계를 되돌리지 말 것.
+
+### 사용자에게 보이는 알림 (2026-09-01)
+
+위 진단 사건은 **관리자용**이다. 정작 업로드한 사용자는 종전에 아무것도 못 봤다 —
+워커가 모든 실패를 삼키고, 화면에는 룰 폴백 문장이 정상처럼 나오기 때문에 "AI 문장이
+안 왔다"는 사실조차 인지하지 못했다. 그래서 워커에 `on_progress` 콜백을 추가해
+**Honey 실행 로그 + 상태바**에 한 줄씩 남긴다:
+
+- 진행: `서버 평가를 기다리는 중…`(202 가 길어질 때 1회만) / `N개 항목 문장 생성 중…`
+- 성공: `대행 완료: N건 반영됨 (리포트 화면을 새로고침하면 보입니다)`
+  — push 는 payload_rev 만 올려 열려 있는 화면이 자동 갱신되지 않으므로 **다음 행동까지** 적는다.
+- 실패: 사유 + **무엇을 확인할지**. HTTP 상태는 숫자만 주지 않고
+  [`ai_suggest.http_hint`](../client/transport/ai_suggest.py) 가 조치 문장으로 바꾼다
+  (403=권한, 404=서버 버전/대상 아님, 423=세션 잠김, 5xx=서버, 0=네트워크).
+
+⚠ 콜백은 **워커 스레드에서 불린다** — 워커는 위젯을 만지지 않는다는 규약을 지키려고
+문자열만 넘기고, `honey_main._ai_suggest_progress` 가 `QTimer.singleShot(0, …)` 으로
+UI 스레드에 넘긴다(`_check_ai_health` 와 같은 패턴). 콜백 실패는 전부 무음이다.
 
 ## 반드시 지킬 것 (위반 시 리뷰 반려)
 
@@ -248,11 +308,11 @@ push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려
 
 | 테스트 | 내용 | 상태 |
 |---|---|---|
-| [tests/test_call_claude.py](../tests/test_call_claude.py) | 스텁 CLI 주입 — 한글 round-trip/argv·stdin 격리/배치 변형 4종/실패 5종/find_cli/probe 게이팅/무예외 | ✅ 통과 |
+| [tests/test_call_claude.py](../tests/test_call_claude.py) | 스텁 CLI 주입 — 한글 round-trip/argv·stdin 격리/배치 변형 4종/실패 5종/find_cli/probe 게이팅/무예외 + **`--json-schema` 자동 게이팅**(배치 전용 부착·단건 미부착·미지원 폴백) | ✅ 통과 (9항목) |
 | [tests/test_ai_prompt_determinism.py](../tests/test_ai_prompt_determinism.py) | 결정성/신구 토큰/action_ko 우선순위/재료부족 None/**지시문 vendor copy ast 대조**/sanitize/patch/apply | ✅ 통과 |
-| [tests/test_ai_suggest.py](../tests/test_ai_suggest.py) | store round-trip·delete_stale / 옵션 폴백 / 라우트 403·비편집자·404 / 202→200 / sha 게이트·rev bump / **/full 병합 반영** / **재빌드 생존** / **룰 변경 sha 폴백** / **클라 워커 동기 시뮬레이션**(가짜 requests+call_claude 로 폴링→생성→push→반영 전체) | ✅ 통과 |
+| [tests/test_ai_suggest.py](../tests/test_ai_suggest.py) | store round-trip·delete_stale·**raw 보존**(동일=미저장/상한/옛 클라) / 옵션 폴백 / 라우트 403·비편집자·404 / 202→200 / sha 게이트·rev bump·**skip 사유 5종 분해** / **/full 병합 반영** / **재빌드 생존** / **룰 변경 sha 폴백** / **클라 워커 동기 시뮬레이션**(폴링→생성→push→반영 전체) + **사용자 알림**(성공·실패 문장) / **http_hint** | ✅ 통과 (12항목) |
 | 실 claude 스모크 (개발 PC, 개인 계정) | probe ok + 배치 2건 3.2초 2/2 수신 · **`claude-sonnet-5`·`sonnet` 둘 다 실호출 확인** · `check_status()` 정상 2.6초 초록 / CLI 없음 즉시 빨강 | ✅ 완료 |
-| [tests/test_ai_comment_admin.py](../tests/test_ai_comment_admin.py) | 관리자 모니터링 — 커버리지 분류 / **"비었다"의 사유 3분기** / push 파싱·형식불명 / 클라 실패 필터·kind 집계 / 문장 검수 / 구성요소 격리 / 라우트 401·200·404 / **화면 정합(탭·패널·로더·DOM id)** | ✅ 통과 |
+| [tests/test_ai_comment_admin.py](../tests/test_ai_comment_admin.py) | 관리자 모니터링 — 커버리지 분류 / **"비었다"의 사유 3분기** / push 파싱·형식불명 / 클라 실패 필터·kind 집계 / 문장 검수 / 구성요소 격리 / 라우트 401·200·404 / **화면 정합(탭·패널·로더·DOM id)** + **디버깅 3종**(프롬프트 4분기·타임라인 정렬/KeyError·skip 사유 신구 형식) | ✅ 통과 |
 | 기존 회귀 | tests/test_ai_comment_modality.py (9 passed — `_to_row_keys` 불변) | ✅ 통과 |
 
 ⚠ 진단 사건을 쓰는 테스트는 **`REPORT_DIAG_DIR` 을 임시 폴더로 격리**해야 한다 —

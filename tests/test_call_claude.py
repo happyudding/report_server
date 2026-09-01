@@ -16,6 +16,7 @@
   (f) find_cli — env 오버라이드(정상/오류 지정은 폴백 없이 None)
   (g) probe — --help 스캔 플래그 게이팅(safe-mode 유무에 따른 --setting-sources 폴백)
   (h) 공개 API 무예외 계약 — 바이너리 부재에서도 None/None-list
+  (i) --json-schema 자동 게이팅 — 배치 전용 부착·단건 미부착·미지원 버전 폴백
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert). 서버·DB 불필요.
 """
@@ -36,7 +37,11 @@ from call_claude import runner as R                                    # noqa: E
 
 _STUB_SRC = r'''# -*- coding: utf-8 -*-
 import json, os, sys, time
+# 실 claude 와 같은 조건을 만든다 — call_claude 는 subprocess 를 encoding="utf-8" 로
+# 열지만, 자식(이 스텁)의 stdin/stdout 기본 인코딩은 부모 로케일을 따라간다. 둘 다
+# utf-8 로 고정하지 않으면 한글이 surrogate 로 깨져 실 CLI 에는 없는 실패가 난다.
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stdin.reconfigure(encoding="utf-8")
 argv = sys.argv[1:]
 if "--help" in argv:
     print(os.environ.get("STUB_HELP", ""))
@@ -225,6 +230,56 @@ def test_probe_flag_gating(bin_argv):
     print("  (g) probe 플래그 게이팅·구버전 폴백 OK")
 
 
+def test_json_schema_gating(bin_argv):
+    """--json-schema 는 지원 버전의 **배치에만** 붙는다 (B안 자동 게이팅).
+
+    핵심은 "미지원 버전에서도 현행대로 동작한다" 는 것 — 현장 CLI 버전이 미상이라
+    어느 쪽이든 결과가 나와야 한다.
+    """
+    captured = []
+    real_run = R.subprocess.run
+
+    def fake_run(argv, **kw):
+        captured.append(list(argv))
+        return real_run(argv, **kw)
+
+    reply = json.dumps([{"id": 1, "text": "답"}], ensure_ascii=False)
+
+    # ① 지원 버전(--json-schema 가 help 에 있음) → 배치에 부착, 단건에는 미부착
+    with _StubEnv(STUB_HELP=_FULL_HELP + " --json-schema", STUB_REPLY=reply):
+        R.subprocess.run = fake_run
+        try:
+            assert call_claude.run_batch(["요청"], bin_path=bin_argv) == ["답"]
+            batch_argv = captured[-1]
+            call_claude.run_prompt("단건", bin_path=bin_argv)
+            single_argv = captured[-1]
+        finally:
+            R.subprocess.run = real_run
+        info = call_claude.probe(bin_path=bin_argv)
+        supported = call_claude.supports_json_schema(bin_path=bin_argv)
+    assert "--json-schema" in batch_argv, batch_argv
+    schema_val = batch_argv[batch_argv.index("--json-schema") + 1]
+    assert json.loads(schema_val) == B.BATCH_JSON_SCHEMA
+    assert "--json-schema" not in single_argv, "단건에는 스키마를 붙이지 않는다"
+    assert info["json_schema"] is True, info
+    assert supported is True
+
+    # ② 미지원 버전 → 부착 없이 현행 관대 파싱 그대로 동작
+    captured.clear()
+    with _StubEnv(STUB_HELP=_FULL_HELP, STUB_REPLY=reply):
+        R.subprocess.run = fake_run
+        try:
+            assert call_claude.run_batch(["요청"], bin_path=bin_argv) == ["답"]
+        finally:
+            R.subprocess.run = real_run
+        info = call_claude.probe(bin_path=bin_argv)
+        supported = call_claude.supports_json_schema(bin_path=bin_argv)
+    assert all("--json-schema" not in a for a in captured[-1]), captured[-1]
+    assert info["json_schema"] is False, info
+    assert supported is False
+    print("  (i) --json-schema 자동 게이팅(배치 전용·미지원 폴백) OK")
+
+
 def test_no_binary():
     env_empty = {"PATH": "", "CALL_CLAUDE_BIN": ""}
     assert R.find_cli(env_empty) is None or True  # 후보 파일이 실존하는 PC 도 있음 — 예외만 없으면 됨
@@ -246,6 +301,7 @@ def main():
         test_meta_prompt()
         test_find_cli(bin_argv)
         test_probe_flag_gating(bin_argv)
+        test_json_schema_gating(bin_argv)
         test_no_binary()
     print("test_call_claude: 전부 통과")
 

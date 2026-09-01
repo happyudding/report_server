@@ -486,7 +486,10 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   dict 키 구조는 그대로지만 캐시에 굳은 옛 prompt/sha 를 갈지 않으면 클라가 계속 옛
 #   프롬프트로 대행한다(sha 가 저장분과 맞아 폴백조차 안 걸린다). 여기만 올린다 —
 #   report payload 는 무관하므로 전역 bump 금지(규칙 14).
-AI_COMMENT_SCHEMA_VERSION = 5
+# v6 (2026-09-01): 프롬프트 지시문 확장(_INSTRUCTION_EXTRA 에 "5줄은 상한이지 목표가
+#   아니다" 3줄 — 근거 없는 줄 채우기 차단). v5 와 같은 이유로 여기만 올린다: 안 올리면
+#   캐시에 굳은 옛 prompt/sha 가 그대로 나가 클라가 옛 지시문으로 대행한다.
+AI_COMMENT_SCHEMA_VERSION = 6
 
 
 def _ai_meta_digest(session) -> str:

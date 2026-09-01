@@ -13,7 +13,14 @@ akey 디렉터리 안이라 세션 삭제(storage_gateway 가 akey 째 삭제) �
 형식::
 
     {"schema": 1, "items": {"<item_raw>": {"sha": "<12hex>", "suggestion": str,
-                                           "by": str, "ts": int}}}
+                                           "by": str, "ts": int,
+                                           "raw": str}}}
+
+``raw`` 는 sanitize **이전** 의 LLM 원문이다(2026-09-01, 선택 키 — 없으면 종전 형식).
+관리자 검수에서 "모델이 이상하게 답한 것"과 "서버 sanitize 가 잘라낸 것"을 구분하려면
+둘 다 있어야 한다 — 저장된 문장만 보면 그 구분이 원리적으로 불가능하다. 상한을 걸어
+(``MAX_RAW_CHARS``) 파일이 무한정 커지지 않게 하고, sanitize 결과와 **같으면 아예 저장
+하지 않는다**(대부분의 정상 케이스에서 용량 증가 0).
 
 - 파일 이름 규약은 dist_pack_store._gen_name 과 동일 — chash 가 바뀌면(raw 편집)
   구조적으로 구세대가 조회되지 않고, ``delete_stale`` 이 회수한다.
@@ -31,6 +38,10 @@ _log = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 MAX_ITEMS = 500   # 파일당 item 상한 — 초과분은 오래된 ts 부터 버린다
+# 원문(raw) 보존 상한 — sanitize 상한(1000)보다 넉넉히 두되 무한은 아니다. 형식 이탈
+# (서두·코드펜스·JSON 통째)이 보이는 데는 이 길이면 충분하고, 넘어가는 응답은 어차피
+# 앞부분만 봐도 이상을 안다.
+MAX_RAW_CHARS = 4000
 
 
 def _store_root(upload_root: Path, analysis_key) -> Path:
@@ -83,10 +94,17 @@ def save_merge(upload_root: Path, analysis_key, content_hash, mode,
     for item, row in (items or {}).items():
         if not item or not isinstance(row, dict):
             continue
-        merged[str(item)] = {"sha": str(row.get("sha") or ""),
-                             "suggestion": str(row.get("suggestion") or ""),
-                             "by": str(row.get("by") or by or ""),
-                             "ts": int(row.get("ts") or now)}
+        suggestion = str(row.get("suggestion") or "")
+        entry = {"sha": str(row.get("sha") or ""),
+                 "suggestion": suggestion,
+                 "by": str(row.get("by") or by or ""),
+                 "ts": int(row.get("ts") or now)}
+        # 원문은 sanitize 결과와 **다를 때만** 남긴다 — 같으면 정보가 0인데 파일만 2배가
+        # 된다(정상 케이스가 대부분이라 실질 용량 증가는 거의 없다).
+        raw = str(row.get("raw") or "")
+        if raw and raw != suggestion:
+            entry["raw"] = raw[:MAX_RAW_CHARS]
+        merged[str(item)] = entry
     if len(merged) > MAX_ITEMS:
         keep = sorted(merged.items(), key=lambda kv: kv[1].get("ts") or 0,
                       reverse=True)[:MAX_ITEMS]

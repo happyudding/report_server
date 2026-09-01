@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 
-from .batch import build_meta_prompt, parse_batch_reply
+from .batch import batch_schema_json, build_meta_prompt, parse_batch_reply
 
 _LOG = logging.getLogger("call_claude")
 
@@ -36,6 +36,10 @@ _OPT_FLAGS = (
     (("--disable-slash-commands",), "--disable-slash-commands"),  # 스킬 차단
     (("--safe-mode",), "--safe-mode"),                         # CLAUDE.md·훅·플러그인 off, 인증은 정상
 )
+# 배치 전용 구조화 출력 플래그 — 지원 버전에서만 부착한다(_OPT_FLAGS 와 같은 --help 게이팅).
+# 단건(run_prompt)에는 붙이지 않는다: 단건 응답은 자유 문장이 정상이라 스키마를 씌우면
+# 오히려 형식이 깨진다. 배치만 "JSON 배열" 이라는 고정 형식을 요구한다.
+_SCHEMA_FLAG = "--json-schema"
 # 실행 부작용 억제 — 추가만 하는 env (기존 값은 덮지 않는다)
 _EXTRA_ENV = {
     "DISABLE_AUTOUPDATER": "1",
@@ -171,7 +175,8 @@ def probe(*, bin_path=None, env=None, timeout=PROBE_TIMEOUT, log=None):
 
     인증 여부는 판정하지 않는다(실호출로만 확인 가능 — README 현장 검증 항목).
     """
-    out = {"ok": False, "bin": None, "version": None, "flags": [], "error": None}
+    out = {"ok": False, "bin": None, "version": None, "flags": [],
+           "json_schema": False, "error": None}
     argv0 = _resolve_argv0(bin_path, env, log)
     if argv0 is None:
         out["error"] = "not_found"
@@ -182,7 +187,11 @@ def probe(*, bin_path=None, env=None, timeout=PROBE_TIMEOUT, log=None):
         out["error"] = "version_check_failed"
         return out
     out["version"] = (completed.stdout or "").strip()
-    out["flags"] = _gated_flags(_help_text(argv0, log=log))
+    help_text = _help_text(argv0, log=log)
+    out["flags"] = _gated_flags(help_text)
+    # 배치에서만 붙는 플래그라 flags 목록에 섞지 않고 별도 키로 낸다 — 화면·현장 점검이
+    # "이 PC 는 구조화 출력을 쓰는가"를 flags 문자열 파싱 없이 바로 읽게 한다.
+    out["json_schema"] = _SCHEMA_FLAG in help_text
     out["ok"] = True
     return out
 
@@ -208,13 +217,33 @@ def _parse_cli_json(stdout):
         return None
 
 
-def _invoke(prompt, *, bin_path, model, timeout, log, tag):
-    """프롬프트 1개 실행 → 모델 출력 문자열 | None."""
+def supports_json_schema(*, bin_path=None, env=None, log=None) -> bool:
+    """이 CLI 버전이 `--json-schema` 를 지원하나 — 관리자 화면 노출용 공개 판정.
+
+    실행 경로(`run_batch`)와 **같은 --help 캐시**를 본다. 화면에 "구조화 출력 사용 중"
+    이라고 떠 있는데 실제로는 안 붙는 상황을 만들지 않기 위함이다.
+    """
+    argv0 = _resolve_argv0(bin_path, env, log)
+    if argv0 is None:
+        return False
+    return _SCHEMA_FLAG in _help_text(argv0, log=log)
+
+
+def _invoke(prompt, *, bin_path, model, timeout, log, tag, json_schema=None):
+    """프롬프트 1개 실행 → 모델 출력 문자열 | None.
+
+    `json_schema` 는 배치에서만 넘어온다 — 지원 버전이면 구조화 출력을 강제한다
+    (미지원 버전에서는 호출부가 None 을 넘겨 현행 관대 파싱 그대로).
+    """
     argv0 = _resolve_argv0(bin_path, os.environ, log)
     if argv0 is None:
         return None
     argv = list(argv0) + ["-p", "--output-format", "json"]
-    argv += _gated_flags(_help_text(argv0, log=log))
+    help_text = _help_text(argv0, log=log)
+    argv += _gated_flags(help_text)
+    if json_schema and _SCHEMA_FLAG in help_text:
+        argv += [_SCHEMA_FLAG, str(json_schema)]
+        _emit(log, f"call_claude schema: {tag} 구조화 출력 사용")
     if model:
         argv += ["--model", str(model)]
     completed = _run_cli(argv, input_text=prompt, timeout=timeout, log=log, tag=tag)
@@ -261,7 +290,8 @@ def run_batch(prompts, *, bin_path=None, model=None, timeout=DEFAULT_TIMEOUT, lo
             return []
         meta_prompt, _nonce = build_meta_prompt(items)
         reply = _invoke(meta_prompt, bin_path=bin_path, model=model, timeout=timeout,
-                        log=log, tag=f"run_batch({len(items)})")
+                        log=log, tag=f"run_batch({len(items)})",
+                        json_schema=batch_schema_json())
         if reply is None:
             return [None] * len(items)
         out = parse_batch_reply(reply, len(items))

@@ -35,6 +35,9 @@ _log = logging.getLogger(__name__)
 # service.apply_ai_suggestions 가 남기는 형식 — 바뀌면 여기 파싱도 함께 고쳐야 한다.
 _AUDIT_ACTION = "ai_suggest"
 _AUDIT_RE = re.compile(r"ai_suggest\(accepted=(\d+),skipped=(\d+)\)")
+# 사유별 내역 `[sha_mismatch=2 empty=1]` — 2026-09-01 에 접두 뒤로 덧붙인 확장이라
+# 없는 옛 기록도 그대로 파싱된다(있으면 표시, 없으면 빈 문자열).
+_AUDIT_SKIP_RE = re.compile(r"\[([a-z_=\d\s]+)\]")
 
 # 클라가 보내는 실패 kind (transport/ai_suggest._report_failure) → 화면 라벨·대응 안내.
 FAILURE_KINDS = {
@@ -136,13 +139,15 @@ def _push(days: int) -> dict:
     accepted = skipped = unparsed = 0
     rows = []
     for r in recent:
-        m = _AUDIT_RE.search(str(r.get("changed_fields") or ""))
+        fields = str(r.get("changed_fields") or "")
+        m = _AUDIT_RE.search(fields)
         if m:
             accepted += int(m.group(1))
             skipped += int(m.group(2))
         else:
             unparsed += 1
         if len(rows) < _LIST_MAX:
+            detail = _AUDIT_SKIP_RE.search(fields)
             rows.append({"created_at": r.get("created_at") or 0,
                          "session_id": r.get("session_id") or "",
                          "user": r.get("client_user") or "",
@@ -150,7 +155,8 @@ def _push(days: int) -> dict:
                          "lot_id": r.get("lot_id") or "",
                          "accepted": int(m.group(1)) if m else None,
                          "skipped": int(m.group(2)) if m else None,
-                         "changed_fields": r.get("changed_fields") or ""})
+                         "skip_detail": detail.group(1).strip() if detail else "",
+                         "changed_fields": fields})
     return {"pushes": len(recent), "accepted": accepted, "skipped": skipped,
             "unparsed": unparsed, "all_time": len(logs), "rows": rows}
 
@@ -233,8 +239,12 @@ def session_suggestions(session_id: str) -> dict:
     for item, row in sorted(stored.items()):
         sha = str(row.get("sha") or "")
         cur = (prompts.get(item) or {}).get("sha") if prompts else None
+        raw = str(row.get("raw") or "")
         items.append({"item": item, "sha": sha,
                       "suggestion": str(row.get("suggestion") or ""),
+                      # raw 는 sanitize 결과와 다를 때만 저장된다 — 있으면 "서버가 뭔가
+                      # 걷어냈다"는 신호 그 자체다(형식 이탈 탐지).
+                      "raw": raw, "sanitized": bool(raw),
                       "by": str(row.get("by") or ""), "ts": int(row.get("ts") or 0),
                       "stale": (None if not prompts else (cur != sha))})
     return {"items": items, "note": note,
@@ -242,3 +252,126 @@ def session_suggestions(session_id: str) -> dict:
                         "file_name": session.get("file_name") or "",
                         "product": session.get("product") or "",
                         "lot_id": session.get("lot_id") or ""}}
+
+
+def session_prompts(session_id: str) -> dict:
+    """서버가 만든 **프롬프트 본문** — LLM 이 무엇을 받았는지 눈으로 검증한다.
+
+    이게 없으면 `[제안]` 이 이상할 때 "프롬프트가 나빴나 / 모델이 이상했나 / 서버가
+    걸렀나" 를 구분할 수 없다(세 단계 중 첫 단계가 완전히 안 보였다).
+
+    **캐시를 새로 만들지 않는다**(allow_build=False) — 관리자 조회가 콜드 빌드를
+    유발하면 안 된다(session_suggestions 와 같은 규약). 미스면 안내만 돌려준다.
+    """
+    from web_report import service as web_report_service
+
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not _wanted(session.get("webreport_options")):
+        return {"items": [], "note": "AI Model=claude 대상 세션이 아닙니다."}
+    try:
+        result, _how = web_report_service._ai_comment_cached(
+            session, session_id, None, None, report_db=report_db,
+            upload_root=_upload_root(), allow_build=False)
+    except Exception as exc:  # noqa: BLE001 — 조회 실패를 화면에 그대로 보여준다
+        _log.warning("ai_comment 프롬프트 조회 실패 (session=%s)", session_id,
+                     exc_info=True)
+        return {"items": [], "note": f"평가 캐시 조회 실패: {type(exc).__name__}: {exc}"}
+    if result is None:
+        return {"items": [],
+                "note": "평가 캐시가 없습니다 — 세션 리포트를 한 번 연 뒤 다시 보세요."}
+    prompts = result.get("prompts") or {}
+    if not prompts:
+        return {"items": [],
+                "note": "이 세션에서는 프롬프트가 생성되지 않았습니다 "
+                        "(발화 case 가 없거나 코멘트 형식이 달라 조립에 실패)."}
+    items = [{"item": str(k), "sha": str(v.get("sha") or ""),
+              "prompt": str(v.get("prompt") or ""),
+              "chars": len(str(v.get("prompt") or ""))}
+             for k, v in sorted(prompts.items()) if isinstance(v, dict)]
+    return {"items": items, "note": "",
+            "session": {"session_id": session_id,
+                        "file_name": session.get("file_name") or "",
+                        "product": session.get("product") or "",
+                        "lot_id": session.get("lot_id") or ""}}
+
+
+def session_timeline(session_id: str, days: int = 30) -> dict:
+    """한 세션의 대행 흐름을 **시간순 한 줄씩** — 어디서 멎었는지 바로 보이게.
+
+    새 저장소 없이 이미 있는 4개 데이터원을 시각순으로 합친다:
+      업로드(report_session) / push(감사 로그) / 클라 실패(진단 사건) / 현재 저장 상태.
+
+    각 단계가 따로 흩어져 있으면 "프롬프트는 갔는데 클라가 죽었나, 클라는 보냈는데
+    서버가 걸렀나" 를 사람이 머리로 맞춰야 한다 — 그 조합을 여기서 만든다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    events = []
+    target = _wanted(session.get("webreport_options"))
+
+    created = int(session.get("created_at") or 0)
+    events.append({"ts": created, "kind": "upload", "ok": True,
+                   "title": "세션 업로드",
+                   "detail": ("AI Model=claude (대행 대상)" if target
+                              else "AI Model=default — 대행 대상이 아닙니다")})
+
+    # push (감사 로그) — 이 세션 것만.
+    try:
+        for row in report_db.get_audit_logs(action=_AUDIT_ACTION, limit=500):
+            if str(row.get("session_id") or "") != str(session_id):
+                continue
+            fields = str(row.get("changed_fields") or "")
+            m = _AUDIT_RE.search(fields)
+            accepted = int(m.group(1)) if m else None
+            events.append({
+                "ts": int(row.get("created_at") or 0), "kind": "push",
+                "ok": bool(accepted), "title": "클라이언트 push",
+                "detail": fields or "(형식 불명)",
+                "user": str(row.get("client_user") or "")})
+    except Exception as exc:  # noqa: BLE001 — 한 구성요소 실패가 타임라인을 죽이지 않는다
+        _log.warning("ai_comment 타임라인 push 조회 실패", exc_info=True)
+        events.append({"ts": 0, "kind": "error", "ok": False,
+                       "title": "push 이력 조회 실패", "detail": str(exc)})
+
+    # 클라 실패 (진단 사건) — ts 가 ISO 문자열이라 정렬용 epoch 로 바꾼다.
+    try:
+        import diagnostics
+        for e in diagnostics.history(hours=max(1, int(days)) * 24, component="honey",
+                                     limit=1000):
+            if str(e.get("session_id") or "") != str(session_id):
+                continue
+            event = str(e.get("event") or "")
+            if not event.startswith("ai_suggest"):
+                continue
+            events.append({"ts": _iso_to_epoch(e.get("ts")), "kind": "failure",
+                           "ok": False,
+                           "title": FAILURE_KINDS.get(event, event),
+                           "detail": str(e.get("message") or ""),
+                           "event_id": str(e.get("event_id") or ""),
+                           "user": str(e.get("user") or "")})
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("ai_comment 타임라인 진단 조회 실패", exc_info=True)
+        events.append({"ts": 0, "kind": "error", "ok": False,
+                       "title": "클라 실패 이력 조회 실패", "detail": str(exc)})
+
+    events.sort(key=lambda e: e.get("ts") or 0)
+    return {"events": events, "target": target,
+            "session": {"session_id": session_id,
+                        "file_name": session.get("file_name") or "",
+                        "product": session.get("product") or "",
+                        "lot_id": session.get("lot_id") or ""}}
+
+
+def _iso_to_epoch(value) -> int:
+    """진단 저장소의 ISO ts("YYYY-MM-DDTHH:MM:SS") → epoch. 실패는 0(정렬 맨 앞)."""
+    import datetime
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(datetime.datetime.fromisoformat(text).timestamp())
+    except (ValueError, OverflowError):
+        return 0

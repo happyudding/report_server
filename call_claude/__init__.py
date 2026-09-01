@@ -28,5 +28,11 @@ from .runner import (  # noqa: F401
     probe,
     run_batch,
     run_prompt,
+    supports_json_schema,
 )
-from .batch import build_meta_prompt, parse_batch_reply  # noqa: F401
+from .batch import (  # noqa: F401
+    BATCH_JSON_SCHEMA,
+    batch_schema_json,
+    build_meta_prompt,
+    parse_batch_reply,
+)

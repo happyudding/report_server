@@ -357,21 +357,30 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
         raise ValueError("items 는 배열이어야 합니다")
     if len(items) > 500:
         raise ValueError("items 가 너무 많습니다 (≤500)")
-    skipped = 0
+    # skip 은 사유별로 센다(2026-09-01) — 합계 하나로는 "왜 안 붙었나"를 알 수 없어
+    # 관리자가 룰 변경(sha)·모델 형식 이탈(empty)·클라 버그(badrow)를 구분하지 못했다.
+    # 감사 로그와 응답에 함께 실어 화면에서 바로 읽히게 한다.
+    skips = {"badrow": 0, "badsha": 0, "empty": 0, "sha_mismatch": 0, "unknown_item": 0}
     cleaned = {}
     for row in items:
         if not isinstance(row, dict):
-            skipped += 1
+            skips["badrow"] += 1
             continue
         key = str(row.get("key") or "").strip()
         sha = str(row.get("sha") or "").strip()
-        text = ai_prompt.sanitize_suggestion(row.get("suggestion"))
-        if not key or not re.fullmatch(r"[0-9a-f]{12}", sha) or not text:
-            skipped += 1
+        raw = row.get("suggestion")
+        text = ai_prompt.sanitize_suggestion(raw)
+        if not key or not re.fullmatch(r"[0-9a-f]{12}", sha):
+            skips["badsha"] += 1
             continue
-        cleaned[key] = {"sha": sha, "suggestion": text}
+        if not text:
+            # 모델이 빈 답/형식만 낸 경우 — sanitize 가 전부 걷어냈다는 뜻이다.
+            skips["empty"] += 1
+            continue
+        cleaned[key] = {"sha": sha, "suggestion": text,
+                        "raw": str(raw or "")}
     if not cleaned:
-        return {"accepted": 0, "skipped": skipped}
+        return {"accepted": 0, "skipped": sum(skips.values()), "skips": skips}
     result, _how = _ai_comment_cached(session, session_id, None, None,
                                       report_db=report_db, upload_root=upload_root,
                                       allow_build=False)
@@ -384,8 +393,14 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
     accepted = {}
     for key, row in cleaned.items():
         meta = prompts.get(key)
-        if not isinstance(meta, dict) or str(meta.get("sha") or "") != row["sha"]:
-            skipped += 1
+        if not isinstance(meta, dict):
+            # 서버가 프롬프트를 만들지 않은 item — 임의 row_key 제출이거나, 클라가 옛
+            # 목록으로 push 한 경우다(docs/23 §반드시 4).
+            skips["unknown_item"] += 1
+            continue
+        if str(meta.get("sha") or "") != row["sha"]:
+            # 룰·민감도 변경으로 프롬프트가 갈렸다 — 설계상 정상 폐기다.
+            skips["sha_mismatch"] += 1
             continue
         accepted[key] = row
     if accepted:
@@ -405,21 +420,27 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
             session_id, [(edits.KIND_AI_SUGGEST, "push", marker)],
             updated_by=client_user or None)
         compute.request_build(session_id, str(upload_root), "report")
+    skipped = sum(skips.values())
     try:
         # action 을 'edit' 과 분리한다(2026-08-28) — 관리자 화면에서 다른 편집에 묻히면
         # "이 기능이 실제로 도는가"를 셀 수 없다. 인덱스(idx_report_audit_action)와
         # 드롭다운 필터가 그대로 먹고, changed_fields 형식은 파싱 대상이라 불변이다.
+        # ⚠ `ai_suggest(accepted=N,skipped=M)` 접두는 ai_comment_admin._AUDIT_RE 의
+        # 파싱 대상이라 **바이트 그대로** 유지한다 — 사유별 내역은 뒤에 덧붙인다
+        # (2026-09-01, 정규식이 search 라 접두가 앞에 있으면 계속 맞는다).
+        detail = " ".join(f"{k}={v}" for k, v in sorted(skips.items()) if v)
         report_db.log_audit(
             "ai_suggest", session_id=session_id,
             analysis_key=session.get("analysis_key"),
             product_type=session.get("product_type", ""),
             product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"ai_suggest(accepted={len(accepted)},skipped={skipped})",
+            changed_fields=(f"ai_suggest(accepted={len(accepted)},skipped={skipped})"
+                            + (f" [{detail}]" if detail else "")),
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    return {"accepted": len(accepted), "skipped": skipped}
+    return {"accepted": len(accepted), "skipped": skipped, "skips": skips}
 
 
 def _compare_groups_of(session, tables):

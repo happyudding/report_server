@@ -2281,6 +2281,29 @@ class HoneyMainWindow(QMainWindow):
         if EvalSensitivityDialog(self).exec():
             self._status("AI Comment 민감도 저장됨")
 
+    def _ai_suggest_progress(self, text):
+        """AI Comment 대행 워커의 진행/실패 한 줄 → 실행 로그 + 상태바.
+
+        **워커 스레드에서 불린다** — 위젯을 여기서 바로 만지면 안 되므로
+        QTimer.singleShot 으로 UI 스레드에 넘긴다(_check_ai_health 와 같은 규약).
+        실패해도 무음: 이 알림 때문에 업로드 후 흐름이 깨지면 안 된다.
+        """
+        msg = str(text or "").strip()
+        if not msg:
+            return
+
+        def apply():
+            try:
+                self._append_run_log(msg)
+                self._status(msg)
+            except RuntimeError:      # 창이 이미 닫힌 뒤 — 조용히 버린다
+                pass
+
+        try:
+            QTimer.singleShot(0, apply)
+        except Exception:             # noqa: BLE001 — 부가 기능
+            pass
+
     # ── Claude 연결 신호등 (AI Comment 대행 가능 여부) ───────────────────────
     # 대행은 실패해도 화면에 "룰 문장"이 나올 뿐이라 사용자가 눈치채기 어렵다.
     # 켜는 시점에 미리 알려 주는 것이 이 신호등의 목적이다.
@@ -3461,7 +3484,8 @@ class HoneyMainWindow(QMainWindow):
         # 조용히 폴백(서버 룰 문장)이라 업로드 완료 흐름을 절대 막지 않는다.
         try:
             from transport import ai_suggest
-            if ai_suggest.start_background(str(sid), options or {}):
+            if ai_suggest.start_background(str(sid), options or {},
+                                           on_progress=self._ai_suggest_progress):
                 self._append_run_log("AI Comment 대행 시작 (로컬 Claude)")
         except Exception:      # noqa: BLE001 — 부가 기능
             pass

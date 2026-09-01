@@ -190,7 +190,23 @@ def test_store_roundtrip():
     assert removed == 1
     assert store.load(root, "AKEY", "c" * 64, "Normal")
     assert store.load(root, "AKEY", "e" * 64, "Normal") == {}
-    print("  (a) store round-trip/upsert/delete_stale OK")
+
+    # raw(LLM 원문) 보존 (2026-09-01) — 관리자 검수에서 "모델이 이상하게 답한 것"과
+    # "서버 sanitize 가 잘라낸 것"을 가르는 유일한 근거다.
+    root2 = _TMP / "store_raw"
+    store.save_merge(root2, "AK2", "f" * 64, "Normal", {
+        # 같으면 저장하지 않는다 — 정보가 0인데 파일만 커진다
+        "SAME": {"sha": "a" * 12, "suggestion": "본문", "raw": "본문"},
+        "DIFF": {"sha": "b" * 12, "suggestion": "본문", "raw": "```json\n본문\n```"},
+        "LONG": {"sha": "c" * 12, "suggestion": "x", "raw": "y" * (store.MAX_RAW_CHARS + 500)},
+        "NONE": {"sha": "d" * 12, "suggestion": "본문"},        # 옛 클라 — raw 키 없음
+    })
+    loaded = store.load(root2, "AK2", "f" * 64, "Normal")
+    assert "raw" not in loaded["SAME"], loaded["SAME"]
+    assert loaded["DIFF"]["raw"] == "```json\n본문\n```", loaded["DIFF"]
+    assert len(loaded["LONG"]["raw"]) == store.MAX_RAW_CHARS      # 상한으로 자른다
+    assert "raw" not in loaded["NONE"], loaded["NONE"]
+    print("  (a) store round-trip/upsert/delete_stale/raw 보존 OK")
 
 
 # ── (b) 옵션 파싱 ────────────────────────────────────────────────────────────
@@ -248,21 +264,35 @@ def test_push_and_merge(prompt_item):
     # sha 불일치 → skip
     r = client.post(url, headers=_headers(),
                     json={"items": [{"key": ITEM, "sha": "0" * 12, "suggestion": "무시"}]})
-    assert r.status_code == 200 and r.get_json() == {"accepted": 0, "skipped": 1}, r.get_json()
+    body = r.get_json()
+    assert r.status_code == 200 and body["accepted"] == 0 and body["skipped"] == 1, body
+    # 사유별 내역(2026-09-01) — 합계만으로는 "룰이 바뀐 것"과 "모델이 이상한 것"을
+    # 구분할 수 없어 관리자가 다음에 뭘 할지 정하지 못한다.
+    assert body["skips"]["sha_mismatch"] == 1, body
     assert report_db.get_webreport_edit_rev(SID) == rev0   # 수용 0건 = rev 불변
     # 일치 → 수용 + rev bump
     r = client.post(url, headers=_headers(),
                     json={"items": [{"key": ITEM, "sha": prompt_item["sha"],
                                      "suggestion": "- 클로드 제안 1\n- 클로드 제안 2"}]})
     assert r.status_code == 200, (r.status_code, r.data[:300])
-    assert r.get_json() == {"accepted": 1, "skipped": 0}, r.get_json()
+    body = r.get_json()
+    assert body["accepted"] == 1 and body["skipped"] == 0, body
+    assert not any(body["skips"].values()), body
     assert report_db.get_webreport_edit_rev(SID) == rev0 + 1
-    # 형식 불량(sha 12hex 아님/빈 suggestion) → skip 카운트
+    # 형식 불량(sha 12hex 아님) 과 sanitize 후 빈 문자열은 **다른 사유**로 세어야 한다
     r = client.post(url, headers=_headers(),
                     json={"items": [{"key": ITEM, "sha": "XYZ", "suggestion": "x"},
                                     {"key": ITEM, "sha": prompt_item["sha"],
                                      "suggestion": "[제안][현상]"}]})
-    assert r.get_json() == {"accepted": 0, "skipped": 2}, r.get_json()
+    body = r.get_json()
+    assert body["accepted"] == 0 and body["skipped"] == 2, body
+    assert body["skips"]["badsha"] == 1 and body["skips"]["empty"] == 1, body
+    # 서버가 프롬프트를 만들지 않은 item → unknown_item (임의 row_key 제출 차단)
+    r = client.post(url, headers=_headers(),
+                    json={"items": [{"key": "ETC|없는항목", "sha": prompt_item["sha"],
+                                     "suggestion": "- 임의 제출"}]})
+    body = r.get_json()
+    assert body["accepted"] == 0 and body["skips"]["unknown_item"] == 1, body
     # 감사 action 은 'edit' 과 분리돼 있어야 한다(2026-08-28) — 관리자 모니터링 탭이
     # action='ai_suggest' 인덱스로 집계하므로, 되돌리면 그 화면이 조용히 빈다.
     logs = report_db.get_audit_logs(action="ai_suggest", session_id=SID)
@@ -378,9 +408,15 @@ def test_worker_simulation():
     assert t_ai.start_background(SID_W, {"ai_comment_optin": True}) is False
     assert t_ai.start_background("?", {"ai_comment_optin": True, "ai_model": "claude"}) is False
 
-    t_ai._worker(SID_W, "http://fake-server")   # 동기 실행 (스레드 없이)
+    # 진행 알림(2026-09-01) — 성공 경로에서도 사용자에게 한 줄이 가야 한다. 종전에는
+    # 워커가 전부 조용해서, 화면엔 룰 문장이 정상처럼 나오는 탓에 사용자가 실패를
+    # 알아챌 방법이 아예 없었다.
+    notes = []
+    t_ai._worker(SID_W, "http://fake-server", notes.append)   # 동기 실행 (스레드 없이)
     assert _FakeCallClaude.calls, "run_batch 가 불리지 않았다"
     assert "스텁 프롬프트" in _FakeCallClaude.calls[0][0]
+    assert any("대행 완료" in n for n in notes), notes
+    assert any("새로고침" in n for n in notes), notes   # 다음에 뭘 할지까지 알려 준다
     # 기본 모델은 정식명 고정 — 별칭('sonnet')은 새 버전이 나오면 말없이 바뀐다.
     assert t_ai.DEFAULT_MODEL == "claude-sonnet-5"
     assert _FakeCallClaude.models[-1] == "claude-sonnet-5", _FakeCallClaude.models
@@ -403,6 +439,7 @@ def test_worker_failure_reports(t_ai):
     죽은 것을 영영 모른다 — 그래서 '조용히 끝난다'와 '보고는 한다'가 함께 성립해야 한다.
     """
     sent = []
+    notes = []      # 사용자에게 가는 알림 — 관리자 보고와 **별개 경로**다
     orig_report = t_ai._report_failure
     t_ai._report_failure = lambda kind, msg, sid, ctx: sent.append((kind, sid, ctx))
     orig_find = _FakeCallClaude.find_cli
@@ -410,25 +447,51 @@ def test_worker_failure_reports(t_ai):
     try:
         # ① CLI 없음
         _FakeCallClaude.find_cli = staticmethod(lambda env=None: None)
-        t_ai._worker(SID_W, "http://fake-server")
+        t_ai._worker(SID_W, "http://fake-server", notes.append)
         assert sent and sent[-1][0] == "ai_suggest_no_cli", sent
+        # 사용자도 알아야 한다 — 무엇을 확인할지(HONEY_CLAUDE_BIN)까지 문장에 있어야
+        # 신고를 받은 담당자가 되묻지 않는다.
+        assert "HONEY_CLAUDE_BIN" in notes[-1], notes[-1]
         # ② CLI 는 있는데 생성 0건 — 현장 인증 실패의 1순위 신호
         _FakeCallClaude.find_cli = orig_find
         _FakeCallClaude.run_batch = staticmethod(
             lambda prompts, **kw: [None] * len(prompts))
-        t_ai._worker(SID_W, "http://fake-server")
+        t_ai._worker(SID_W, "http://fake-server", notes.append)
         kind, sid, ctx = sent[-1]
         assert kind == "ai_suggest_empty" and sid == SID_W, sent[-1]
         assert ctx["items"] >= 1 and "batches" in ctx and "cli_log" in ctx
+        assert "신호등" in notes[-1], notes[-1]      # 다음 행동을 지목
         # ③ 대상 아닌 세션(404) → 사유가 denied 로 구분돼 보고된다
-        t_ai._worker(SID_DEF, "http://fake-server")
+        t_ai._worker(SID_DEF, "http://fake-server", notes.append)
         kind, _sid, ctx = sent[-1]
         assert kind == "ai_suggest_no_prompts" and ctx["reason"] == "denied", sent[-1]
+        assert ctx["status"] == 404, ctx     # 상태 코드가 보고에 실린다
+        assert "HTTP 404" in notes[-1], notes[-1]
     finally:
         t_ai._report_failure = orig_report
         _FakeCallClaude.find_cli = orig_find
         _FakeCallClaude.run_batch = orig_batch
-    print("  (j) 클라 실패 보고 3종(no_cli/empty/no_prompts) OK")
+    print("  (j) 클라 실패 보고 3종(no_cli/empty/no_prompts) + 사용자 알림 OK")
+
+
+def test_http_hint(t_ai):
+    """HTTP 상태 → 사용자용 안내 (2026-09-01).
+
+    숫자만 보여 주면 사용자는 여전히 다음에 뭘 할지 모른다 — 조치가 함께 나와야 한다.
+    모르는 코드에서도 문장이 나와야 하고(빈 문자열 금지), 예외를 던지면 안 된다.
+    """
+    assert "권한" in t_ai.http_hint(403)
+    assert "서버 버전" in t_ai.http_hint(404)
+    assert "잠겨" in t_ai.http_hint(423)          # 사용자가 예로 든 코드
+    for code in (500, 502, 503):
+        assert t_ai.http_hint(code).startswith(f"HTTP {code}"), code
+    assert t_ai.http_hint(418).startswith("HTTP 418")   # 모르는 4xx 도 문장은 나온다
+    assert t_ai.http_hint(599).startswith("HTTP 599")
+    # 요청 자체가 안 나간 경우(status 0/None) — 서버가 아니라 네트워크를 보라고 한다
+    assert "네트워크" in t_ai.http_hint(0)
+    assert "네트워크" in t_ai.http_hint(None)
+    assert t_ai.http_hint("bad") == ""            # 숫자가 아니면 조용히 빈 문자열
+    print("  (l) http_hint 사용자 안내(403/404/423/5xx/미상) OK")
 
 
 def test_check_status(t_ai):
@@ -482,6 +545,7 @@ def main():
     t_ai = test_worker_simulation()
     test_worker_failure_reports(t_ai)
     test_check_status(t_ai)
+    test_http_hint(t_ai)
     print("test_ai_suggest: 전부 통과")
     shutil.rmtree(_TMP, ignore_errors=True)
 
