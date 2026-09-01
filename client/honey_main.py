@@ -44,10 +44,12 @@ from honey_ui import folder_intake
 from honey_ui import (
     ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
+    HistoryStatusBar,
     OperationCancelled as _OperationCancelled,
     OptionsDialog,
     ReportSettingsDialog,
     SHEET_OPTIONS,
+    StatusHistoryDialog,
     UploadDialog,
     show_error as _show_error,
     show_exc as _show_exc,
@@ -597,7 +599,7 @@ class HoneyMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         uic.loadUi(UI_PATH, self)
-        self.status = self.statusbar
+        self._install_status_history()
         self.setWindowTitle(f"Honey  v{CURRENT_VERSION}")
         self.setWindowIcon(self._honey_icon(64))   # 꿀단지 실행/창 아이콘
         self.status.showMessage(f"Server: {SERVER_BASE_URL}")
@@ -635,6 +637,30 @@ class HoneyMainWindow(QMainWindow):
         self._version_manifest_ready.connect(self._on_version_manifest)
         self._announcement_ready.connect(self._on_announcement)
         QTimer.singleShot(500, self.check_for_update)
+
+    def _install_status_history(self):
+        """.ui 의 QStatusBar 를 히스토리 기록형으로 교체하고 클릭 → 팝업을 잇는다.
+
+        showMessage 호출부가 여러 곳이고 _ElapsedProgress 에 콜백으로 넘기는
+        자리도 있어, 위젯 자체를 바꿔 한 곳에서 전부 잡는다.
+        """
+        bar = HistoryStatusBar(self)
+        self.setStatusBar(bar)          # 기존 statusbar 는 Qt 가 정리한다
+        self.statusbar = bar            # uic 가 심어 둔 이름을 새 위젯으로 갱신
+        self.status = bar
+        self._status_history_dlg = None
+        bar.clicked.connect(self._show_status_history)
+
+    def _show_status_history(self):
+        dlg = getattr(self, "_status_history_dlg", None)
+        if dlg is None:
+            dlg = StatusHistoryDialog(self, self.status)
+            self._status_history_dlg = dlg
+        else:
+            dlg._reload()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def _apply_main_ui_tweaks(self):
         """메인 화면 상단 배치와 주요 파일 선택 버튼 가독성을 조정한다."""
@@ -4737,7 +4763,10 @@ HONEY_QSS = """
     QScrollBar:horizontal { background: #FBF3D6; height: 12px; margin: 0; }
     QScrollBar::handle:horizontal { background: #E7CE86; border-radius: 6px; min-width: 24px; }
     QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    /* 상태바는 클릭하면 메시지 기록 팝업이 뜬다 — hover 로 눌리는 곳임을 알린다. */
     QStatusBar { background: #F3E5B8; color: #6B4E16; }
+    QStatusBar:hover { background: #EFDCA4; }
+    QStatusBar::item { border: none; }
 """
 
 

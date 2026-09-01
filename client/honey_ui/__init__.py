@@ -9,15 +9,18 @@ from .dialogs import (
 )
 from .errors import show_error, show_exc
 from .progress import ElapsedProgress, OperationCancelled, wait_for_future
+from .status_history import HistoryStatusBar, StatusHistoryDialog
 
 __all__ = [
     "ColorEditorDialog",
     "ElapsedProgress",
     "FileOrderDialog",
+    "HistoryStatusBar",
     "OperationCancelled",
     "OptionsDialog",
     "ReportSettingsDialog",
     "SHEET_OPTIONS",
+    "StatusHistoryDialog",
     "UploadDialog",
     "show_error",
     "show_exc",
