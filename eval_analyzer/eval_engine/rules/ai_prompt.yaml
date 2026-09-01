@@ -28,9 +28,10 @@ instructions:
     결과를 바꾸거나 과장하지 마라.
 - id: integrate_precedents
   enabled: true
-  text: '[제안] 은 사례가 중심이다 - 사례가 있는 signature 는 그 사례가 무엇을 확인해 어떻게
-    해결했는지를 지금 할 일로 바꿔 쓰고, 기본 조치 목록은 사례로 덮이지 않는 signature 에만
-    쓰되 문장을 그대로 옮겨 적지 마라.'
+  text: '[제안] 은 사례가 중심이다 - 기본 조치 문구를 그대로 쓰거나 요약하지 말고 사례가 실제로
+    내린 결론(진성/낙도성 여부, 재현 여부, wait 안정화, 개발팀과의 협의 내용 등 사례에 있는
+    그대로의 판단)을 지금 확인할 일로 바꿔 써라. 기본 조치 목록은 사례로 덮이지 않는 signature
+    에만 쓰되 문장을 그대로 옮겨 적지 마라.'
 - id: cover_all_signatures
   enabled: true
   text: 발화한 signature 는 위 [발화 signature 전체] 목록에 있는 것이 전부다 - primary 하나만
@@ -38,9 +39,11 @@ instructions:
     마라.
 - id: signature_budget_first
   enabled: true
-  text: '[제안] 은 전체 10줄 한 signature 당 5줄이 상한이다 - 예산은 발화 signature 를 먼저
-    덮는 데 쓰고 남는 줄로 사례 대조를 써라. signature 가 목록에 있는데 근거가 약하면 빼는
-    것이 아니라 무엇을 더 확인해야 판단할 수 있는지로 한 줄 써라.'
+  text: '[제안] 은 전체 12줄 한 signature 당 5줄이 상한이다 - 예산은 발화 signature 를 먼저
+    덮는 데 쓰고 남는 줄로 사례 대조를 써라. 예산이 부족하면 사례가 없는 signature 줄부터
+    줄이고 사례가 있는 signature 의 구체적 판단 조치는 최대한 적게 줄여라. signature 가
+    목록에 있는데 근거가 약하면 빼는 것이 아니라 무엇을 더 확인해야 판단할 수 있는지로 한
+    줄 써라.'
 - id: no_metric_names
   enabled: true
   text: 내부 지표 이름과 그 수치는 문장에 쓰지 마라 - FAIL_MAD_MIN TAIL_MASS_3S_HIGH

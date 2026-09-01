@@ -32,7 +32,7 @@ ai_comment/eval_export/eval_debug 3곳 고정)이라 ai_prompt.py 는 엔진을 
       cover_all_signatures / signature_budget_first / no_metric_names / terse_lines 가
       켜져 있고 프롬프트로 나가는지 + `_INSTRUCTION_EXTRA` 의 축소 지시가 무조건형으로
       되돌아가지 않았는지(그러면 커버리지 요구를 눌러 버린다).
-  (t) **출력 문체 규칙**(2026-09-02) — 10줄 + signature 당 5줄 상한, 내부 지표명·수치
+  (t) **출력 문체 규칙**(2026-09-02) — 12줄 + signature 당 5줄 상한, 내부 지표명·수치
       출력 금지(CPK 예외), 사례 위주. ⚠ 핵심은 **비대칭**이다: 금지는 출력 문장에만
       걸고 프롬프트 **재료**의 수치([근거]·[현재 통계]·선례 당시 통계)는 그대로 실린다.
       재료까지 빼면 "그때 값 vs 지금 값" 대조가 원리적으로 불가능해진다.
@@ -562,12 +562,15 @@ def test_output_style_rules():
     지표 수치를 프롬프트 재료에서까지 빼면 "그때 값 vs 지금 값" 대조가 원리적으로
     불가능해져 사례가 무용지물이 된다 — 되돌림을 여기서 막는다.
     """
-    # ① 줄 수: 5줄 상한이 10줄 + signature 당 5줄로 바뀌었다(양쪽 사본 모두).
-    assert "최대 10줄" in P._INSTRUCTION and "5줄을 넘기지 마라" in P._INSTRUCTION
+    # ① 줄 수: 5줄 → 10줄 → **12줄**(2026-09-02) + signature 당 5줄. 양쪽 사본 모두.
+    # 숫자가 세 곳(_INSTRUCTION 사본 2벌 + _INSTRUCTION_EXTRA + yaml)에 흩어져 있어
+    # 하나만 고치면 프롬프트가 스스로 모순된 예산을 말한다 — 여기서 함께 고정한다.
+    assert "최대 12줄" in P._INSTRUCTION and "5줄을 넘기지 마라" in P._INSTRUCTION
     assert "최대 5줄로 쓰고" not in P._INSTRUCTION, "옛 5줄 상한이 남아 있다"
-    assert "10줄은 상한이지" in P._INSTRUCTION_EXTRA, "EXTRA 의 줄 수 안내가 옛 5줄이다"
-    # 상한 문자 수도 10줄에 맞게 올라가 있어야 한다(잘라내기라 모자라면 문장이 끊긴다)
-    assert P.MAX_SUGGESTION_CHARS >= 1800
+    assert "최대 10줄" not in P._INSTRUCTION, "옛 10줄 상한이 남아 있다"
+    assert "12줄은 상한이지" in P._INSTRUCTION_EXTRA, "EXTRA 의 줄 수 안내가 옛 값이다"
+    # 상한 문자 수도 12줄에 맞게 올라가 있어야 한다(잘라내기라 모자라면 문장이 끊긴다)
+    assert P.MAX_SUGGESTION_CHARS >= 2160
 
     # ② 수치·지표명은 **출력**에서 금지 — 지시문이 실제 지표명을 예로 들어야 모델이 안다.
     assert "지표 이름과 그 수치는 쓰지 마라" in P._INSTRUCTION
@@ -588,7 +591,21 @@ def test_output_style_rules():
     assert "그대로 옮겨 적지 마라" in P._INSTRUCTION
     # 기본 조치 목록은 재료로는 계속 실린다(사례가 안 덮는 signature 를 메운다)
     assert "[기본 조치 목록(action_ko)]" in p
-    print("  (t) 출력 문체(10줄·지표명 금지·사례 위주) + 재료 비대칭 OK")
+
+    # ⑤ 배포 yaml 지시문(2026-09-02) — 프롬프트에 실제로 합류하는지까지 본다.
+    #   · 사례가 내린 **결론**을 지금 할 일로 바꿔 쓸 것(기본 조치 문구 복붙·요약 금지)
+    #   · 예산이 모자라면 **사례가 없는** signature 줄부터 줄일 것
+    #   yaml 은 문장을 접어 저장하므로(줄바꿈+들여쓰기) 프롬프트 문자열에서 공백을
+    #   접어 비교한다 — 원문 그대로 찾으면 줄바꿈 위치에 따라 헛되이 깨진다.
+    flat = " ".join(p.split())
+    assert "사례가 실제로 내린 결론" in flat and "지금 확인할 일로 바꿔 써라" in flat, \
+        "integrate_precedents 개정본이 프롬프트에 안 실렸다"
+    assert "진성/낙도성 여부" in flat and "wait 안정화" in flat, \
+        "사례 결론의 예시 어휘가 빠졌다 — 모델이 무엇을 옮겨 쓸지 모른다"
+    assert "사례가 없는 signature 줄부터 줄이고" in flat, \
+        "예산 부족 시 줄이는 순서가 프롬프트에 없다"
+    assert "전체 12줄" in flat, "yaml 예산이 코드(_INSTRUCTION)와 갈렸다"
+    print("  (t) 출력 문체(12줄·지표명 금지·사례 위주) + 재료 비대칭 OK")
 
 
 def test_parse_llm_blocks():

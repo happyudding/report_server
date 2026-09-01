@@ -552,7 +552,18 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   ①②④ 는 `_INSTRUCTION`(+엔진 원본 recommend.py)·`_INSTRUCTION_EXTRA` 코드이고,
 #   ③ 은 yaml 기본 지시(integrate_precedents 개정 + no_metric_names/terse_lines 신설)라
 #   코드 배포로 처음 들어간다 — v5~v10 과 같은 이유로 여기만 올린다(전역 bump 금지).
-AI_COMMENT_SCHEMA_VERSION = 11
+# v12 (2026-09-02): [제안] 예산 10줄 → **12줄** + 예산 부족 시 줄이는 **순서**를 못 박았다
+#   (사용자 결정). ① `integrate_precedents` — 기본 조치 문구를 그대로/요약해 쓰지 말고
+#   사례가 실제로 내린 결론(진성·낙도성, 재현 여부, wait 안정화, 개발팀 협의 내용)을
+#   지금 확인할 일로 바꿔 쓴다 ② `signature_budget_first` — 예산이 모자라면 **사례가 없는**
+#   signature 줄부터 줄이고 사례가 있는 signature 의 구체적 판단 조치는 최대한 지킨다.
+#   ①② 는 yaml 이라 `/pe/eval` 저장이면 rules_rev 가 갈아 주지만, 이번엔 **파일을 직접**
+#   고쳤으므로 그 카운터가 안 움직인다. 게다가 줄 수(12줄)는 `_INSTRUCTION`(+엔진 원본
+#   recommend.py)·`_INSTRUCTION_EXTRA` **코드**에도 있어 v5~v11 과 같은 이유로 여기서 올린다
+#   (전역 bump 금지 — 이 상수는 ai_comment_key 에만 들어간다).
+#   ⚠ 잘라내기 상한 `ai_prompt.MAX_SUGGESTION_CHARS` 도 1800 → 2160 으로 함께 올렸다.
+#     안 올리면 12줄을 지시해 놓고 10줄어치에서 문장이 잘린 채 저장된다.
+AI_COMMENT_SCHEMA_VERSION = 12
 
 
 def _ai_meta_digest(session) -> str:

@@ -196,6 +196,30 @@ primary)에 대한 얘기만 나온다.
 건드릴 때 함께 볼 것.
 
 캐시는 v5~v10 과 같은 이유로 `AI_COMMENT_SCHEMA_VERSION` 만 v11 로 올린다(전역 bump 금지).
+
+### 예산 12줄 + 줄이는 순서 · 사례의 "결론"을 쓴다 (2026-09-02, v12)
+
+같은 날 v11 의 10줄이 다시 **12줄**이 됐다. 이유는 분량이 아니라 **무엇을 먼저 버리는가**
+였다 — 예산이 모자랄 때 모델이 사례가 있는 signature 의 구체적 조치부터 뭉개고 일반론을
+남기는 일이 있었다. 그래서 줄 수를 늘리는 것과 **줄이는 순서를 못 박는 것**을 같이 했다.
+
+| 바뀐 것 | 전 | 후 | 어디 |
+|---|---|---|---|
+| 분량 | 전체 10줄 | **전체 12줄** (signature 당 5줄은 유지) | `_INSTRUCTION`(양쪽 사본) · `_INSTRUCTION_EXTRA`("12줄은 상한이지") · yaml `signature_budget_first` |
+| 예산 배분 | "발화를 먼저 덮어라" 까지만 | **사례가 없는 signature 줄부터 줄이고, 사례가 있는 signature 의 구체적 판단 조치는 최대한 지킨다** | yaml `signature_budget_first` |
+| 사례 활용 | "무엇을 확인해 어떻게 해결했는지" | **사례가 실제로 내린 결론**(진성/낙도성 여부, 재현 여부, wait 안정화, 개발팀 협의 내용)을 지금 확인할 일로 바꿔 쓴다. 기본 조치 문구를 그대로 쓰거나 요약하는 것 금지 | yaml `integrate_precedents`(재개정) |
+
+⚠ **줄 수가 네 곳에 흩어져 있다** — `_INSTRUCTION` 2벌(`web_report/ai_prompt.py` +
+엔진 원본 `recommend.py`, 바이트 동일이어야 함) · `_INSTRUCTION_EXTRA` · yaml
+`signature_budget_first`. 하나만 고치면 프롬프트가 스스로 모순된 예산을 말한다.
+`tests/test_ai_prompt_determinism.py` **(t)** 가 네 곳을 함께 고정한다.
+
+`MAX_SUGGESTION_CHARS` 1800 → **2160**(12줄 × 여유 180자). 안 올리면 12줄을 지시해 놓고
+10줄어치에서 문장이 잘린 채 저장된다.
+
+캐시는 `AI_COMMENT_SCHEMA_VERSION` 만 v12(전역 bump 금지). ⚠ 이번엔 yaml 을 `/pe/eval`
+저장이 아니라 **파일로 직접** 고쳤으므로 `.rules_rev` 가 움직이지 않는다 — 그 카운터에
+기대지 말고 이 상수로 갈아야 한다.
 지시문이 갈리면 sha 가 전량 갈려 저장된 [제안]이 폐기되고 클라가 재대행하는데, 그때
 payload 셀은 push → `payload_rev` 증가 → 재빌드로 자연히 새 문장으로 교체된다.
 
