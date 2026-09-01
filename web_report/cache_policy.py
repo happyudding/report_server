@@ -521,7 +521,15 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   **두 블록 계약**([사례] 요약 / [제안] 통합)으로 바뀌고 선례 0건 item 은 프롬프트를
 #   만들지 않는다. 구조 변경이라 규약 그대로다. payload 쪽 변화(ai_precedents 키·코멘트
 #   3섹션 전량화)는 `_eval_rules_suffix` 의 "aiprec" 표식이 담당한다 — 전역 bump 금지.
-AI_COMMENT_SCHEMA_VERSION = 9
+# v10 (2026-09-02): 지시문을 **출력 형식 예시**로 다시 씀 — 현장에서 모델이 문장 대신
+#   `{"precedent":…,"suggestion":{"text":…}}` 를 내 그대로 셀에 박혔다. 원인은 두 가지였다:
+#   ① 종전 지시문은 `[사례]`/`[제안]` 을 **소제목처럼** 써서 "출력할 토큰" 으로 안 읽혔고,
+#   ② 바깥 배치 래퍼가 "JSON 배열로 답하라" 를 요구해 안쪽 "JSON 쓰지 마라" 와 충돌했다
+#      (call_claude/batch.py 가 "text 안에 또 JSON 을 만들지 마라" 로 분리 안내).
+#   그래서 `[사례] <…>` / `[제안] <…>` 두 줄을 **예시로 못 박고** JSON 금지를 명시했다.
+#   서버는 `unwrap_json_reply` 로 뒤에서도 걷어내지만 애초에 안 나오게 하는 게 낫다.
+#   지시문이 바뀌면 sha 가 갈리므로 v5~v9 와 같은 이유로 여기만 올린다(전역 bump 금지).
+AI_COMMENT_SCHEMA_VERSION = 10
 
 
 def _ai_meta_digest(session) -> str:

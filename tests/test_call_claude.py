@@ -197,6 +197,11 @@ def test_meta_prompt():
     assert inner in meta                       # 내부 본문은 그대로 보존
     assert meta.count(f"===REQUEST 1/2 {nonce}===") == 1  # 진짜 구분자는 nonce 로 유일
     assert "JSON 배열 하나만" in meta
+    # 바깥 배치 형식(JSON 배열)과 **안쪽 요청 형식**의 충돌을 푸는 안내가 있어야 한다
+    # (2026-09-02 현장: 요청이 "JSON 으로 답하지 마라" 라 하자 모델이 text 값 안에 또
+    # JSON 을 넣었다). 도메인 문구는 넣지 않는다 — 이 패키지는 재사용 대상이다.
+    assert "text 안에 또 다른 JSON" in meta, \
+        "배치 봉투와 요청 형식의 분리 안내가 사라졌다 — text 안에 JSON 이 다시 들어간다"
     # 관대 파싱 직접 검증
     assert B.parse_batch_reply("prefix [\"x\"] suffix", 1) == ["x"]
     assert B.parse_batch_reply(None, 2) == [None, None]

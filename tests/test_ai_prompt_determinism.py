@@ -606,6 +606,73 @@ def test_denied_ignores_spacing():
     print("  (p) 금지 문구 띄어쓰기 무시 매칭 OK")
 
 
+def test_real_llm_reply_shape():
+    """(r) 관리자 화면에서 실제로 관측된 응답 모양 — 토큰이 **줄 맨 앞**, 본문은 다음 줄.
+
+    사용자 확인(2026-09-02): 모델이 이렇게 답한다.
+        [사례]
+        사례1 …설명…
+        (빈 줄)
+        [제안]
+        - …
+
+    종전 픽스처는 `[사례] 본문` 처럼 **같은 줄**만 봤다 — 토큰 뒤 개행·빈 줄이 섞여도
+    섹션이 갈리는지 여기서 고정한다. 하나라도 틀리면 사례 요약이 [제안] 에 섞여 들어간다.
+    """
+    reply = ("[사례]\n"
+             "사례1 P1/L1 - Retest 후 정상 복귀. contact 저항이 원인으로 확인됨.\n"
+             "사례2 P2/L2 - trim 재조정으로 개선.\n"
+             "\n"
+             "[제안]\n"
+             "- 사례1처럼 Retest 로 재현성을 먼저 확인한다.\n"
+             "- contact 등 환경성 요인을 점검한다.")
+    cases, sugg = P.parse_llm_blocks(reply)
+    assert cases.startswith("사례1 P1/L1"), cases
+    assert "사례2 P2/L2" in cases
+    assert "[제안]" not in cases and "Retest 로 재현성" not in cases, \
+        f"제안이 사례 블록에 섞였다: {cases!r}"
+    assert sugg.startswith("- 사례1처럼"), sugg
+    assert "사례1 P1/L1" not in sugg, f"사례 요약이 제안에 섞였다: {sugg!r}"
+
+    # 셀에 박히는 최종 모습 — 두 섹션이 각자 자리에 들어간다
+    cell = ("[MAJOR] [현상] - LOW_CPK: CPK 부족\n[사례] ①(P1/L1) 코드 나열 \n"
+            " [제안] - LOW_CPK: spec 재검토")
+    out = P.patch_cell(cell, past=P.sanitize_suggestion(cases),
+                       suggestion=P.sanitize_suggestion(sugg))
+    assert "[사례] 사례1 P1/L1" in out and "[제안] - 사례1처럼" in out, out
+    assert "코드 나열" not in out and "spec 재검토" not in out, out
+    # 지시문이 이 형태를 **예시로** 못 박고 있어야 한다(모델이 형식을 지키는 근거)
+    assert "[사례] <사례 요약 문장들>" in P._INSTRUCTION, \
+        "출력 형식 예시가 지시문에서 사라졌다 — 모델이 형식을 지킬 근거가 없어진다"
+    assert "JSON" in P._INSTRUCTION, "JSON 금지 지시가 사라졌다"
+    print("  (r) 실제 관측 응답 모양(토큰 줄바꿈·빈 줄) 파싱 OK")
+
+
+def test_unwrap_json_reply():
+    """(q) 모델이 JSON 객체를 내면 문장만 꺼낸다 — 2026-09-02 현장 신고 재현.
+
+    신고 원문이 그대로 셀에 박혔다:
+      {"precedent":{…}, "suggestion":{"text":"Retest…"}, "evidence_refs":["E1"]}
+    이 스키마는 우리 코드에 없다(배치 계약은 [{id,text}]) — 모델이 text 안에 자기 구조를
+    또 만든 것이고, 파서가 [사례]/[제안] 토큰을 못 찾아 통째로 [제안] 본문이 됐다.
+    """
+    raw = ('{"precedent" : {"use:":false, "selected_id": null, "relevance":"low",'
+           '"summary":null},"suggestion":{"text": "Retest를 통해 이상치 재현성을 '
+           '먼저 확인한다."}, "evidence_refs":["E1"]}')
+    # sanitize 를 통과하면 문장만 남는다(= 실제 push 경로)
+    assert P.sanitize_suggestion(raw) == "Retest를 통해 이상치 재현성을 먼저 확인한다."
+    # ```json 코드펜스로 감싼 변형도 같다(펜스 제거 뒤에 unwrap 이 돈다)
+    assert P.sanitize_suggestion("```json\n" + raw + "\n```") \
+        == "Retest를 통해 이상치 재현성을 먼저 확인한다."
+    # 건질 문장이 없으면 "" → 호출부가 skip 하고 룰 문장으로 폴백한다
+    assert P.sanitize_suggestion('{"a": "low", "b": null, "c": ["E1"]}') == ""
+    # ⚠ 정상 응답은 손대지 않는다(회귀 방지)
+    plain = "- edge 이력을 확인하라\n- 산포 재측정"
+    assert P.sanitize_suggestion(plain) == plain
+    assert P.unwrap_json_reply('{"broken') == '{"broken'      # 깨진 JSON 은 원문 유지
+    print("  (q) JSON 응답 → 문장만 추출(신고 재현) OK")
+
+
 def main():
     _RULES["deny_patterns"][0]["regex"] = _load_shipped_deny_regex()
     test_determinism()
@@ -626,6 +693,8 @@ def main():
     test_parse_llm_blocks()
     test_patch_cell()
     test_denied_ignores_spacing()
+    test_real_llm_reply_shape()
+    test_unwrap_json_reply()
     print("test_ai_prompt_determinism: 전부 통과")
 
 

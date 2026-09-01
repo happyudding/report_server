@@ -15,6 +15,7 @@ make_comment:
 선례가 0건이면 LLM 을 아예 부르지 않는다 — 사례 대조가 이 프롬프트의 존재 이유라 재료가
 없으면 토큰·시간만 쓴다(사용자 결정).
 """
+import json
 import re
 
 from .. import llm_client, precedent_client
@@ -35,7 +36,10 @@ _MODALITY_V2_COMMENT = {
     "separated": "분포가 하나의 중심으로 모이지 않고 분리되는 양상입니다.", }
 
 _NO_PHENOMENON_FALLBACK = "엔지니어 확인 필요"
-_NO_PRECEDENT_TEXT = "참고할 수 있는 과거 사례가 없습니다."
+# 사례가 없을 때 **화면 [사례] 자리**에 들어가는 값 — 사용자 요청(2026-09-02)으로 문장을
+# 없애고 대시 하나만 둔다("참고할 수 있는 …" 을 매번 읽을 필요가 없다).
+# ⚠ 프롬프트 재료로는 이 값을 쓰지 않는다 — 사례가 0건이면 LLM 을 아예 부르지 않는다.
+_NO_PRECEDENT_TEXT = "-"
 # 선례 나열의 번호표 — 6건 이상이면 그냥 숫자로 떨어진다(top-k 기본 5).
 _PREC_MARKS = "①②③④⑤⑥⑦⑧⑨⑩"
 
@@ -227,6 +231,48 @@ def _precedent_lines(precedents) -> str:
 
 
 
+def unwrap_json_reply(text):
+    """모델이 문장 대신 **JSON 객체**를 냈으면 그 안의 사람 문장만 꺼낸다.
+
+    ⚠ **web_report/ai_prompt.py 에 같은 함수의 사본**이 있다(규칙 #8 로 import 불가) —
+    한쪽을 고치면 다른 쪽도 고칠 것. 배경·정책은 그쪽 docstring 참조(2026-09-02 현장 신고:
+    `{"precedent":…,"suggestion":{"text":…},"evidence_refs":…}` 가 [제안] 자리에 그대로 박혔다).
+    JSON 이 아니면 원문 그대로 통과 — 정상 경로에서는 아무 일도 하지 않는다.
+    """
+    s = str(text or "").strip()
+    if not (s.startswith("{") or s.startswith("[")):
+        return s
+    try:
+        doc = json.loads(s)
+    except (ValueError, TypeError):
+        return s
+    found = []
+    def _walk(node, depth=0):
+        if depth > 6 or len(found) >= 20:
+            return
+        if isinstance(node, str):
+            t = node.strip()
+            if len(t) >= 10:
+                found.append(t)
+        elif isinstance(node, dict):
+            for key in ("text", "suggestion", "content", "message", "value"):
+                if key in node:
+                    _walk(node[key], depth + 1)
+            for k, v in node.items():
+                if k not in ("text", "suggestion", "content", "message", "value"):
+                    _walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v, depth + 1)
+    _walk(doc)
+    out, seen = [], set()
+    for t in found:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return "\n".join(out)
+
+
 def parse_llm_blocks(text):
     """LLM 출력 → (사례 요약|None, 제안|None). 두 블록 계약(2026-09-02)의 파서.
 
@@ -284,13 +330,16 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
     sig_lines = _fired_signature_lines(sig_result, case_ctx)
     prec_lines = _precedent_lines(precedents)
     lines = [
-        "반도체 fail item 분석 결과다. 아래 두 블록만 한국어로 출력하고 다른 텍스트는 쓰지 마라.\n"
-        "[사례]\n"
-        "아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약하라 - 제품/lot 당시 판단 근거 조치 결과.\n"
+        "반도체 fail item 분석 결과다. 답은 **정확히 아래 형식의 평문**으로만 쓴다.\n"
+        "출력 형식(이 두 줄 머리말을 그대로 포함해서 쓴다):\n"
+        "[사례] <사례 요약 문장들>\n"
+        "[제안] <점검 제안 항목들>\n"
+        "이 두 머리말 밖의 텍스트, 인사말, 코드펜스, JSON 이나 키-값 구조는 쓰지 마라.\n"
+        "답 전체를 JSON 으로 감싸지 말고 사람이 읽는 문장만 쓴다.\n"
+        "[사례] 에 쓸 것: 아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약한다 - 제품/lot 당시 판단 근거 조치 결과.\n"
         "현재 현상에 적용할 수 있는지 판단하거나 평가하거나 부정하지 마라 - 요약만 하라.\n"
         "사례에 없는 내용을 만들지 마라.\n"
-        "[제안]\n"
-        "기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리하라.\n"
+        "[제안] 에 쓸 것: 기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리한다.\n"
         "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라.\n"
         "발화한 signature 전체가 다뤄져야 한다 - 원인이 이어지는 항목은 한 줄에 묶어도 되지만 빠뜨리지는 마라.\n"
         "원인을 확정적으로 단정하지 마라. 사례의 조치를 정답으로 단정하지 마라.\n"
@@ -302,8 +351,10 @@ def _build_prompt(case_ctx, verdict, sig_result, precedents, phenomenon,past_cas
         "[발화 signature 전체]",
         sig_lines or "- (없음)",
         f"{SEC_PHEN} {phenomenon}",
+        # 사례가 0건이면 `make_comment` 가 LLM 을 아예 안 부르므로 이 자리는 항상 채워진다
+        # (도달 불가 폴백은 남겨 둔다 — 다른 호출부가 직접 부를 수 있다).
         "[사례 목록]",
-        prec_lines or f"- {_NO_PRECEDENT_TEXT}",
+        prec_lines or "- (없음)",
         "[기본 조치 목록(action_ko)]",
         action_ko,
     ]
@@ -348,6 +399,8 @@ def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: li
                                    phenomenon, past_case, actions)
             llm_out = (llm_client.complete(prompt, model_version=model_version) or "").strip()
             cases, sugg = parse_llm_blocks(llm_out)
+            # 모델이 문장 대신 JSON 객체를 내는 경우가 있다 — 그 안의 문장만 꺼낸다.
+            cases, sugg = unwrap_json_reply(cases), unwrap_json_reply(sugg)
             # 블록이 안 온 쪽은 **코드 문장을 유지**한다 — 빈 섹션을 만들면 화면에서
             # "사례가 사라진" 것으로 보인다.
             past_case = cases or past_case

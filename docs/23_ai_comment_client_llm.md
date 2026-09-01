@@ -91,7 +91,7 @@ only, 빈 임시 cwd, utf-8 고정, `--help` 스캔 플래그 게이팅(`--safe-
 | [web_report/ai_comment.py](../web_report/ai_comment.py) | `build_ai_comments` 반환에 `prompts` 부착 · `_EMPTY_RESULT` 에 `"prompts": {}` (eval import 무변경 — 규칙 #8) · `_prompt_enrich` 가 **현재 케이스** 재료를 조립 (§선례 상세 보강) |
 | [eval_analyzer/eval_engine/store.py](../eval_analyzer/eval_engine/store.py) | `search_precedents` 가 선례 행에 **당시 수치**(최신 run 의 raw_metrics/features + unit/status)를 함께 싣는다 (§선례 상세 보강). DDL 무변경 — SELECT 확장뿐 |
 | [eval_analyzer/…/present.py](../eval_analyzer/eval_engine/pipeline/present.py) | `_precedent_result` — 선례 계약 dict(종전 5키 + 식별·당시 수치) |
-| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 9` (v4 prompts 키 → v5 본문 확장 → v6 지시문 확장 → v7 운영자 지시문 합류 → v8 커버리지 → **v9 두 블록 계약 + `precedents`/`precedent_counts` 키**). `ai_comment_key` 구성 불변. payload 쪽(`ai_precedents` 키)은 `_eval_rules_suffix` 의 **"aiprec"** 표식이 담당 — 전역 bump 금지 |
+| [web_report/cache_policy.py](../web_report/cache_policy.py) | `AI_COMMENT_SCHEMA_VERSION = 10` (v4 prompts 키 → v5 본문 확장 → v6 지시문 확장 → v7 운영자 지시문 합류 → v8 커버리지 → v9 두 블록 계약 + `precedents`/`precedent_counts` 키 → **v10 "JSON 으로 답하지 마라" 지시**). `ai_comment_key` 구성 불변. payload 쪽(`ai_precedents` 키)은 `_eval_rules_suffix` 의 **"aiprec"** 표식이 담당 — 전역 bump 금지 |
 | [eval_analyzer/…/rules/ai_prompt.yaml](../eval_analyzer/eval_engine/rules/ai_prompt.yaml) (신규) | 운영자 지시문 + 금지 문구 **정본**. 편집은 `/pe/eval` AI 지시문 탭 → [eval_panel/rules_io.py](../server/eval_panel/rules_io.py) `save_ai_prompt` · 로더 [_rules.py](../eval_analyzer/eval_engine/pipeline/_rules.py) `ai_prompt_doc`/`ai_prompt_instructions` · 서버 창구 [eval_debug.py](../web_report/eval_debug.py) `ai_prompt_rules` |
 | [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py) | 항목에 선택 키 `raw`(sanitize **이전** LLM 원문) — sanitize 결과와 **다를 때만** 저장, 상한 `MAX_RAW_CHARS`(4000). 관리자 검수에서 "모델이 이상한 것" vs "서버가 걷어낸 것" 구분용 |
 
@@ -261,6 +261,43 @@ primary)에 대한 얘기만 나온다.
   호환). 불변 계약이라 CLAUDE.md §5 규칙 12 에 등재 — 파서 사본 4곳을 함께 고칠 것.
 - 캐시: `AI_COMMENT_SCHEMA_VERSION` v8→**v9**, payload 쪽은 `_eval_rules_suffix` 에
   **"aiprec"** 영구 표식(ai 세션의 report_key 에만 붙는다). **전역 bump 금지**(규칙 14).
+
+#### 후속 — 모델이 JSON 으로 답하는 형식 이탈 (같은 날, v10)
+
+재기동 후 현장에서 `[제안]` 자리에 이것이 그대로 박혔다:
+```
+{"precedent":{"use:":false,"selected_id":null,"relevance":"low","summary":null},
+ "suggestion":{"text":"Retest를통해 …"},"evidence_refs":["E1"]}
+```
+**DB 문제도 LLM 실패도 아니다** — 오히려 선례를 정상 회수해 LLM 이 호출됐고, 배치 계약
+(`[{id,text}]`)도 지켜졌다. 모델이 그 `text` **안에** 자기 스키마를 또 만든 것이고
+(`precedent`/`selected_id`/`evidence_refs` 는 **우리 코드에 없는 이름**이다 — 프롬프트가
+두 블록을 요구하니 "구조화해서 답해야 한다" 고 넘겨짚은 부류), 파서는 `[사례]`/`[제안]`
+토큰만 찾으므로 토큰 없는 그 덩어리가 통째로 [제안] 본문이 됐다.
+
+**왜 모델이 그랬나 — 지시가 두 군데서 충돌했다**:
+- 종전 지시문은 `[사례]`/`[제안]` 을 **소제목처럼** 배치해, 모델이 "지시문의 구조" 로 읽고
+  자기가 출력할 토큰으로 여기지 않을 여지가 있었다.
+- 바깥 **배치 래퍼**([call_claude/batch.py](../call_claude/batch.py))는 "JSON 배열 하나만
+  내라" 를 요구하는데, 안쪽 요청이 "JSON 쓰지 마라" 라고 하면 둘이 정면 충돌한다.
+
+대응 3단:
+1. **지시문을 출력 형식 예시로 다시 썼다** — `[사례] <사례 요약 문장들>` / `[제안] <점검
+   제안 항목들>` 두 줄을 **그대로 포함해 쓰라**고 못 박고, JSON·코드펜스·인사말을 금지
+   (엔진·서버 사본 양쪽). 실제 관측된 응답 모양(토큰이 줄 맨 앞, 본문은 다음 줄, 사이에
+   빈 줄)은 `test_ai_prompt_determinism` (r) 이 픽스처로 고정한다.
+2. **배치 래퍼에 형식 분리 안내 1줄** — "각 text 값에는 그 요청이 시킨 형식의 답을
+   문자열 하나로 담고, text 안에 또 다른 JSON 을 만들지 마라". 도메인 문구는 넣지 않는다
+   (`call_claude/` 는 재사용 모듈 — 경계 유지). 회귀는 `test_call_claude` (e).
+3. **`unwrap_json_reply`** — `sanitize_suggestion` 이 코드펜스 제거 **뒤**에 부른다.
+   JSON 이면 그 안에서 사람 문장(10자 이상)만 꺼내고, 못 꺼내면 `""` 를 돌려 호출부가
+   skip → 룰 문장으로 폴백한다(사용자에게 JSON 을 보여 주는 것보다 낫다).
+   JSON 이 아니면 원문 그대로 — 정상 경로는 아무 일도 하지 않는다.
+   엔진에도 같은 함수 사본이 있다(규칙 #8, 서버 LLM 경로용) — 동치는
+   `test_ai_prompt_rules.test_unwrap_json_reply` 가 두 구현을 같은 입력으로 대조한다.
+
+같은 날 **사례 0건 표시도 `-` 한 글자로** 바꿨다(`recommend._NO_PRECEDENT_TEXT`, 사용자
+요청) — "참고할 수 있는 과거 사례가 없습니다." 를 매번 읽을 이유가 없다.
 
 계약상 중요한 점:
 - **종전 선례 5키(action/result/comment/product_name/family_product)는 이름·의미 불변**이다 —

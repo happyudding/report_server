@@ -46,6 +46,7 @@ LLM 을 아예 거치지 않는다(토큰·시간 절약). 섹션 토큰 `[현�
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 # ── 코멘트 평문 파싱 (형식 정본: recommend.make_comment — 규칙 12) ──────────
@@ -72,7 +73,10 @@ _CTRL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")   # \n(0x0a) 은 살린다 �
 # docs/23 초안의 500자 상한은 그 형식 변경으로 1000자로 늘렸다.
 MAX_SUGGESTION_CHARS = 1000
 
-_NO_PRECEDENT_TEXT = "참고할 수 있는 과거 사례가 없습니다."
+# 프롬프트의 [사례 목록] 이 비었을 때의 자리표시 — **도달 불가**다(선례 0건이면
+# `build_prompt` 가 None 을 돌려줘 LLM 을 아예 안 부른다). 화면 [사례] 의 "없음" 표시는
+# 엔진 `recommend._NO_PRECEDENT_TEXT`("-", 2026-09-02 사용자 요청)가 만든다.
+_NO_PRECEDENT_TEXT = "(없음)"
 
 # 선례 상세·현재 통계의 **출력 순서 고정** — dict 순서에 기대면 프롬프트가 흔들려
 # sha 게이트가 매번 갈린다(저장된 suggestion 이 전부 폐기된다). 값 이름은 eval DB 컬럼
@@ -89,13 +93,16 @@ _PRECEDENT_FEATURE_ORDER = ("spread_norm", "outlier_ratio", "bimodality_score",
 # 1덩어리" 를 유지한다(줄 사이 개행 없음). 원본이 바뀌면 여기도 같이 고칠 것
 # (tests/test_ai_prompt_determinism.py 가 대조).
 _INSTRUCTION = (
-    "반도체 fail item 분석 결과다. 아래 두 블록만 한국어로 출력하고 다른 텍스트는 쓰지 마라.\n"
-    "[사례]\n"
-    "아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약하라 - 제품/lot 당시 판단 근거 조치 결과.\n"
+    "반도체 fail item 분석 결과다. 답은 **정확히 아래 형식의 평문**으로만 쓴다.\n"
+    "출력 형식(이 두 줄 머리말을 그대로 포함해서 쓴다):\n"
+    "[사례] <사례 요약 문장들>\n"
+    "[제안] <점검 제안 항목들>\n"
+    "이 두 머리말 밖의 텍스트, 인사말, 코드펜스, JSON 이나 키-값 구조는 쓰지 마라.\n"
+    "답 전체를 JSON 으로 감싸지 말고 사람이 읽는 문장만 쓴다.\n"
+    "[사례] 에 쓸 것: 아래 사례 목록의 각 사례를 있는 그대로 한 줄씩 요약한다 - 제품/lot 당시 판단 근거 조치 결과.\n"
     "현재 현상에 적용할 수 있는지 판단하거나 평가하거나 부정하지 마라 - 요약만 하라.\n"
     "사례에 없는 내용을 만들지 마라.\n"
-    "[제안]\n"
-    "기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리하라.\n"
+    "[제안] 에 쓸 것: 기본 조치 목록과 사례의 판단 근거 조치 그리고 현재 수치를 토대로 지금 무엇을 어떤 순서로 확인할지 정리한다.\n"
     "최대 5줄로 쓰고 각 줄은 '- ' 로 시작하는 짧은 항목으로 만들어라.\n"
     "발화한 signature 전체가 다뤄져야 한다 - 원인이 이어지는 항목은 한 줄에 묶어도 되지만 빠뜨리지는 마라.\n"
     "원인을 확정적으로 단정하지 마라. 사례의 조치를 정답으로 단정하지 마라.\n"
@@ -186,6 +193,56 @@ def strip_denied_lines(text, patterns, has_precedents: bool) -> str:
         return any(rx.search(line) or rx.search(squeezed) for rx in active)
     kept = [ln for ln in text.split("\n") if not _denied(ln)]
     return "\n".join(kept).strip()
+
+
+def unwrap_json_reply(text):
+    """모델이 문장 대신 **JSON 객체**를 냈으면 그 안의 사람 문장만 꺼낸다. 실패는 "".
+
+    2026-09-02 현장 신고: `[제안]` 자리에 아래가 그대로 박혔다.
+        {"precedent": {...}, "suggestion": {"text": "Retest 를 통해 …"}, "evidence_refs": [...]}
+    이 구조는 **우리 코드에 없다** — 배치 계약(`[{id,text}]`)은 지켜졌고 모델이 그 `text`
+    **안에** 자기 스키마를 또 만든 것이다(프롬프트가 두 블록을 요구하니 "구조화해서 답해야
+    한다" 고 넘겨짚은 부류). 파서는 `[사례]`/`[제안]` 토큰만 찾으므로 토큰이 없는 이
+    덩어리가 통째로 [제안] 본문이 됐다.
+
+    정책: **문장을 건질 수 있으면 건지고, 아니면 버린다**(호출부가 빈 문자열을 skip 하고
+    룰 문장으로 폴백 — 사용자에게 JSON 을 보여 주는 것보다 낫다).
+    JSON 이 아니면 원문 그대로 통과시킨다(정상 경로는 여기서 아무 일도 하지 않는다).
+    """
+    s = str(text or "").strip()
+    if not (s.startswith("{") or s.startswith("[")):
+        return s
+    try:
+        doc = json.loads(s)
+    except (ValueError, TypeError):
+        return s          # JSON 처럼 생겼지만 아니다 — 판단하지 않고 원문 유지
+    # 사람 문장이 들어 있을 만한 자리를 넓게 훑는다(모델이 키 이름을 매번 다르게 짓는다).
+    found = []
+    def _walk(node, depth=0):
+        if depth > 6 or len(found) >= 20:
+            return
+        if isinstance(node, str):
+            t = node.strip()
+            if len(t) >= 10:          # 라벨("low"/"E1")이 아니라 문장인 것만
+                found.append(t)
+        elif isinstance(node, dict):
+            for key in ("text", "suggestion", "content", "message", "value"):
+                if key in node:
+                    _walk(node[key], depth + 1)
+            for k, v in node.items():
+                if k not in ("text", "suggestion", "content", "message", "value"):
+                    _walk(v, depth + 1)
+        elif isinstance(node, list):
+            for v in node:
+                _walk(v, depth + 1)
+    _walk(doc)
+    # 중복 제거(같은 문장이 여러 키에 실릴 수 있다) — 순서는 유지.
+    out, seen = [], set()
+    for t in found:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return "\n".join(out)
 
 
 def parse_llm_blocks(text):
@@ -528,6 +585,9 @@ def sanitize_suggestion(text) -> str:
         return ""
     out = text.replace("\r\n", "\n").replace("\r", "\n")
     out = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n|\n?```\s*$", "", out.strip())
+    # 모델이 문장 대신 JSON 객체를 낸 경우 그 안의 문장만 꺼낸다(2026-09-02 현장 신고).
+    # 코드펜스 제거 **뒤**여야 ```json 으로 감싼 응답도 잡힌다.
+    out = unwrap_json_reply(out)
     out = _CTRL_RE.sub("", out)
     out = _SECTION_TOKEN_RE.sub("", out)
     out = re.sub(r"\n{3,}", "\n\n", out).strip()

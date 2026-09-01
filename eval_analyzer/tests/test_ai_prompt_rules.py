@@ -115,9 +115,10 @@ def test_past_case_lists_every_precedent():
     # 개행은 접는다 — 셀 한 섹션 안에 들어가야 한다
     multi = [{"human_comment": "첫 줄\n둘째 줄", "product_name": "P1"}]
     assert "\n" not in recommend._past_case_text(multi)
-    # 0건이면 종전 문구
-    assert recommend._past_case_text([]) == recommend._NO_PRECEDENT_TEXT
-    assert recommend._past_case_text([{"human_comment": None}]) == recommend._NO_PRECEDENT_TEXT
+    # 0건이면 **대시 하나**만 (사용자 요청 2026-09-02 — "참고할 수 있는 …" 문장 제거)
+    assert recommend._NO_PRECEDENT_TEXT == "-"
+    assert recommend._past_case_text([]) == "-"
+    assert recommend._past_case_text([{"human_comment": None}]) == "-"
 
 
 def test_phenomenon_and_actions_cover_all_signatures():
@@ -188,3 +189,46 @@ def test_parse_llm_blocks_engine():
     assert recommend.parse_llm_blocks("[제안] B") == (None, "B")
     assert recommend.parse_llm_blocks("그냥 문장") == (None, "그냥 문장")
     assert recommend.parse_llm_blocks("") == (None, None)
+
+
+def test_unwrap_json_reply():
+    """모델이 문장 대신 JSON 객체를 내면 그 안의 문장만 꺼낸다 (2026-09-02 현장 신고).
+
+    신고 원문: `[제안]` 자리에 `{"precedent":…,"suggestion":{"text":…},"evidence_refs":…}`
+    가 그대로 박혔다. 이 스키마는 **우리 코드에 없다** — 배치 계약([{id,text}])은 지켜졌고
+    모델이 그 text 안에 자기 구조를 또 만든 것이다.
+    """
+    raw = ('{"precedent": {"use": false, "selected_id": null, "relevance": "low",'
+           ' "summary": null}, "suggestion": {"text": "Retest 로 재현성을 먼저 확인한다."},'
+           ' "evidence_refs": ["E1"]}')
+    assert recommend.unwrap_json_reply(raw) == "Retest 로 재현성을 먼저 확인한다."
+    # 짧은 라벨("low"/"E1")은 문장이 아니라 안 건진다
+    assert "low" not in recommend.unwrap_json_reply(raw)
+    # 건질 문장이 없으면 빈 문자열 → 호출부가 코드 문장으로 폴백한다
+    assert recommend.unwrap_json_reply('{"a": "low", "b": null}') == ""
+    # JSON 이 아니면 원문 그대로 (정상 경로는 아무 일도 안 한다)
+    plain = "- edge 이력을 확인하라\n- 산포 재측정"
+    assert recommend.unwrap_json_reply(plain) == plain
+    assert recommend.unwrap_json_reply("") == ""
+    assert recommend.unwrap_json_reply(None) == ""
+    # JSON 처럼 시작하지만 깨진 것 — 판단하지 않고 원문 유지
+    assert recommend.unwrap_json_reply('{"broken') == '{"broken'
+
+    # ⚠ 서버 사본과 **같은 동작**이어야 한다(규칙 #8 로 import 불가 → 사본 유지)
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).resolve().parents[2]))
+    from web_report import ai_prompt as P
+    for sample in (raw, '{"a": "low", "b": null}', plain, "", None, '{"broken'):
+        assert P.unwrap_json_reply(sample) == recommend.unwrap_json_reply(sample), sample
+
+
+def test_make_comment_unwraps_json_llm_output(monkeypatch):
+    """LLM 이 JSON 을 내도 셀에는 문장만 들어간다 (신고 재현)."""
+    monkeypatch.setattr(recommend.llm_client, "is_enabled", lambda: True)
+    monkeypatch.setattr(
+        recommend.llm_client, "complete",
+        lambda *a, **kw: '{"suggestion": {"text": "Retest 로 재현성을 확인한다."}}')
+    out = recommend.make_comment(_CTX, _VERDICT2, _SIG2, _PRECS)
+    assert "Retest 로 재현성을 확인한다." in out
+    assert '"suggestion"' not in out and "{" not in out, out
