@@ -132,6 +132,12 @@ function aiLlmPendingRow(rowKey) {
   const m = aiLlmPendingMap();
   return !!(m && m[rowKey]) && !aiLlmPendingExpired();
 }
+// 대기 중인 칸의 문구 — **누구를 기다리는지**를 밝힌다. 그냥 "Loading" 이면 사용자는
+// 서버가 느린 것으로 읽지만, 실제로는 그 PC 의 Claude CLI 가 돌고 있는 중이다.
+const AI_LLM_WAIT_TEXT = "Loading… (Claude)";
+function aiLlmWaitHtml() {
+  return `<span class="ai-wait">${esc(AI_LLM_WAIT_TEXT)}</span>`;
+}
 // 처리 주체 배지 — claude(클라 CLI 대행이 실제로 저장된 행) / llm(서버 LLM) / rule(룰 문장).
 // claude 만 확실한 값이고 나머지는 서버 배선 기준의 근사다(service._session_ai_overlay).
 const AIC_SRC_ICON = { claude: "✴", llm: "🤖", rule: "⚙" };
@@ -372,13 +378,18 @@ function renderAiComment(txt, precCount, rowKey) {
   // ⚠ 이 분기가 실제로 도달하려면 호출부(셀 렌더)가 **빈 값에도** 이 함수를 불러야 한다
   // — 종전 `!isEmpty` 게이트 때문에 안내가 영영 안 보였다(2026-08-13 신고).
   const precLink = aicPrecLinkHtml(precCount, rowKey);
-  if (!raw.trim()) return aiWaitHtml();
+  // 빈 셀 — 평가 전체가 아직이면 종전 안내, 이 행의 Claude 문장만 기다리는 중이면
+  // 누구를 기다리는지 밝힌다(본문이 없으니 푸터로 감싸지 않고 그 자리에 바로 쓴다).
+  if (!raw.trim()) return aiLlmPendingRow(rowKey) ? aiLlmWaitHtml() : aiWaitHtml();
   // 섹션 토큰이 **하나도** 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이
   // 보인다. ⚠ 종전엔 `[현상]` 하나만 봤는데(2026-09-02 수정), 그러면 [현상] 이 빠진
   // 문자열이 파싱을 통째로 건너뛰어 **[사례]/[제안] 태그가 평문 그대로 화면에 남았다**
   // (사용자 신고 "태그를 없앴는데 안 없어졌다" 의 실제 경로). 어느 토큰이든 있으면
   // 아래 분해를 태워야 라벨 제거·섹션 색이 일관되게 적용된다.
-  if (!AIC_SEC_RE.test(raw)) return linkifyComment(raw) + precLink;
+  if (!AIC_SEC_RE.test(raw)) {
+    return linkifyComment(raw)
+      + aicFooterHtml(precLink, aiLlmPendingRow(rowKey), rowKey);
+  }
   const split = aicSplitBadges(raw);
   const body = split.body;
   // 긴 **옛** 토큰(과거사례/점검제안)을 신 토큰(사례/제안)보다 먼저 둔다 — 교대는 왼쪽
@@ -398,12 +409,13 @@ function renderAiComment(txt, precCount, rowKey) {
   // 녹아 있어 두 번 적는 셈이기 때문이다(2026-09-02 사용자 요청). "제안 제외" 세션은
   // [제안] 섹션 자체가 없으므로 사례를 그대로 보여 줘야 셀이 비지 않는다.
   const hasSugg = parts.some(p => p.tag === "제안" || p.tag === "점검제안");
-  // 이 행의 Claude 문장이 아직 안 왔으면 [제안] 자리를 Loading 으로 대신한다(2026-09-02).
-  // 셀 전체를 덮지 않는 이유: [사례]·Signature 는 이미 확정값이라 먼저 보여 주는 편이
-  // 낫고, 사례가 없는 행은 애초에 pending 이 아니라 그대로 최종 문장이 보인다.
+  // 이 행의 Claude 문장이 아직 안 왔는가(2026-09-02). **엔진이 만든 [제안]은 그대로
+  // 보여 주고**, 그 아래에 "Loading… (Claude)" 한 줄을 덧붙인다 — 읽을 내용이 지금
+  // 당장 있는 편이 낫고, 곧 더 나은 문장으로 바뀐다는 것도 함께 알린다.
+  // (기다리는 동안 빈 자리를 두면 정보가 0 인 칸을 보게 된다.)
   const llmWait = aiLlmPendingRow(rowKey);
-  // 대기 중에는 [사례]를 숨기지 않는다 — 제안 자리가 Loading 이라 사례까지 감추면 셀이
-  // 사실상 비어 보인다(hideCase 의 원래 취지는 "제안에 녹아 있으니 중복" 이다).
+  // 대기 중에는 [사례]를 숨기지 않는다 — 아직 Claude 가 사례를 요약하기 전이라
+  // "제안에 녹아 있으니 중복"(hideCase 의 원래 취지)이 아직 성립하지 않는다.
   const hideCase = !!precLink && hasSugg && !llmWait;
   let out = "";
   parts.forEach(p => {
@@ -425,25 +437,32 @@ function renderAiComment(txt, precCount, rowKey) {
     // 좁아 라벨이 본문 첫 줄을 밀어내는데, 어느 섹션인지는 색(aic-past/aic-act)으로 이미
     // 구분된다. 섹션 div·클래스는 그대로라 색·줄바꿈·4줄 clamp(markAicClamped)가 유지되고,
     // 서버 문자열은 손대지 않으므로 캐시 무효화(콜드 폭풍)도 없다.
-    if (aicIsSuggTag(p.tag) && llmWait) {
-      // 코드가 만든 룰 문장을 지금 보여 주면, 잠시 뒤 Claude 문장으로 바뀌면서 사용자가
-      // "왜 내용이 달라졌나" 를 겪는다. 오는 중임을 명시하고 자리를 비워 둔다.
-      out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
-        `<span class="ai-wait">${esc(AI_WAIT_TEXT)}</span></div>`;
-      return;
-    }
     const body = aicIsSuggTag(p.tag) ? aicStripRuleLabels(t) : t;
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">${linkifyComment(body)}</div>`;
   });
-  out += precLink;
-  // 처리 주체 배지 — 대기 중에는 아직 확정이 아니므로 달지 않는다.
-  if (!llmWait) out += aicSrcIconHtml(rowKey);
+  // 셀 맨 아래 한 줄에 「📋 사례 N건 상세」·대기 문구·처리 주체 아이콘을 **함께** 둔다
+  // (2026-09-02 사용자 요청). 배치는 왼쪽부터 사례 링크 → (여백) → 대기 문구 → 아이콘 으로,
+  // 아이콘이 오른쪽 끝에 고정되고 대기 문구가 그 바로 왼쪽에 온다.
+  // 종전에는 셋이 각자 블록이라 세 줄을 차지하고 아이콘만 float 로 떠 있었다.
+  out += aicFooterHtml(precLink, llmWait, rowKey);
   const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));
   if (shownBadges.length) {
     out += `<div class="aic-badges">` + shownBadges.map(b =>
       `<span class="${aicBadgeClass(b)}">${esc("[" + b + "]")}</span>`).join("") + `</div>`;
   }
-  return out || (linkifyComment(raw) + precLink);
+  return out || (linkifyComment(raw) + aicFooterHtml(precLink, llmWait, rowKey));
+}
+
+// 셀 하단 한 줄 — 「📋 사례 N건 상세」 / "Loading… (Claude)" / 처리 주체 아이콘.
+// 셋 다 없으면 빈 문자열이라 줄 자체가 생기지 않는다(옛 payload·비 AI 세션).
+// 대기 중에는 아이콘을 달지 않는다 — 아직 누가 쓸지 확정이 아니다.
+function aicFooterHtml(precLink, llmWait, rowKey) {
+  const icon = llmWait ? "" : aicSrcIconHtml(rowKey);
+  const wait = llmWait ? aiLlmWaitHtml() : "";
+  if (!precLink && !icon && !wait) return "";
+  // 왼쪽 = 사례 링크, 오른쪽 = 대기 문구 + 아이콘(아이콘이 맨 끝).
+  return `<div class="aic-foot">${precLink}` +
+    `<span class="aic-foot-right">${wait}${icon}</span></div>`;
 }
 
 // 「📋 사례 N건 상세」 — 건수가 없으면(옛 payload·사례 0건) 아무것도 그리지 않는다.

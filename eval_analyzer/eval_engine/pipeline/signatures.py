@@ -57,11 +57,15 @@ def _unknown_reason(case_ctx: dict, features: dict, raw_metrics: dict, threshold
 
 
 def _evaluate_unknown(case_ctx, features, raw_metrics, thresholds, doc):
-    """fail 인데 발화 0건 → UNKNOWN 합성. fail 이 없거나 모르면 발화하지 않는다.
+    """이슈 행이 서는 case 인데 발화 0건 → UNKNOWN 합성.
 
     "모든 fail 은 signature 로 설명된다" 를 강제하기 위한 명시 발화다. 이게 없으면 fail
     케이스가 발화 0건 + 결측 없음 조건에서 `status=OK`(정상 확정)로 나가버려, 설명하지
     못한 fail 과 정상이 화면에서 구분되지 않는다.
+
+    발화 대상은 **fail 이 있는 case + cpk<cpk_warn 인 case** 다 (2026-09-02 확장) —
+    후자는 fail 0건이어도 Issue Table CPK 섹션에 행이 서므로 같은 공백이 생긴다.
+    둘 다 아니면(=화면에 행이 없으면) 발화하지 않는다.
     """
     code, note = _unknown_reason(case_ctx, features, raw_metrics, thresholds)
     return {"id": _UNKNOWN_ID, "status_hint": doc["status_hint"], "score": None,
@@ -436,8 +440,17 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
     # UNKNOWN 은 최종 발화 집합이 비었을 때만 붙는다. (양보는 목록에서 지우지 않으므로
     # 이 시점의 fired 는 조건을 만족한 룰 전부다 — 2026-08-13 의미 변경 후에도 동일.)
+    #
+    # 발화 대상은 "화면에 행이 서는 case" 다 — 종전에는 fail 이 있는 case 뿐이었는데,
+    # **fail 0건이지만 cpk 가 낮아 Issue Table CPK 섹션에 행이 서는 item** 이 빠져 있었다
+    # (2026-09-02). 그 item 은 아무 룰도 안 뜨면 signature 가 빈 목록으로 나가고 화면엔
+    # "미분류" 로만 보인다 — 사용자에게는 "엔진이 판단을 못 했다" 인데 사유조차 없다.
+    # cpk 판정은 저장 게이트(present.should_store)와 **같은 식**을 써야 한다: 거기서
+    # 통과시켜 놓고 여기서 설명을 안 붙이면 같은 공백이 남는다.
     fail_count = fail_count_of(case_ctx)
-    if unknown_doc is not None and not fired and fail_count:
+    _cpk = raw_metrics.get("cpk")
+    low_cpk = _cpk is not None and _cpk < th["cpk_warn"]
+    if unknown_doc is not None and not fired and (fail_count or low_cpk):
         fired.append(_evaluate_unknown(case_ctx, features, raw_metrics, th, unknown_doc))
     applies[f"{_UNKNOWN_ID}.fail_count"] = fail_count is not None
 

@@ -584,7 +584,22 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   캐시 파일에는 형제 문장이 이미 구워져 있어, 안 갈면 그 세션들이 계속 남의 문장을 본다
 #   (= 사용자 결정 "기존 문장 전부 초기화"의 실행 수단).
 #   ② 반환 dict 에 `llm_enabled` 키 추가(처리 주체 아이콘 재료) — 구조 변경이라 규약대로다.
-AI_COMMENT_SCHEMA_VERSION = 14
+# v15 (2026-09-02): 선례 뷰(`precedents`)에 `session_id` 추가 — 사례 팝오버의
+#   "세션 열기 ↗" 링크 재료. 엔진은 계약 dict 에 이미 담아 주는데 서버 필터
+#   (`ai_comment._PREC_VIEW_KEYS`)가 버리고 있어 링크가 안 떴다. 반환 dict 구조가
+#   바뀌므로 규약대로 여기만 올린다(전역 bump 금지 — 규칙 14).
+# v16 (2026-09-02): ⚠ v3 과 같은 "구조 변경 때만" 규약의 **의도적 예외**다. 엔진 cpk 계열
+#   (cpk/cpl/cpu/cp/mean/stdev/min/max)의 모집단이 '전 die' → '**Bin1(양품) die**' 로 바뀌었다
+#   (eval_engine ingest.py `bin1_mask` + metrics.py `_finite_cpk_shared`). report_server 의
+#   CPK 탭·Issue Table 은 2026-07-23 부터 Bin1 기준인데 엔진만 전 die 로 재고 있어, 화면
+#   cpk 는 1.33 미만이라 CPK 섹션에 행이 서는데 엔진 cpk 는 그 위라 LOW_CPK 가 안 뜨는
+#   "미분류" 가 나왔다. 같은 커밋에서 UNKNOWN 발화 조건도 fail 0건 + cpk<cpk_warn 까지
+#   넓혔다(signatures.py). 둘 다 **엔진 코드 변경**이라 `.rules_rev`(= /pe/eval 저장
+#   카운터)로는 무효화되지 않는다 — 그래서 여기서 올린다.
+#   ⚠ 배포 시 `.rules_rev` 도 함께 +1 할 것 — 이 상수는 `ai_comment_key` 에만 들어가므로,
+#   report payload 안에 **이미 구워진** Signature 셀·AI Comment 셀은 그 꼬리표라야 갈린다
+#   (v3 이 남긴 것과 같은 주의).
+AI_COMMENT_SCHEMA_VERSION = 16
 
 
 def _ai_meta_digest(session) -> str:

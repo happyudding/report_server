@@ -72,6 +72,11 @@ def compute(case_ctx: dict) -> dict:
     들어 있으므로 그대로 옮긴다.
     반환: DB_SCHEMA §4 raw_metrics 컬럼(cpk/cpl/cpu/cp/mean/stdev/min/max/yield/
     fail_count/total_count/bimodality).
+
+    ⚠ **cpk 계열(cpk/cpl/cpu/cp/mean/stdev/min/max/n)만 Bin1(양품) die 기준**이다
+    (2026-09-02 — `_finite_cpk_shared`). report_server CPK 탭/Issue Table 과 같은
+    모집단을 쓰기 위해서다. bimodality 와 L2 features(outlier·꼬리·공간)는 계속 전 die 를
+    본다 — 그쪽은 fail die 가 판정의 근거 자체라 빼면 룰이 죽는다.
     """
     values = case_ctx.get("values") or []
     is_pf = case_ctx.get("value_type") == "PF"
@@ -93,14 +98,40 @@ def compute(case_ctx: dict) -> dict:
             shared["finite"] = hit
         return hit[0]
 
+    def _finite_cpk_shared():
+        """cpk 계열이 쓰는 유한값 배열 — Bin1(양품) die 만 (2026-09-02).
+
+        report_server 의 CPK 탭·Issue Table 은 Bin1 기준으로 통일돼 있는데
+        (web_report/tabs/cpk.py 모듈 docstring, 2026-07-23) 엔진만 전 die 로 재고 있어
+        같은 항목의 cpk 가 두 값으로 갈렸다 — 화면 cpk 는 1.33 미만이라 CPK 섹션에 행이
+        생겼는데 엔진 cpk 는 그 위라 LOW_CPK 가 안 떠 "미분류" 로 보이던 원인이다.
+
+        ⚠ **이 배열은 cpk 계열에만 쓴다.** outlier·꼬리·이봉·MEAN_SHIFT 는 계속 전 die
+        (`_finite_shared`)를 본다 — fail die 를 빼면 "튄 값"·"꼬리" 를 만든 장본인이
+        모집단에서 사라져 그 룰들이 통째로 죽는다.
+        `bin1_mask` 가 없으면(레거시 raw_table·degrade 경로) 종전대로 전 die 다.
+        """
+        mask = case_ctx.get("bin1_mask")
+        if not mask or len(mask) != len(values):
+            return _finite_shared()
+        if shared is None:
+            return _finite([v for v, keep in zip(values, mask) if keep])
+        hit = shared.get("finite_bin1")
+        if hit is None:
+            hit = (_finite([v for v, keep in zip(values, mask) if keep]),)
+            shared["finite_bin1"] = hit
+        return hit[0]
+
     summary = None
     if shared is not None:
         hit = shared.get("cpk_summary")
         if hit is not None:
             summary = hit[0]
     if summary is None:
+        # n(표본 수)도 Bin1 기준이 된다 — cpk 를 낸 모집단과 같은 수여야 트레이스에서
+        # "이 cpk 는 몇 개로 냈나" 가 맞는다.
         summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"),
-                              v=_finite_shared())
+                              v=_finite_cpk_shared())
         if shared is not None:
             shared["cpk_summary"] = (summary,)
     if values:

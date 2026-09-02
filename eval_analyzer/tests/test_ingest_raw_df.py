@@ -88,6 +88,34 @@ def test_raw_df_e2e_fires_signature(fresh_db):
         assert conn.execute("SELECT COUNT(*) FROM features").fetchone()[0] >= 1
 
 
+def test_bin1_mask_is_wired_to_case():
+    """ingest 가 `bin1_mask` 를 case 에 실어야 L1 cpk 가 Bin1 기준이 된다 (2026-09-02).
+
+    배선 테스트다 — 마스크를 안 넘기면 metrics 가 조용히 전 die 폴백으로 돌아가고,
+    cpk 만 옛 값으로 되돌아온 채 아무 에러도 안 난다(화면 증상은 "미분류").
+    """
+    ctx = ingest.ingest({"meta": _meta(), "raw_df": _new_df()}, persist=False)
+    c = next(x for x in ctx["cases"] if x["item_raw"] == "VREF_TRIM")
+    mask = c["bin1_mask"]
+    assert mask is not None
+    assert len(mask) == len(c["values"])        # 측정값 축과 같은 정렬
+    assert sum(mask) == 20                      # pass 20 개만 Bin1
+    # fail(BIN=18) 자리는 정확히 마스크에서 빠져 있다.
+    assert [i for i, keep in enumerate(mask) if not keep] == list(range(20, 24))
+
+
+def test_bin1_cpk_differs_from_all_die_end_to_end():
+    """L0→L1 전 구간에서 cpk 가 Bin1 모집단으로 나온다 (계산이 아니라 흐름 확인)."""
+    from eval_engine.pipeline import metrics
+    ctx = ingest.ingest({"meta": _meta(), "raw_df": _new_df()}, persist=False)
+    c = next(x for x in ctx["cases"] if x["item_raw"] == "VREF_TRIM")
+    m = metrics.compute(c)
+    bin1_vals = [v for v, keep in zip(c["values"], c["bin1_mask"]) if keep]
+    assert m["cpk"] == metrics.cpk_summary(bin1_vals, c["lsl"], c["usl"])["cpk"]
+    # fail 이 usl 을 넘겨 있으므로 전 die 기준과 실제로 값이 갈린다.
+    assert m["cpk"] != metrics.cpk_summary(c["values"], c["lsl"], c["usl"])["cpk"]
+
+
 def test_raw_df_failtno_blank_is_pass():
     """FAILTNO 공란/NaN serial 은 fail 로 잡히지 않는다. 이제 모든 item 은 PASS_BIN candidate
     로 방출되고(저장 여부는 이후 api.evaluate 의 should_store 판단), fail_mask 는 전부 False."""

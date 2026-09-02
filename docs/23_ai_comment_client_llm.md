@@ -546,9 +546,16 @@ perf_guard `S15`).
 | 5 | 처리 주체 아이콘 | payload `ai_sources`{row_key: claude\|llm\|rule} → `sheets.js aicSrcIconHtml`(✴/🤖/⚙) |
 | 6 | 세션 고유 평문 저장 | §핵심 설계 결정 ① |
 
-- **`ai_llm_pending` 은 [제안] 자리만 Loading 으로 바꾼다** — [사례]·Signature 는 이미
-  확정값이라 먼저 보여 준다. 대기 중에는 `hideCase` 를 끄는데, 제안 자리가 Loading 인데
-  사례까지 감추면 셀이 사실상 빈다.
+- **`ai_llm_pending` 인 행은 엔진 [제안]을 그대로 보여 주고 그 아래에 대기 줄을 붙인다**
+  (`.aic-wait-line`, 2026-09-02 사용자 결정). 문구는 **"Loading… (Claude)"** — 그냥
+  "Loading" 이면 사용자는 서버가 느린 것으로 읽지만 실제로는 그 PC 의 Claude CLI 가 돈다.
+  Claude 문장이 도착하면 서버가 [제안] 섹션을 교체해 내려주고 그 행이 pending 맵에서
+  빠지면서 대기 줄도 사라진다.
+  > **가리는 안을 쓰지 않는 이유**: 대기 중 본문을 감추면 그 칸이 정보 0 인 채로 몇 분간
+  > 남는다. 지금 읽을 것(룰·서버 LLM 문장)을 주고 "더 나은 문장이 오는 중"을 함께 알리는
+  > 편이 낫다는 판단이다. 대기 중에는 `hideCase` 도 끈다 — 아직 Claude 가 사례를 요약하기
+  > 전이라 "제안에 녹아 있으니 중복"이라는 전제가 성립하지 않는다.
+  섹션 토큰이 없는 셀·옛 평문 코멘트에도 대기 줄이 붙는다(그 칸만 조용하면 안 된다).
 - ⚠ **TTL 이중 방어**(`AI_LLM_PENDING_TTL_SEC`, 기본 3600초 — 서버 생성 시 + 프런트 렌더 시).
   워커가 영영 push 하지 않는 PC(Honey 종료·CLI 인증 실패)가 있으면, 이게 없을 때 그 세션은
   **방문할 때마다** 20분짜리 Loading 을 보여 준다. 만료 후에는 코드가 만든 action_ko 가
@@ -556,9 +563,33 @@ perf_guard `S15`).
 - **`boot.js` 폴링이 배치별 push 를 따라간다** — `ai_llm_pending` 이 **줄어들 때마다**
   DATA 를 갈아 다시 그리고, 남아 있으면 계속 폰다(종전엔 pending 플래그가 풀릴 때 한 번만).
   입력 중이면 3초 뒤로 미룬다(불변 규칙 #12).
-- **아이콘의 정확도**: `claude` 만 확실하다(그 행에 저장 행이 있다 = 클라 push 가 sanitize·
-  deny 를 통과해 저장됐다는 증거). `llm`/`rule` 은 결과 dict 의 `llm_enabled`(서버 배선
-  상태) 기준 **근사**다 — 엔진이 case 별로 "이 문장은 LLM 이 썼다"를 돌려주지 않는다.
+  ⚠ 재렌더 조건은 **"이번에 실제로 변한 것이 있을 때"** 다: ① 평가 pending 이 이번 tick 에
+  풀렸거나(`done && wasPending`) ② 대기 행 수가 줄었을 때. `done` 만으로 그리면 최종본
+  세션이 5초마다 전체 재렌더를 돌아 스크롤·팝오버가 튄다. `lastLlmPending` 기준선은
+  재렌더 여부와 **무관하게** 매 tick 갱신한다 — 안 그러면 서버가 pending 을 다시 만든
+  경우 계속 "줄었다"로 오판한다. 회귀 가드: `tests/test_ai_poll_js.py`.
+- **아이콘 판정은 선례 유무로 가른다** (2026-09-02 정정). 엔진은 선례가 1건도 없으면
+  LLM 을 **아예 호출하지 않는다**(`recommend.make_comment` 의 `has_precedent_comments`
+  게이트) — 그 행의 문장은 룰 조립(action_ko)이다. 그래서:
+  | 행 | 아이콘 |
+  |---|---|
+  | 세션 저장 행 있음(클라 push 수용됨) | `claude` ✴ |
+  | 프롬프트 있음(선례≥1) + 대행 대상 아님/TTL 경과 | 서버 LLM 켜짐이면 `llm` 🤖, 아니면 `rule` ⚙ |
+  | **프롬프트 없음(선례 0건)** | 항상 `rule` ⚙ |
+  ⚠ 종전에는 `llm_enabled` 만 보고 **전 행**에 `llm` 을 줘서, LLM 을 거치지도 않은 칸이
+  🤖 로 보였다. `claude` 는 저장 행이 곧 증거라 정확하고, `llm` 은 여전히 배선 기준
+  근사다(엔진이 case 별 LLM 사용 여부를 돌려주지 않는다).
+- **셀 하단은 한 줄이다**(`.aic-foot`, 2026-09-02 사용자 요청) — 왼쪽에 「📋 사례 N건 상세」,
+  오른쪽 끝에 처리 주체 아이콘, 그 바로 왼쪽에 "Loading… (Claude)". 종전엔 셋이 각자
+  블록이라 세 줄을 먹고 아이콘만 `float:right` 로 떠 있었다.
+- **사례 팝오버의 각 사례에 "세션 열기 ↗" 링크**가 붙는다 — 그 코멘트가 저장됐던 세션으로
+  새 탭으로 간다(보던 표를 잃지 않게). 재료는 선례 행의 `session_id` 이고, 엔진이 계약
+  dict 에 담아 준다(`store.search_precedents` → `present._precedent_result`).
+  ⚠ 서버 필터 **`ai_comment._PREC_VIEW_KEYS` 에 `session_id` 가 있어야 한다** — 2026-09-02
+  에 실제로 빠져 있어, 화면 코드(`sig_reason.js aicPrecRowHtml`)는 링크를 그릴 준비가
+  돼 있는데 값이 안 와서 안 떴다. `session_id` 가 없는 선례(CSV 적재분)는 링크 없이
+  나머지만 나온다. 캐시는 `AI_COMMENT_SCHEMA_VERSION` v15.
+  검증: `tests/test_ai_suggest.py` (o) · `tests/test_webreport_sheets_js.py` [m].
 - 캐시: `AI_COMMENT_SCHEMA_VERSION` v13→**v14**(옛 캐시에 형제 문장이 구워져 있어 반드시
   갈아야 한다 = 사용자 결정 "기존 문장 전부 초기화"의 실행 수단) + `_eval_rules_suffix` 에
   영구 표식 **"aisess"**(payload 신규 키 2종). 전역 bump 금지(규칙 14).

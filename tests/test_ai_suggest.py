@@ -413,7 +413,16 @@ def test_precedents_payload_and_route():
     r = client.get(url + "?key=CPK|없는항목",
                    headers={"User-Agent": f"Mozilla/5.0 HoneyUser/{USER}"})
     assert r.status_code == 200 and r.get_json()["items"] == []
-    print("  (o) 사례 건수 payload + 상세 라우트 OK")
+
+    # 출처 세션 링크 재료 — 팝오버의 "세션 열기 ↗" 는 선례 행의 session_id 로 그린다.
+    # 엔진은 계약 dict 에 담아 주는데 서버 필터(_PREC_VIEW_KEYS)가 버리면 링크가 안 뜬다
+    # (2026-09-02 실제로 그랬다). 그 필터를 직접 태워 통과를 고정한다.
+    view = wr_ai_comment._precedent_views({ITEM: {"precedents": [
+        {"product_name": "P9", "comment": "다른 세션 사례",
+         "session_id": "SRC_SESSION_1", "metrics": {"cpk": 0.5}}]}})
+    assert view[ITEM][0].get("session_id") == "SRC_SESSION_1", \
+        f"선례에 session_id 가 안 실렸다 — 팝오버 '세션 열기' 링크가 안 뜬다: {view}"
+    print("  (o) 사례 건수 payload + 상세 라우트 + 출처 세션 링크 재료 OK")
 
 
 def test_full_payload_merged():
@@ -457,6 +466,29 @@ def test_rebuild_survival():
     assert "[사례] - P1/L1: 재측정으로 회복된 건" in cell, \
         f"사례 요약이 재빌드에서 사라졌다: {cell!r}"
     print("  (g) 재빌드 생존(재병합 — 두 섹션) OK")
+
+
+def test_sources_no_precedent_is_rule():
+    """(q) **사례 0건 행은 서버 LLM 을 안 거치므로 아이콘도 rule** (2026-09-02 사용자 지적).
+
+    엔진은 선례가 1건도 없으면 LLM 을 아예 호출하지 않는다
+    (recommend.make_comment 의 has_precedent_comments 게이트) — 그 행의 문장은 룰 조립
+    (action_ko)이다. 종전에는 서버 LLM 배선이 켜져 있으면 **전 행**에 "llm" 을 줘서,
+    LLM 을 거치지도 않은 칸이 🤖 로 표시됐다. 프롬프트 유무(= 선례 유무)로 갈라야 한다.
+    """
+    # 선례 0건 → 서버가 프롬프트를 만들지 않는다(= LLM 미경유 행).
+    _PRECEDENTS["n"] = 0
+    try:
+        merged, _how, pending, sources = _overlay_cell(SID, AKEY)
+        assert not merged.get("prompts"), "선례 0건인데 프롬프트가 만들어졌다(전제 붕괴)"
+        assert not pending, f"선례 0건 행이 Claude 대기로 잡혔다: {pending}"
+        vals = set(sources.values())
+        assert vals and vals == {"rule"}, \
+            f"선례 0건 행의 출처가 rule 이 아니다(LLM 미경유인데 🤖 로 보인다): {vals}"
+    finally:
+        _PRECEDENTS["n"] = 1
+        _wipe_caches(AKEY)
+    print("  (q) 선례 0건 행 = rule 아이콘(서버 LLM 미경유) OK")
 
 
 def test_sibling_isolation():
@@ -771,6 +803,7 @@ def main():
     # "클로드 제안 1" 상태를 기대한다. 이후 (g)(h) 는 각자 원하는 상태를 다시 만든다.
     test_two_block_push(prompt_item)
     test_rebuild_survival()
+    test_sources_no_precedent_is_rule()
     test_sibling_isolation()
     test_sha_drift_keeps_suggestion()
     t_ai = test_worker_simulation()

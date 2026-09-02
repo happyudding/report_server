@@ -78,6 +78,34 @@ def test_compute_yield_uses_full_dut_denominator():
     assert m["yield"] == pytest.approx(0.6)
 
 
+def test_cpk_uses_bin1_population_only():
+    """cpk 계열은 Bin1(양품) die 만으로 낸다 (2026-09-02).
+
+    report_server 의 CPK 탭/Issue Table 이 Bin1 기준이라(web_report/tabs/cpk.py) 엔진이
+    전 die 로 재면 같은 항목의 cpk 가 두 값으로 갈린다 — 화면은 1.05 인데 LOW_CPK 가
+    안 뜨는 "미분류" 의 원인이었다.
+    """
+    vals = [5.0] * 10 + [1.0, 9.0]          # 뒤 2개가 non-Bin1
+    case = {"values": vals, "lsl": 0.0, "usl": 10.0,
+            "bin1_mask": [True] * 10 + [False, False],
+            "fail_mask": [False] * 10 + [True, True]}
+    m = metrics.compute(case)
+    bin1_only = metrics.cpk_summary([5.0] * 10, 0.0, 10.0)
+    all_die = metrics.cpk_summary(vals, 0.0, 10.0)
+    assert m["cpk"] == bin1_only["cpk"]
+    assert m["cpk"] != all_die["cpk"]        # 두 모집단이 실제로 다른 값을 낸다
+    # 분모(yield 계열)는 여전히 전 die — cpk 만 모집단이 다르다.
+    assert m["total_count"] == 12
+
+
+def test_cpk_falls_back_to_all_die_without_mask():
+    """bin1_mask 가 없는 입력(레거시 raw_table·degrade)은 종전대로 전 die 기준."""
+    vals = [5.0] * 10 + [1.0, 9.0]
+    m = metrics.compute({"values": vals, "lsl": 0.0, "usl": 10.0,
+                         "fail_mask": [False] * 12})
+    assert m["cpk"] == metrics.cpk_summary(vals, 0.0, 10.0)["cpk"]
+
+
 def test_compute_degrade_passthrough():
     # values 없는 degrade 모드 — yield/fail_count 그대로
     case = {"values": [], "fail_mask": [],

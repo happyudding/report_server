@@ -523,7 +523,8 @@ def test_placeholder_and_partial_tokens():
 def test_llm_pending_row_and_source_icon():
     """(l) 행 단위 LLM 대기 + 처리 주체 아이콘 (2026-09-02 개편).
 
-    사용자 요구: ① 사례가 있어 Claude 문장을 기다리는 행은 옛 문장 대신 "Loading 중…"
+    사용자 요구: ① 사례가 있어 Claude 문장을 기다리는 행은 **엔진 [제안]을 그대로 보여
+    주고 그 아래에** "Loading… (Claude)" 를 덧붙인다(도착하면 본문이 교체된다)
     ② 사례가 없는 행은 기다리지 않고 즉시 룰 문장(action_ko) ③ 어느 AI 가 썼는지 표시.
 
     셋 다 **행 단위**라 payload 맵(ai_llm_pending / ai_sources)을 서버가 row_key 로
@@ -540,10 +541,35 @@ def test_llm_pending_row_and_source_icon():
         "DATA.web_report.ai_sources={'CPK|Done':'claude','CPK|Srv':'llm','CPK|Rule':'rule'};"
         "DATA.session={uploaded_at:new Date().toISOString()};"
         "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
-        # ① 대기 행 — [제안] 자리가 Loading, 사례는 그대로 보인다(셀이 비지 않게)
+        # ① 대기 행 — 엔진 [제안]은 그대로 읽히고, 대기 줄이 그 **아래**에 붙는다
         "var a=box(renderAiComment(C,1,'CPK|Waiting'));"
         "out.waitText=a.textContent; out.waitSpin=!!a.querySelector('.ai-wait');"
         "out.waitIcon=!!a.querySelector('.aic-src');"
+        "out.waitLine=!!a.querySelector('.aic-foot .ai-wait');"
+        # 대기 문구가 [제안] 본문 **뒤**에 오는가 — 앞에 오면 읽는 순서가 뒤집힌다
+        "out.waitAfterBody=a.textContent.indexOf('룰 기본 조치')"
+        "  < a.textContent.indexOf('Loading');"
+        # 사례 링크·대기 문구가 **같은 줄**(.aic-foot)에 있는가 (2026-09-02 사용자 요청)
+        "var foot=a.querySelector('.aic-foot');"
+        "out.footHasPrec=!!(foot&&foot.querySelector('.aic-prec-btn'));"
+        "out.footHasWait=!!(foot&&foot.querySelector('.ai-wait'));"
+        # 아이콘이 있는 셀에서 아이콘이 그 줄의 **맨 오른쪽**인가
+        "var fd=box(renderAiComment(C,1,'CPK|Done')).querySelector('.aic-foot');"
+        "out.doneFootPrec=!!(fd&&fd.querySelector('.aic-prec-btn'));"
+        "var rt=fd&&fd.querySelector('.aic-foot-right');"
+        "out.iconLastInRow=!!(rt&&rt.lastElementChild"
+        "  &&/aic-src/.test(rt.lastElementChild.className));"
+        # ①-b 서버 LLM 문장도 **그대로 보인다**(가리지 않는다 — 읽을 게 지금 있어야 한다)
+        "var SRV=" + js_literal(
+            "[MAJOR] [현상] - 현상\n[사례] ①(P1/L1) 사례\n [제안] - 서버LLM이 쓴 제안") + ";"
+        "out.srvText=box(renderAiComment(SRV,1,'CPK|Waiting')).textContent;"
+        # ①-c [제안] 토큰이 아예 없는 셀도 대기 줄이 보여야 한다
+        "var NOSEC=" + js_literal("[MAJOR] [현상] - 현상\n[사례] ①(P1/L1) 사례") + ";"
+        "out.noSecSpin=!!box(renderAiComment(NOSEC,1,'CPK|Waiting'))"
+        "  .querySelector('.ai-wait');"
+        # ①-d 섹션 토큰이 전혀 없는 옛 평문 코멘트에도 붙는다
+        "out.plainSpin=!!box(renderAiComment('옛 평문 코멘트',0,'CPK|Waiting'))"
+        "  .querySelector('.ai-wait');"
         # ② 대기 아님(사례 0건 행 포함) — 룰 문장이 그대로 최종본
         "var b=box(renderAiComment(C,1,'CPK|Rule'));"
         "out.ruleText=b.textContent; out.ruleSpin=!!b.querySelector('.ai-wait');"
@@ -567,9 +593,22 @@ def test_llm_pending_row_and_source_icon():
         "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
         "})();</script>")
     r = json.loads(run_probe(harness, "llm_pending"))
-    assert r["waitSpin"], "사례 있는 대기 행에 Loading 표시가 없습니다"
-    assert "룰 기본 조치" not in r["waitText"], \
-        f"대기 중인데 룰 문장이 먼저 보입니다(곧 바뀌어 사용자를 혼란시킴): {r['waitText']!r}"
+    assert r["waitSpin"] and r["waitLine"], "사례 있는 대기 행에 Loading 줄이 없습니다"
+    assert "Claude" in r["waitText"], \
+        f"대기 문구에 누구를 기다리는지(Claude)가 없습니다: {r['waitText']!r}"
+    # 엔진이 만든 [제안]은 **가리지 않는다** — 기다리는 동안에도 읽을 내용이 있어야 한다.
+    assert "룰 기본 조치" in r["waitText"], \
+        f"대기 중이라고 엔진 [제안]을 가렸습니다(빈 칸을 보게 됨): {r['waitText']!r}"
+    assert r["waitAfterBody"], \
+        f"대기 줄이 [제안] 본문 위에 있습니다(읽는 순서가 뒤집힘): {r['waitText']!r}"
+    assert r["footHasPrec"] and r["footHasWait"], \
+        f"사례 링크와 대기 문구가 같은 줄(.aic-foot)에 없습니다: {r}"
+    assert r["doneFootPrec"] and r["iconLastInRow"], \
+        f"처리 주체 아이콘이 그 줄의 맨 오른쪽이 아닙니다: {r}"
+    assert "서버LLM이 쓴 제안" in r["srvText"], \
+        f"서버 LLM 문장을 가렸습니다 — 그대로 보여 주고 아래에 대기 줄을 답니다: {r['srvText']!r}"
+    assert r["noSecSpin"], "[제안] 토큰이 없는 셀에 대기 줄이 안 보입니다"
+    assert r["plainSpin"], "섹션 토큰이 없는 옛 평문 셀에 대기 줄이 안 보입니다"
     assert "사례 원문" in r["waitText"], \
         f"대기 중 [사례]까지 숨겨 셀이 비었습니다: {r['waitText']!r}"
     assert not r["waitIcon"], "확정 전인데 처리 주체 배지가 붙었습니다"
@@ -583,6 +622,43 @@ def test_llm_pending_row_and_source_icon():
         f"폴링 포기 뒤에도 Loading 이 남았습니다: {r}"
     assert not r["staleSpin"], "TTL 이 지난 세션이 계속 Loading 입니다(영구 대기)"
     print("[l] 행 단위 Loading + 처리 주체 아이콘 + TTL/포기 폴백 OK")
+
+
+def test_prec_popover_source_session_link():
+    """(m) 사례 팝오버 행에 **출처 세션 링크**가 붙는다 (2026-09-02 사용자 요청).
+
+    「📋 사례 N건 상세」를 눌러 보는 각 사례는 다른 세션에서 저장된 코멘트다. 그 세션으로
+    바로 갈 수 있어야 근거를 확인한다. 링크 재료(session_id)는 서버가 선례 행에 실어
+    준다(ai_comment._PREC_VIEW_KEYS) — 그게 빠지면 여기서 링크가 안 그려진다.
+    session_id 가 없는 선례(CSV 적재분 등)는 링크 없이 나머지가 정상 표시돼야 한다.
+    """
+    harness = (
+        "<script>(function(){var out={};"
+        "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
+        # ① session_id 가 있으면 새 탭 링크
+        "var a=box(aicPrecRowHtml({product_name:'P9',lot_id:'L9',comment:'사례 원문',"
+        "  session_id:'SRC 1',metrics:{cpk:0.5}}));"
+        "var lk=a.querySelector('.sigr-src-link');"
+        "out.href=lk?lk.getAttribute('href'):'';"
+        "out.blank=lk?lk.getAttribute('target'):'';"
+        "out.rel=lk?lk.getAttribute('rel'):'';"
+        "out.text=a.textContent;"
+        # ② session_id 가 없으면 링크 없이 본문은 그대로
+        "var b=box(aicPrecRowHtml({product_name:'P8',comment:'출처 미상 사례'}));"
+        "out.noLink=!b.querySelector('.sigr-src-link');"
+        "out.noLinkText=b.textContent;"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "prec_link"))
+    assert r["href"] == "/pe/report/view/SRC%201", \
+        f"출처 세션 링크 주소가 틀렸습니다(인코딩 포함): {r['href']!r}"
+    assert r["blank"] == "_blank" and "noopener" in (r["rel"] or ""), \
+        f"보던 표를 잃지 않게 새 탭으로 열어야 합니다: {r}"
+    assert "사례 원문" in r["text"], f"링크를 다느라 본문이 사라졌습니다: {r['text']!r}"
+    assert r["noLink"] and "출처 미상 사례" in r["noLinkText"], \
+        f"session_id 없는 선례가 깨졌습니다: {r}"
+    print("  [m] 사례 팝오버 출처 세션 링크(있을 때만·새 탭) OK")
 
 
 def main():
@@ -607,6 +683,7 @@ def main():
     test_case_section_hidden_only_with_suggestion()
     test_placeholder_and_partial_tokens()
     test_llm_pending_row_and_source_icon()
+    test_prec_popover_source_session_link()
     print("\n전부 통과")
 
 

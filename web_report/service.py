@@ -421,9 +421,12 @@ def _session_ai_overlay(session, session_id: str, result: dict, *,
 
     반환 3종:
       merged      — 문장이 덧칠된 결과 (`apply_suggestions` 는 항상 copy 라 캐시 객체 무오염)
-      llm_pending — {row_key: 1} 아직 이 세션의 문장이 안 온 행. 화면이 "Loading 중…" 을
-                    띄우는 근거다. **사례 0건 item 은 프롬프트 자체가 없어 여기에 안 들어간다**
-                    (= 그 셀은 즉시 action_ko 최종본 — 사용자 요구 2).
+      llm_pending — {row_key: 1} 아직 이 세션의 Claude 문장이 안 온 행. 화면이
+                    "Loading… (Claude)" 를 띄우는 근거다. **사례 0건 item 은 프롬프트
+                    자체가 없어 여기에 안 들어간다**(= 그 셀은 즉시 action_ko 최종본).
+                    화면은 엔진이 만든 [제안]을 **그대로 보여 주고 그 아래에** 대기 줄을
+                    덧붙인다(2026-09-02 사용자 결정) — 기다리는 동안에도 읽을 내용이 있고,
+                    Claude 문장이 도착하면 본문이 교체되며 이 줄이 사라진다.
       sources     — {row_key: "claude"|"llm"|"rule"} 처리 주체 아이콘 근거.
 
     row_key 전개는 **한 번만** 하고 셋이 그 결과를 공유한다 — item 하나가 여러 Yield 행으로
@@ -447,6 +450,7 @@ def _session_ai_overlay(session, session_id: str, result: dict, *,
         comment_keys = list((merged.get("comments") or {}).keys())
         wanted = _ai_suggest_wanted(session)
         fresh = (time.time() - _uploaded_epoch(session)) <= _AI_LLM_PENDING_TTL_SEC
+        llm_enabled = bool(merged.get("llm_enabled"))
         llm_pending, sources = {}, {}
         for item in (merged.get("prompts") or {}):
             rows = [k for k in comment_keys if k.endswith("|" + str(item))]
@@ -456,13 +460,18 @@ def _session_ai_overlay(session, session_id: str, result: dict, *,
             elif wanted and fresh:
                 for k in rows:
                     llm_pending[k] = 1
-        # 나머지 행의 기본 출처 — 서버 LLM 이 켜져 있었으면 그 문장(llm), 아니면 룰(rule).
-        # ⚠ 행 단위 정밀도는 없다(엔진이 case 별 LLM 사용 여부를 돌려주지 않는다) — 아이콘은
-        # "이 세션의 코멘트가 어느 경로로 만들어졌나"의 근사다. claude 만 정확하다(저장 행이
-        # 곧 증거 — 클라 push 가 sanitize·deny 를 통과해 저장된 것만 claude 로 뜬다).
-        default_src = "llm" if merged.get("llm_enabled") else "rule"
+            else:
+                # 사례는 있는데(프롬프트가 만들어졌다) 클라 대행 대상이 아니거나 TTL 이 지난
+                # 행 — 엔진이 서버 LLM 을 썼다면 그 문장이다.
+                for k in rows:
+                    sources[k] = "llm" if llm_enabled else "rule"
+        # 나머지 행 = **프롬프트가 없는 행 = 선례 0건**이다. 엔진은 선례가 1건도 없으면
+        # LLM 을 아예 호출하지 않으므로(recommend.make_comment 의 has_precedent_comments
+        # 게이트), 서버 LLM 이 켜져 있어도 이 행의 문장은 룰 조립(action_ko)이다.
+        # 종전에는 여기서 llm_enabled 만 보고 전 행에 "llm" 을 줘서, LLM 을 거치지도 않은
+        # 칸이 🤖 로 표시됐다(2026-09-02 사용자 지적).
         for k in comment_keys:
-            sources.setdefault(k, default_src)
+            sources.setdefault(k, "rule")
         return merged, llm_pending, sources
     except Exception:
         _log.warning("ai_suggest 세션 병합 실패 — 원본 유지 (session=%s)",

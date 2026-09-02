@@ -57,6 +57,36 @@ def test_no_fail_stays_ok_without_unknown():
     assert status.decide(case, feats, sig)["status"] == "OK"
 
 
+def test_low_cpk_without_fail_fires_unknown(monkeypatch):
+    """fail 0건이어도 cpk<cpk_warn 이면 UNKNOWN 을 붙인다 (2026-09-02).
+
+    그 item 은 fail 이 없어도 Issue Table CPK 섹션에 **행이 선다** — 발화가 하나도
+    없으면 화면에 "미분류" 로만 보이고 사유조차 남지 않아, 사용자에게는 "엔진이 판단을
+    못 했다" 로 읽힌다. 저장 게이트(present.should_store)가 같은 조건으로 통과시키므로
+    설명도 같은 조건에서 붙어야 공백이 안 생긴다.
+
+    LOW_CPK 를 끈 상태로 본다 — 켜져 있으면 그 룰이 떠서(정상) UNKNOWN 경로에 닿지
+    않는다. 검증 대상은 "cpk 는 낮은데 **아무 룰도** 안 떴을 때" 의 공백이다.
+    """
+    base = signatures.signatures_for
+
+    def _without_low_cpk(case_ctx=None):
+        return [s for s in base(case_ctx) if s["id"] != "LOW_CPK"]
+
+    monkeypatch.setattr(signatures, "signatures_for", _without_low_cpk)
+    case, feats = _case(fail_count=0), _quiet_features()
+    sig = signatures.evaluate(case, feats, {"yield": 1.0, "cpk": 1.0})   # < cpk_warn 1.33
+    assert _reason(sig) == "NO_MATCH"
+    assert status.decide(case, feats, sig)["status"] != "OK"
+
+
+def test_healthy_cpk_without_fail_stays_quiet():
+    """cpk 가 임계 이상이고 fail 도 없으면 종전대로 조용하다 — 위 확장의 반대 경계."""
+    case, feats = _case(fail_count=0), _quiet_features()
+    sig = signatures.evaluate(case, feats, {"yield": 1.0, "cpk": 1.5})
+    assert sig["signatures"] == []
+
+
 def test_unknown_not_added_when_another_rule_fires():
     """다른 룰이 하나라도 뜨면 UNKNOWN 은 붙지 않는다(중복 표시 방지)."""
     case = _case()

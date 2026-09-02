@@ -216,10 +216,15 @@ function maybeStartAiPendingPoll() {
         const data = await res.json();
         const web = data.web_report || {};
         const llmLeft = Object.keys(web.ai_llm_pending || {}).length;
-        // 평가 pending 이 풀렸거나, 행 단위 LLM 대기가 **줄어들었으면** 다시 그린다.
-        // 후자가 클라 워커의 배치별 push 를 화면에 점진 반영하는 지점이다(2026-09-02).
+        // 다시 그릴 이유가 **실제로 생겼을 때만** 그린다:
+        //   ① 평가 pending 이 이번에 풀렸다(계산 중 → 완료)
+        //   ② 행 단위 LLM 대기가 줄었다(클라 워커의 배치 push 가 도착)
+        // ⚠ `done` 만으로 그리면 최종본 세션에서 5초마다 전체 재렌더가 돈다 — 스크롤·
+        //    열린 팝오버가 튀고 CPU 를 계속 먹는다(2026-09-02 수정).
         const done = !web.ai_comment_pending && !web.compare_pending;
-        if (done || llmLeft < lastLlmPending) {
+        const wasPending = !!(DATA && DATA.web_report
+          && (DATA.web_report.ai_comment_pending || DATA.web_report.compare_pending));
+        if ((done && wasPending) || llmLeft < lastLlmPending) {
           if (_editingNow()) {
             // 사용자가 입력 중 — 다시 그리면 입력을 잃는다(불변 규칙 #12). 잠시 후 재시도.
             _aiPoll = setTimeout(tick, 3000);
@@ -230,10 +235,13 @@ function maybeStartAiPendingPoll() {
           seedEmptyFrames();
           buildDistColorMap(web.sources || []);
           renderActive();
-          lastLlmPending = llmLeft;
-          // 남은 행이 있으면 계속 폴링한다 — 아직 안 온 문장이 있다는 뜻이다.
-          if (done && llmLeft === 0) return;   // 완료 — 폴링 종료
         }
+        // 재렌더 여부와 **무관하게** 기준선을 갱신한다 — 안 그러면 서버가 pending 을
+        // 새로 만든 경우(예: 재빌드로 맵이 다시 채워짐) 다음 tick 이 계속 "줄었다"로
+        // 오판한다.
+        lastLlmPending = llmLeft;
+        // 남은 행이 있으면 계속 폴링한다 — 아직 안 온 문장이 있다는 뜻이다.
+        if (done && llmLeft === 0) return;   // 완료 — 폴링 종료
       } else if (res.status !== 202) {
         _aiPollGiveUp();   // 4xx/5xx — 폴링 중단 (리포트는 이미 떠 있다)
         return;

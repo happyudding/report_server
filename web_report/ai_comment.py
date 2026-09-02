@@ -65,8 +65,11 @@ _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
 # 사례 팝오버에 실을 선례 필드 — 엔진 present._precedent_result 계약의 부분집합.
 # 전량(metrics/features 전체)을 싣지 않는 이유: 화면이 읽는 것만 남겨 캐시 파일과 응답을
 # 가볍게 유지한다(선례 5건 × 세션 수백 item).
+# session_id (2026-09-02): 팝오버의 "세션 열기 ↗" 링크 — 그 코멘트가 저장됐던 세션으로
+# 바로 간다. 엔진은 계약 dict 에 담아 주는데(present._precedent_result) 여기서 빠져 있어
+# 화면 코드(sig_reason.js aicPrecRowHtml)가 링크를 그릴 재료를 못 받고 있었다.
 _PREC_VIEW_KEYS = ("product_name", "lot_id", "item_canonical", "unit",
-                   "status", "signature", "similarity", "comment")
+                   "status", "signature", "similarity", "comment", "session_id")
 _PREC_VIEW_METRICS = ("cpk", "yield", "mean", "stdev", "fail_count", "total_count")
 
 # ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값.

@@ -1625,15 +1625,25 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
 .aic-act  { color: #15803d; }   /* 제안 — 초록 */
 /* 「📋 사례 N건 상세」 — 셀 아래 한 줄. 건수는 payload(ai_precedents)에서 오고, 목록은
    클릭 시 라우트로 지연 조회해 .sigr-pop 팝오버로 뜬다(sig_reason.js openAicPrec). */
+/* 셀 하단 한 줄(2026-09-02 사용자 요청) — 왼쪽 「📋 사례 N건 상세」, 오른쪽 끝에 처리
+   주체 아이콘, 그 바로 왼쪽에 "Loading… (Claude)". 종전엔 셋이 각자 블록이라 세 줄을
+   먹었다. margin-top:auto 는 쓰지 않는다(셀 높이가 들쭉날쭉해진다). */
+.aic-foot { display: flex; align-items: center; gap: 6px; margin: 2px 0 0; }
+.aic-foot-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap; }
 .aic-prec { margin: 2px 0 4px; }
+/* 푸터 안에서는 링크 자체 여백을 죽인다 — 한 줄 정렬이 어긋난다. */
+.aic-foot .aic-prec { margin: 0; }
 .aic-prec-btn { border: 0; background: none; padding: 0; cursor: pointer;
   font-size: 11px; color: #6d28d9; text-decoration: underline; }
 .aic-prec-btn:hover { color: #4c1d95; }
 html[data-theme="dark"] .aic-prec-btn { color: #b794f6; }
+/* Claude 문장 대기 문구(2026-09-02) — 셀 하단 한 줄(.aic-foot)의 아이콘 왼쪽에 온다.
+   곧 사라질 안내라 본문보다 작게 쓴다. */
+.aic-foot .ai-wait { font-size: 11px; }
 /* 처리 주체 배지(2026-09-02) — 이 셀 문장을 누가 썼나. 셀 오른쪽 아래에 작게 붙는다
    (본문 폭을 먹지 않게 float). claude 만 확실한 값이고 llm/rule 은 서버 배선 기준이다. */
-.aic-src { float: right; margin-left: 4px; font-size: 11px; line-height: 1.2; cursor: help;
-  opacity: .75; }
+.aic-src { font-size: 11px; line-height: 1.2; cursor: help; opacity: .75; }
 .aic-src-claude { color: #d97757; }   /* Claude 주황 */
 .aic-src-llm    { color: #2563eb; }
 .aic-src-rule   { color: #98a2b3; }

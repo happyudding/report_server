@@ -202,7 +202,7 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
                revision, lsl, usl, values, fail_mask, x_pos, y_pos, site, skewness=None,
                item_raw=None, unit=None,
                spatial_fail_mask=None, spatial_x_pos=None, spatial_y_pos=None,
-               spatial_dut=None):
+               spatial_dut=None, bin1_mask=None):
     """fail_case context dict (raw_table/raw_df 경로 공유 — 스키마 단일 소스).
 
     `unit` 은 판정에 쓰이지 않는다(분류는 이미 value_type 으로 끝났다). value_type 이
@@ -240,6 +240,10 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
         # DUT(테스터 채널) — DUT_FAIL 판정용. 공간 축과 같은 전체 die 정렬이라
         # `spatial_fail_mask` 와 짝으로 읽는다. 없으면 None → feature 결측(미발화).
         "spatial_dut": spatial_dut,
+        # Bin1(양품) 마스크 — **cpk 계열 전용**, `values` 와 같은 인덱스. report_server
+        # CPK 탭/Issue Table 이 Bin1 기준이라 엔진 cpk 도 같은 모집단으로 맞춘다
+        # (2026-09-02). None 이면 종전대로 전 die 로 계산한다(레거시·degrade 경로).
+        "bin1_mask": bin1_mask,
     }
 
 
@@ -479,13 +483,22 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         # 섹션 라벨(bin 개념이 없다)과 같은 case 로 만나야 하기 때문(eval_export).
         case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
                                      meta.get("wafer_number"), item_id, None, revision)
+        # cpk 계열(L1 cpk_summary)만 쓰는 **Bin1(양품) 마스크** — values 와 같은 인덱스로
+        # 정렬된 측정값 축이다. report_server 의 CPK 탭·Issue Table 이 Bin1 기준으로 통일돼
+        # 있어(web_report/tabs/cpk.py 모듈 docstring, 2026-07-23), 엔진이 전 die 로 재면
+        # 같은 항목의 cpk 가 두 값으로 갈린다 — 화면은 1.05 인데 LOW_CPK 가 안 뜨는
+        # "미분류" 신고의 원인이었다(2026-09-02).
+        # ⚠ **cpk 계열에만** 쓴다. outlier·꼬리·이봉·MEAN_SHIFT·공간 룰은 종전대로 전 die 를
+        #   본다 — fail die 를 빼면 "튄 값"·"꼬리" 를 만든 장본인이 모집단에서 사라져
+        #   그 룰들이 통째로 죽는다.
+        bin1_mask = [b == PASS_BIN for b in bins] if bins else None
         case = _case_dict(meta, case_id, item_id, item_canonical, cat,
                           value_type, bin_, revision, lsl, usl,
                           values, fail_mask, x_pos, y_pos, site,
                           item_raw=item, unit=unit_row[item],
                           spatial_fail_mask=sp_mask,
                           spatial_x_pos=x_all, spatial_y_pos=y_all,
-                          spatial_dut=dut_all)
+                          spatial_dut=dut_all, bin1_mask=bin1_mask)
         case["_shared"] = item_shared
         # 좌표 전처리(_spatial_geometry) 공유통 — 공간 축은 **항상 소스 공용 좌표**
         # (x_all/y_all)라 item 마다 같다. 그래서 종전의 "측정값 결측이 없을 때만" 조건이
