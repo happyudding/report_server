@@ -104,6 +104,10 @@ ADD_CASES = [
     ("S16-prewarm-pending-first", "web_report/compute.py",
      "    report, t = report_job(session_id, upload_root_str, True)",
      "    report, t = report_job(session_id, upload_root_str, False)"),
+    # LLM 문장은 세션 편집 DB 가 진실 — 공유 store 를 service 가 다시 읽으면 차단.
+    ("S17-ai-suggest-session-scope", "web_report/service.py",
+     "        stored = ai_suggest_store.load(upload_root, akey, chash, mode, prep)",
+     "        stored = edits.load_ai_suggestions(report_db, session_id)"),
 ]
 
 REMOVE_CASES = [

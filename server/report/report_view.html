@@ -727,63 +727,6 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
 #panel-issue-cmp-table.cmp-stats-folded .sheet-table.kind-issue .cmp-stat-col { display: none; }
 #panel-issue-cmp-table.cmp-stats-folded .sheet-table.kind-issue col.cmp-stat-col { width: 0 !important; }
 
-/* Signature / AI Comment 열 개별 접기 (2026-09-02 사용자 요청 — 두 열이 넓어 다른 숫자
-   열을 화면 밖으로 민다). 위 Compare 통계 접기와 같은 장치이되 열 하나씩이고, 토글이
-   그 열 헤더의 화살표(.col-fold-btn)다.
-   ⚠ td 는 감추되 **th 는 남긴다** — 통째로 display:none 하면 다시 펼칠 화살표까지
-   사라져 되돌릴 방법이 없어진다. 헤더만 아주 좁게(폭 0 + 화살표만) 남긴다.
-   ⚠⚠ **셀렉터 하나하나가 대상 요소(td/col/th.fold-col-*)까지 포함해야 한다.**
-   2026-09-02 회귀: `#panel-issues.fold-sig .sheet-table,` 처럼 앞 항목을 콤마로 끊어
-   놓아 그것이 **독립 셀렉터**가 됐고, 접는 순간 Issue Table 표가 통째로 display:none
-   됐다(사용자 신고 "Issue Table 이 아예 안 뜬다"). 콤마 뒤는 항상 새 셀렉터다 —
-   공통 접두를 나눠 쓸 수 없으니 조합을 전부 적는다. */
-#panel-issues.fold-sig .sheet-table.kind-issue td.fold-col-sig,
-#panel-issue-temp.fold-sig .sheet-table.kind-issue td.fold-col-sig,
-#panel-issue-cmp-table.fold-sig .sheet-table.kind-issue td.fold-col-sig,
-#panel-issues.fold-aic .sheet-table.kind-issue td.fold-col-aic,
-#panel-issue-temp.fold-aic .sheet-table.kind-issue td.fold-col-aic,
-#panel-issue-cmp-table.fold-aic .sheet-table.kind-issue td.fold-col-aic { display: none; }
-#panel-issues.fold-sig .sheet-table.kind-issue col.fold-col-sig,
-#panel-issue-temp.fold-sig .sheet-table.kind-issue col.fold-col-sig,
-#panel-issue-cmp-table.fold-sig .sheet-table.kind-issue col.fold-col-sig,
-#panel-issues.fold-aic .sheet-table.kind-issue col.fold-col-aic,
-#panel-issue-temp.fold-aic .sheet-table.kind-issue col.fold-col-aic,
-#panel-issue-cmp-table.fold-aic .sheet-table.kind-issue col.fold-col-aic { width: 22px !important; }
-/* 접힌 열의 헤더 — 라벨·안내문·리사이즈 핸들은 감추고 화살표만 남긴다. */
-#panel-issues.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issue-temp.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issues.fold-aic .sheet-table.kind-issue th.fold-col-aic,
-#panel-issue-temp.fold-aic .sheet-table.kind-issue th.fold-col-aic,
-#panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic {
-  width: 22px; min-width: 22px; max-width: 22px; padding: 4px 1px; overflow: hidden;
-}
-#panel-issues.fold-sig .sheet-table.kind-issue th.fold-col-sig > *:not(.col-fold-btn),
-#panel-issue-temp.fold-sig .sheet-table.kind-issue th.fold-col-sig > *:not(.col-fold-btn),
-#panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig > *:not(.col-fold-btn),
-#panel-issues.fold-aic .sheet-table.kind-issue th.fold-col-aic > *:not(.col-fold-btn),
-#panel-issue-temp.fold-aic .sheet-table.kind-issue th.fold-col-aic > *:not(.col-fold-btn),
-#panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic > *:not(.col-fold-btn) {
-  display: none;
-}
-/* 접힌 헤더는 라벨 텍스트(요소가 아닌 텍스트 노드)도 지워야 폭 22px 가 유지된다.
-   화살표는 .col-fold-btn 이 자기 font-size 를 다시 세워 살아난다(아래 규칙). */
-#panel-issues.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issue-temp.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issue-cmp-table.fold-sig .sheet-table.kind-issue th.fold-col-sig,
-#panel-issues.fold-aic .sheet-table.kind-issue th.fold-col-aic,
-#panel-issue-temp.fold-aic .sheet-table.kind-issue th.fold-col-aic,
-#panel-issue-cmp-table.fold-aic .sheet-table.kind-issue th.fold-col-aic { font-size: 0; }
-.col-fold-btn {
-  font-size: 10px; line-height: 14px; padding: 0 3px; margin-right: 3px;
-  border: 1px solid #d0d5dd; border-radius: 3px; background: #fff; color: #667085;
-  cursor: pointer; vertical-align: middle;
-}
-.col-fold-btn:hover { background: #eef2f7; color: #1f2937; }
-#panel-issues.fold-sig th.fold-col-sig .col-fold-btn, #panel-issue-temp.fold-sig th.fold-col-sig .col-fold-btn, #panel-issue-cmp-table.fold-sig th.fold-col-sig .col-fold-btn,
-#panel-issues.fold-aic th.fold-col-aic .col-fold-btn, #panel-issue-temp.fold-aic th.fold-col-aic .col-fold-btn, #panel-issue-cmp-table.fold-aic th.fold-col-aic .col-fold-btn { margin-right: 0; }
-html[data-theme="dark"] .col-fold-btn { background: #1f2733; border-color: #3a3f4b; color: #9aa3b0; }
-html[data-theme="dark"] .col-fold-btn:hover { background: #26303f; color: #e6e8eb; }
 /* Compare 표에는 Map 컬럼이 없어 4·5·6번째가 Map/Distribution 이 아니라 통계 컬럼이다 —
    위쪽 공용 규칙(:nth-child(5)/(6))의 좌측 고정(sticky)·최소폭 144px 를 이 패널에서만
    무효화한다. (안 풀면 통계 컬럼이 왼쪽에 고정된 채 144px 로 벌어져 가로폭이 더 커진다.)
@@ -1687,6 +1630,13 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
   font-size: 11px; color: #6d28d9; text-decoration: underline; }
 .aic-prec-btn:hover { color: #4c1d95; }
 html[data-theme="dark"] .aic-prec-btn { color: #b794f6; }
+/* 처리 주체 배지(2026-09-02) — 이 셀 문장을 누가 썼나. 셀 오른쪽 아래에 작게 붙는다
+   (본문 폭을 먹지 않게 float). claude 만 확실한 값이고 llm/rule 은 서버 배선 기준이다. */
+.aic-src { float: right; margin-left: 4px; font-size: 11px; line-height: 1.2; cursor: help;
+  opacity: .75; }
+.aic-src-claude { color: #d97757; }   /* Claude 주황 */
+.aic-src-llm    { color: #2563eb; }
+.aic-src-rule   { color: #98a2b3; }
 .aic-badges { margin-top: 5px; padding-top: 4px; border-top: 1px dashed #e4e7ec; }
 .aic-badge { display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 9px;
   font-size: 10px; font-weight: 700; background: #eef2f7; color: #1f2937; }

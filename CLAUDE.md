@@ -510,6 +510,12 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
       둘 다 `_` 를 포함할 수 있어 `source_item` 분해도 못 한다 — 표시 문자열은 토큰에서
       만들고 **절대 되돌려 읽지 않는다**([web_report/gap_chart.py](web_report/gap_chart.py)).
       차트 주석 키는 `cdf:gap:<uuid>`(`note_subject`)로 갈라 동명 항목과 섞이지 않는다.
+    - **AI Comment LLM 문장은 세션 편집 DB 가 진실** (2026-09-02) — kind `ai_suggest`,
+      item_key = **item_raw**, value=JSON(`suggestion`/`cases`/`sha`/`by`/`ts`/`provider`).
+      종전 analysis_key 단위 공유 파일(`ai_suggest_store`)은 dedup 형제 세션이 서로의 문장을
+      보게 만들어 폐기했다 — 새 세션이 남의 옛 문장부터 보여 주고, 한쪽 push 가 이미 만든
+      다른 세션 화면을 바꿨다. legacy marker 행(item_key=`push`)은 로더가 건너뛴다.
+      perf_guard `S17-ai-suggest-session-scope` 가 공유 store 재도입을 막는다 → [docs/23](docs/23_ai_comment_client_llm.md).
     - 편집 `kind` **16종** 이름과 item_key — `issue_comment`/`etc_item`/`cmp_etc_item`/
       `trim_override`/`summary_engr`/`chart_note`/`compare_note`/`dist_composite`/`gap_chart`/
       `note_sheet`/`note_tag`/`issue_hidden`/`issue_status`/`issue_signature`/`preprocess`/

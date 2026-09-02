@@ -428,6 +428,10 @@ def _eval_rules_suffix() -> tuple:
     전역 REPORT_SCHEMA_VERSION 이 정석이지만 그건 전 세션 콜드 폭풍이다(규칙 14).
     이 꼬리표는 ai 옵션 세션의 report_key 에만 붙으므로 대상만 정확히 갈아낸다.
     "evalcpk" 와 같은 영구 표식이다(되돌리지 않는다).
+    "aisess" (2026-09-02): LLM 문장이 **세션 고유 저장**(편집 DB)이 되고 payload 에
+    `ai_llm_pending`(행별 Loading)·`ai_sources`(처리 주체 아이콘) 키가 생긴 표식.
+    종전 payload 에는 형제 세션의 문장이 구워져 있으므로 갈아야 그 잔재가 사라진다.
+    aiprec 과 같은 이유·같은 방식의 영구 표식이다(전역 bump 금지).
     """
     from .eval_debug import rules_rev
     parts = ()
@@ -437,7 +441,7 @@ def _eval_rules_suffix() -> tuple:
     from .ai_comment import fail_only_enabled
     if fail_only_enabled():
         parts += ("evalfail", "evalcpk")
-    return parts + ("aiprec",)
+    return parts + ("aiprec", "aisess")
 
 
 def _eval_sensitivity_suffix(opts_raw: str) -> tuple:
@@ -572,7 +576,15 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 #   가 안 움직인다 — v12 와 같은 이유로 여기서 올린다(전역 bump 금지).
 #   ⚠ 함께 넣은 deny_patterns 2종(`no_info_excuse`/`meta_judgment`)은 프롬프트에 들어가지
 #     않아 sha 불변이다(다음 push 부터 적용) — 그쪽만 고칠 때는 bump 가 필요 없다.
-AI_COMMENT_SCHEMA_VERSION = 13
+# v14 (2026-09-02): ① 이 캐시에 **클라 LLM 문장을 더 이상 굽지 않는다** — 키에 session_id
+#   가 없어 dedup 형제 세션이 공유하는 캐시라, 종전의 `_merge_ai_suggestions` 병합이 한
+#   세션의 push 를 형제 세션 화면에 그대로 실어 보냈다(새 세션이 남의 옛 문장부터 보는
+#   신고의 실제 원인). 이제 엔진 순수 산출만 담고 문장은 세션 편집 DB(kind=ai_suggest)에서
+#   payload 조립 때 덧칠한다(service._session_ai_overlay). **반드시 갈아야 한다** — 옛
+#   캐시 파일에는 형제 문장이 이미 구워져 있어, 안 갈면 그 세션들이 계속 남의 문장을 본다
+#   (= 사용자 결정 "기존 문장 전부 초기화"의 실행 수단).
+#   ② 반환 dict 에 `llm_enabled` 키 추가(처리 주체 아이콘 재료) — 구조 변경이라 규약대로다.
+AI_COMMENT_SCHEMA_VERSION = 14
 
 
 def _ai_meta_digest(session) -> str:

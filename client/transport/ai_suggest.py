@@ -6,8 +6,12 @@
 
     업로드 성공 → start_background()  (daemon 스레드, 즉시 반환)
       1) GET  .../web_report/ai_comment/prompts   (202 재폴링 — 서버 'ai' 잡 대기)
-      2) call_claude.run_batch()  — 프롬프트 N건 = subprocess 1회 (순차, 병렬 없음)
-      3) POST .../web_report/ai_comment/suggestions
+      2) call_claude.run_batch()  — 프롬프트 N건 = subprocess 1회, **배치 4개 병렬**
+      3) POST .../web_report/ai_comment/suggestions — **배치가 끝나는 대로 즉시**
+
+2026-09-02 개편: 종전엔 배치를 완전 순차로 돌리고 전부 모아 마지막에 한 번 push 해서,
+100건 세션이 7~10분 걸리고 그동안 화면에는 아무 변화가 없었다. 지금은 배치를 병렬로
+돌리고 끝나는 대로 보내, 서버가 행별 대기 상태를 내려주는 화면이 점진적으로 채워진다.
 
 원칙:
 - **모든 예외를 삼킨다** — 실패해도 서버 폴백(action_ko 문장)이 이미 있어 무해하다.
@@ -20,7 +24,8 @@ honey.env 선택 키 (전부 없어도 동작):
     HONEY_CLAUDE_MODEL      --model 값 (기본: claude-sonnet-5)
     HONEY_CLAUDE_TIMEOUT    배치 1회 subprocess 상한 초 (기본 240)
     HONEY_CLAUDE_BATCH      배치당 프롬프트 수 (기본 10)
-    HONEY_CLAUDE_MAX_ITEMS  세션당 처리 상한 (기본 50 — 초과분은 폴백 유지)
+    HONEY_CLAUDE_PARALLEL   동시 실행 배치 수 (기본 4, 상한 5 — PC 부하와의 절충)
+    HONEY_CLAUDE_MAX_ITEMS  세션당 처리 상한 (기본 100 — 초과분은 폴백 유지)
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 # requests 는 클라 실행 환경에 항상 있다(requirements.txt). import 실패를 삼키는 이유는
@@ -342,38 +348,96 @@ def _worker(session_id: str, base_url: str, on_progress=None) -> None:
                                 session_id, {"reason": reason, "status": status})
             return
         _notify(on_progress, f"AI Comment: {len(items)}개 항목 문장 생성 중…")
-        max_items = int(env_value("HONEY_CLAUDE_MAX_ITEMS", "50") or 50)
+        # 상한 대상 = **선례가 있는 item 만**이다(서버 build_prompts 가 선례 0건이면
+        # 프롬프트를 안 만든다) — 이슈 전체 수가 아니라 "사례가 붙은 항목" 수다.
+        # 50 → 100 (2026-09-02): 이슈가 많은 세션에서 초과분이 조용히 룰 문장으로
+        # 남는 신고가 있었다. 초과 건수는 아래에서 사용자·진단에 남긴다.
+        max_items = int(env_value("HONEY_CLAUDE_MAX_ITEMS", "100") or 100)
+        dropped = 0
         if len(items) > max_items:
+            dropped = len(items) - max_items
             _log.info("ai_suggest 상한 초과: %d/%d 건만 처리 (초과분 폴백 유지)",
                       max_items, len(items))
+            # 화면에 아무 흔적이 없으면 사용자는 "왜 이 항목만 룰 문장인지" 알 수 없다.
+            _notify(on_progress,
+                    f"AI Comment: 항목이 많아 {max_items}건만 처리합니다 "
+                    f"({dropped}건은 기본 문장 유지 — HONEY_CLAUDE_MAX_ITEMS 로 조정)")
             items = items[:max_items]
         model = env_value("HONEY_CLAUDE_MODEL") or DEFAULT_MODEL
         timeout = float(env_value("HONEY_CLAUDE_TIMEOUT", "240") or 240)
         batch_size = max(1, int(env_value("HONEY_CLAUDE_BATCH", "10") or 10))
+        # 배치 **병렬 실행** (2026-09-02 사용자 결정). 종전 완전 순차는 10배치 × 40초 =
+        # 7~10분이라 사용자가 결과를 볼 때쯤엔 이미 리포트를 닫은 뒤였다. 4 로 나눠 돌면
+        # 같은 양이 3 wave ≈ 2분 안팎이다. 상한 5 는 업로더 PC 부하(배치 1개 = node
+        # 프로세스 1개)와 게이트웨이 동시 요청을 고려한 안전선이다.
+        parallel = max(1, min(5, int(env_value("HONEY_CLAUDE_PARALLEL", "4") or 4)))
 
         def _cli_log(msg):
             _log.info("%s", msg)
             if len(cli_log) < _CLI_LOG_KEEP:
                 cli_log.append(str(msg)[:200])
 
-        out = []
-        batches = 0
-        for start in range(0, len(items), batch_size):
-            if time.monotonic() - started > _HARD_DEADLINE_SEC:
-                _log.info("ai_suggest 전체 상한 초과 — 중단 (%d건 완료)", len(out))
-                break
-            chunk = items[start:start + batch_size]
-            batches += 1
+        chunks = [items[i:i + batch_size] for i in range(0, len(items), batch_size)]
+        out, batches, pushed, push_fail = [], 0, 0, 0
+
+        def _run_chunk(chunk):
+            """배치 1개 = claude CLI subprocess 1회. 스레드에서 병렬로 돈다.
+
+            call_claude 는 상태를 공유하지 않는 순수 subprocess 호출이라 동시 실행이
+            안전하다(공유 상태는 --help 캐시 dict 하나뿐이고 값이 같다).
+            """
             replies = call_claude.run_batch(
                 [row.get("prompt") or "" for row in chunk],
                 bin_path=bin_path, model=model, timeout=timeout, log=_cli_log)
+            rows = []
             for row, reply in zip(chunk, replies):
                 if reply:
                     # suggestion 은 서버가 sanitize 한다 — 여기서는 원문 그대로 보낸다.
                     # 서버가 sanitize 전후를 비교해 "모델이 이상하게 답한 것"과 "서버가
                     # 걷어낸 것"을 관리자 화면에서 구분할 수 있게 하기 위함이다(docs/23).
-                    out.append({"key": row.get("key"), "sha": row.get("sha"),
-                                "suggestion": reply})
+                    rows.append({"key": row.get("key"), "sha": row.get("sha"),
+                                 "suggestion": reply})
+            return rows
+
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(_run_chunk, c): c for c in chunks}
+            try:
+                for fut in as_completed(futures):
+                    batches += 1
+                    try:
+                        rows = fut.result()
+                    except Exception:               # noqa: BLE001 — 배치 1개 실패는 폴백
+                        _log.info("ai_suggest 배치 실패 — 건너뜀", exc_info=True)
+                        rows = []
+                    out.extend(rows)
+                    if rows:
+                        # **배치가 끝나는 대로 보낸다** (2026-09-02). 전부 모아 한 번에
+                        # 보내면 마지막 배치가 끝날 때까지 화면이 통째로 Loading 이다.
+                        # 서버 저장은 항목 단위 upsert(멱등)라 나눠 보내도 안전하고,
+                        # 저장할 때마다 payload_rev 가 올라 화면이 점진적으로 채워진다.
+                        ok, status = _post_suggestions(base, session_id, headers, rows)
+                        if ok:
+                            pushed += len(rows)
+                        else:
+                            push_fail = status
+                            _log.info("ai_suggest 배치 push 실패 (HTTP %s) — 마지막에 재시도",
+                                      status)
+                    _notify(on_progress,
+                            f"AI Comment: 배치 {batches}/{len(chunks)} 완료 "
+                            f"(누적 {pushed}건 반영)")
+                    if time.monotonic() - started > _HARD_DEADLINE_SEC:
+                        _log.info("ai_suggest 전체 상한 초과 — 중단 (%d건 완료)", len(out))
+                        # 건수 상한과 같은 이유로 사용자에게 남긴다 — 남은 항목이 룰 문장으로
+                        # 보이는 것이 "실패"가 아니라 "시간 초과"임을 알 수 있어야 한다.
+                        _notify(on_progress,
+                                f"AI Comment: 시간 상한({_HARD_DEADLINE_SEC // 60}분)에 걸려 "
+                                f"{len(out)}건까지만 생성했습니다 (나머지는 기본 문장 유지)")
+                        break
+            finally:
+                # 남은 배치를 취소한다 — 이미 시작된 subprocess 는 끝까지 가지만(취소 불가)
+                # 대기 중인 것은 여기서 버려져 상한을 넘겨 계속 돌지 않는다.
+                for fut in futures:
+                    fut.cancel()
         if not out:
             # CLI 는 찾았는데 한 건도 못 만든 경우 — 현장에서 인증·정책 실패의 1순위 신호다.
             _notify(on_progress,
@@ -387,20 +451,29 @@ def _worker(session_id: str, base_url: str, on_progress=None) -> None:
                              "model": model or "(default)",
                              "cli_log": " || ".join(cli_log)[:400]})
             return
-        ok, status = _post_suggestions(base, session_id, headers, out)
-        if not ok:
+        if pushed < len(out):
+            # 배치별 push 에서 실패한 잔여분을 한 번에 다시 보낸다(merge 멱등 — 이미 들어간
+            # 항목을 같이 보내도 같은 값으로 덮일 뿐이다).
+            ok, status = _post_suggestions(base, session_id, headers, out)
+            if ok:
+                pushed = len(out)
+            else:
+                push_fail = status
+        if not pushed:
             _notify(on_progress,
                     f"AI Comment 대행 실패: 만든 문장 {len(out)}건을 서버에 저장하지 "
-                    f"못했습니다 — {http_hint(status)}")
+                    f"못했습니다 — {http_hint(push_fail)}")
             _report_failure("ai_suggest_push_failed",
-                            f"생성한 문장을 서버에 저장하지 못했습니다 (HTTP {status})",
-                            session_id, {"status": status, "items": len(out)})
+                            f"생성한 문장을 서버에 저장하지 못했습니다 (HTTP {push_fail})",
+                            session_id, {"status": push_fail, "items": len(out)})
             return
-        # 성공 — 사용자는 여기서 처음으로 "대행이 실제로 됐다"를 안다. 새로고침 안내를
-        # 함께 붙인다(push 는 payload_rev 만 올리므로 열려 있는 화면은 자동 갱신이 없다).
+        # 성공 — 사용자는 여기서 처음으로 "대행이 실제로 됐다"를 안다. 화면은 서버가 행별
+        # 대기 상태(ai_llm_pending)를 내려주므로 열어 둔 리포트가 스스로 채워진다
+        # (2026-09-02 — boot.js 폴링이 배치별 push 를 따라간다). 옛 화면·구서버 대비로
+        # 새로고침 안내는 남긴다.
         _notify(on_progress,
-                f"AI Comment 대행 완료: {len(out)}건 반영됨 "
-                "(리포트 화면을 새로고침하면 보입니다)")
+                f"AI Comment 대행 완료: {pushed}건 반영됨 "
+                "(리포트 화면이 곧 자동 갱신됩니다 — 안 보이면 새로고침)")
     except Exception as exc:  # noqa: BLE001 — 부가 기능: 예외가 업로드 흐름 밖으로 안 나간다
         _log.info("ai_suggest 워커 예외 — 조용히 종료 (session=%s)",
                   session_id, exc_info=True)

@@ -520,6 +520,71 @@ def test_placeholder_and_partial_tokens():
     print("[k] 자리표시 생략 + 부분 토큰 게이트(태그 누출 차단) OK")
 
 
+def test_llm_pending_row_and_source_icon():
+    """(l) 행 단위 LLM 대기 + 처리 주체 아이콘 (2026-09-02 개편).
+
+    사용자 요구: ① 사례가 있어 Claude 문장을 기다리는 행은 옛 문장 대신 "Loading 중…"
+    ② 사례가 없는 행은 기다리지 않고 즉시 룰 문장(action_ko) ③ 어느 AI 가 썼는지 표시.
+
+    셋 다 **행 단위**라 payload 맵(ai_llm_pending / ai_sources)을 서버가 row_key 로
+    전개해 준다 — 화면은 그 키를 그대로 읽는다(파서 사본 금지).
+    giveup(__aiLlmFailed) 뒤에는 대기를 접고 코드 문장을 최종본으로 보여 줘야 한다 —
+    워커가 실패한 PC 에서 셀이 영영 Loading 으로 남으면 안 된다.
+    """
+    cell = ("[MAJOR] [현상] - LOW_CPK: 현상\n[사례] ①(P1/L1) 사례 원문\n"
+            " [제안] - 룰 기본 조치")
+    harness = (
+        "<script>(function(){var out={};"
+        "var C=" + js_literal(cell) + ";"
+        "DATA.web_report.ai_llm_pending={'CPK|Waiting':1};"
+        "DATA.web_report.ai_sources={'CPK|Done':'claude','CPK|Srv':'llm','CPK|Rule':'rule'};"
+        "DATA.session={uploaded_at:new Date().toISOString()};"
+        "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
+        # ① 대기 행 — [제안] 자리가 Loading, 사례는 그대로 보인다(셀이 비지 않게)
+        "var a=box(renderAiComment(C,1,'CPK|Waiting'));"
+        "out.waitText=a.textContent; out.waitSpin=!!a.querySelector('.ai-wait');"
+        "out.waitIcon=!!a.querySelector('.aic-src');"
+        # ② 대기 아님(사례 0건 행 포함) — 룰 문장이 그대로 최종본
+        "var b=box(renderAiComment(C,1,'CPK|Rule'));"
+        "out.ruleText=b.textContent; out.ruleSpin=!!b.querySelector('.ai-wait');"
+        "out.ruleIcon=(b.querySelector('.aic-src')||{}).className||'';"
+        # ③ 아이콘 3분기
+        "out.claudeIcon=(box(renderAiComment(C,1,'CPK|Done'))"
+        "  .querySelector('.aic-src')||{}).className||'';"
+        "out.llmIcon=(box(renderAiComment(C,1,'CPK|Srv'))"
+        "  .querySelector('.aic-src')||{}).className||'';"
+        # ④ 키가 없는 행(옛 payload·비 AI 세션) → 배지 없음(하위호환)
+        "out.noneIcon=!!box(renderAiComment(C,1,'CPK|Unknown')).querySelector('.aic-src');"
+        # ⑤ giveup 뒤에는 대기를 접고 룰 문장을 보여준다
+        "window.__aiLlmFailed=true;"
+        "var e=box(renderAiComment(C,1,'CPK|Waiting'));"
+        "out.gaveUpText=e.textContent; out.gaveUpSpin=!!e.querySelector('.ai-wait');"
+        "window.__aiLlmFailed=false;"
+        # ⑥ TTL 경과(오래된 세션) — 영구 Loading 방지
+        "DATA.session={uploaded_at:new Date(Date.now()-7200*1000).toISOString()};"
+        "out.staleSpin=!!box(renderAiComment(C,1,'CPK|Waiting')).querySelector('.ai-wait');"
+        "var pre=document.createElement('pre');pre.id='res';"
+        "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "llm_pending"))
+    assert r["waitSpin"], "사례 있는 대기 행에 Loading 표시가 없습니다"
+    assert "룰 기본 조치" not in r["waitText"], \
+        f"대기 중인데 룰 문장이 먼저 보입니다(곧 바뀌어 사용자를 혼란시킴): {r['waitText']!r}"
+    assert "사례 원문" in r["waitText"], \
+        f"대기 중 [사례]까지 숨겨 셀이 비었습니다: {r['waitText']!r}"
+    assert not r["waitIcon"], "확정 전인데 처리 주체 배지가 붙었습니다"
+    assert not r["ruleSpin"] and "룰 기본 조치" in r["ruleText"], \
+        f"대기 대상이 아닌 행이 Loading 입니다: {r}"
+    assert r["ruleIcon"].endswith("aic-src-rule"), r["ruleIcon"]
+    assert r["claudeIcon"].endswith("aic-src-claude"), r["claudeIcon"]
+    assert r["llmIcon"].endswith("aic-src-llm"), r["llmIcon"]
+    assert not r["noneIcon"], "출처 키가 없는데 배지가 붙었습니다(옛 payload 하위호환 깨짐)"
+    assert not r["gaveUpSpin"] and "룰 기본 조치" in r["gaveUpText"], \
+        f"폴링 포기 뒤에도 Loading 이 남았습니다: {r}"
+    assert not r["staleSpin"], "TTL 이 지난 세션이 계속 Loading 입니다(영구 대기)"
+    print("[l] 행 단위 Loading + 처리 주체 아이콘 + TTL/포기 폴백 OK")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -541,6 +606,7 @@ def main():
     test_prec_link_render()
     test_case_section_hidden_only_with_suggestion()
     test_placeholder_and_partial_tokens()
+    test_llm_pending_row_and_source_icon()
     print("\n전부 통과")
 
 

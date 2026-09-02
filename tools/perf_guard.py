@@ -289,6 +289,21 @@ _RULES = [
         "doc": "docs/12_web_report_cache.md, web_report/service.py _compare_cached",
     },
     {
+        "id": "S17-ai-suggest-session-scope",
+        "kind": "forbid_add",
+        "paths": ["web_report/service.py"],
+        # 클라 LLM 문장의 진실은 세션 편집 DB(kind=ai_suggest) 하나다. 공유 파일 저장소를
+        # service 가 다시 읽거나 쓰면 dedup 형제 세션의 문장이 되살아난다.
+        "pattern": r"ai_suggest_store\.(load|save_merge)\(",
+        "why": "AI Comment [제안] 문장은 **세션 편집 DB 가 진실**이다(2026-09-02). 종전 "
+               "ai_suggest_store 는 analysis_key 단위 공유 파일이라, 같은 rawdata 를 다시 "
+               "올린 형제 세션이 서로의 문장을 봤다 — 새 세션이 남의 옛 문장부터 보여 주고 "
+               "한쪽 push 가 다른 세션 화면을 바꿨다(사용자 신고). service 가 그 파일을 "
+               "다시 읽으면 같은 간섭이 되살아난다. 세션 문장은 "
+               "edits.load_ai_suggestions / apply_webreport_edits 로만 다룰 것.",
+        "doc": "docs/23_ai_comment_client_llm.md, web_report/service.py _session_ai_overlay",
+    },
+    {
         "id": "S15-ai-job-cache-first",
         "kind": "forbid_remove",
         "paths": ["web_report/compute.py"],

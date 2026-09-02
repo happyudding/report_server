@@ -204,13 +204,14 @@ def overview(days=14) -> dict:
 def session_suggestions(session_id: str) -> dict:
     """한 세션에 저장된 [제안] 문장 목록 — 품질 검수용.
 
-    본문은 DB 가 아니라 영구 저장 파일(ai_suggest_store)에 있다. **파일 1개만** 읽는다.
+    본문은 **그 세션의 편집 DB**(kind=ai_suggest)에 있다 (2026-09-02 — 종전엔 analysis_key
+    단위 공유 파일이라 형제 세션의 문장이 섞여 보였다). 조회 1회로 끝난다.
     `stale` 은 "지금 프롬프트 sha 와 다른, 옛 룰 기준으로 만들어진 문장"이라는 표시다 —
     sha 게이트 폐기(2026-09-02) 후로는 그래도 **화면에 그대로 붙으며**, 다음 재대행 때
     새 문장으로 교체된다(docs/23 핵심 결정 ②). 판정에 캐시를 **새로 만들지 않는다**
     (allow_build=False) — 관리자 조회가 콜드 빌드를 유발하면 안 된다.
     """
-    from web_report import ai_suggest_store, service as web_report_service
+    from web_report import edits as wr_edits, service as web_report_service
 
     session = report_db.get_session(session_id)
     if not session:
@@ -218,9 +219,7 @@ def session_suggestions(session_id: str) -> dict:
     if not _wanted(session.get("webreport_options")):
         return {"items": [], "note": "AI Model=claude 대상 세션이 아닙니다."}
     upload_root = _upload_root()
-    akey, chash, mode, prep = web_report_service._ai_suggest_coords(
-        session, session_id, report_db=report_db)
-    stored = ai_suggest_store.load(upload_root, akey, chash, mode, prep)
+    stored = wr_edits.load_ai_suggestions(report_db, session_id)
     if not stored:
         return {"items": [], "note": "저장된 문장이 없습니다 (아직 push 되지 않음)."}
     prompts = {}

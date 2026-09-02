@@ -102,13 +102,21 @@ YIELD_BASIS_GROSS = "gross"
 YIELD_BASIS_TEST = "test"
 YIELD_BASIS_AUTO = "auto"
 
-# 2026-08-28 추가 — 클라 LLM 대행 suggestion push 표식 (docs/23 핵심 결정 ③).
-# item_key='push' 고정, value=소형 JSON({"ts","count"}) — suggestion 본문은 여기가 아니라
-# ai_suggest_store(영구 파일)에 있다. 이 marker 의 존재 이유는 payload_rev +1 하나뿐이다
-# (병합된 코멘트가 report payload 캐시에 반영되도록 기존 rev 채널을 재사용).
+# 2026-08-28 추가 — 클라 LLM 대행 suggestion (docs/23).
+# **2026-09-02 개정: 이 kind 가 문장의 진실이 됐다** (종전엔 item_key='push' marker 1건이고
+# 본문은 analysis_key 단위 공유 파일 ai_suggest_store 에 있었다). 공유 저장은 dedup 형제
+# 세션이 서로의 문장을 보게 만들어(같은 rawdata 재업로드 = 같은 akey) 새 세션이 남의 옛
+# 문장부터 보여 주고, 한쪽 push 가 다른 세션 화면을 바꿨다 — 사용자 신고의 실제 원인.
+# 이제 item_key=item_raw, value=JSON:
+#   {"suggestion","cases","sha","by","ts","provider","raw"?}
+# 세션 단위 테이블이라 형제 간섭이 **구조적으로** 불가능하고, 세션 삭제 시 함께 정리되며
+# DB 백업에 포함된다. sha 는 관리자 stale 표시용으로만 보존한다(게이트는 2026-09-02 폐기).
+# legacy (ai_suggest,'push') marker 행이 기존 세션에 남아 있으므로 로더가 건너뛴다.
 # ⚠ PAYLOAD_NEUTRAL_KINDS 에 **넣지 않는다** — suggestion 병합은 payload 의 AI Comment
 # 셀 값을 실제로 바꾼다(규칙 16 판단: payload 를 바꾸는 kind 는 rev 를 올려야 맞다).
 KIND_AI_SUGGEST = "ai_suggest"
+# legacy marker 의 item_key — 본문 행과 섞이지 않게 로더가 이 키만 제외한다.
+_AI_SUGGEST_MARKER_KEY = "push"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 10MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
@@ -116,7 +124,8 @@ KIND_AI_SUGGEST = "ai_suggest"
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
 # compare_note 도 표 payload 빌드와 무관하다 — /full extras 로 별도 조회한다.
 # dist_composite / gap_chart 도 마찬가지 — /full extras 로 별도 조회한다.
-# ai_suggest 는 rev bump 전용 marker 라 어떤 조회에도 실을 필요가 없다.
+# ai_suggest 는 payload 조립에서 load_ai_suggestions 로 따로 읽는다(표 상태가 아니라
+# AI Comment 셀에 덧칠하는 오버레이라, 다른 편집 상태와 같은 dict 에 실을 이유가 없다).
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
                          KIND_YIELD_BASIS, KIND_COMPARE_NOTE, KIND_DIST_COMPOSITE,
                          KIND_GAP_CHART, KIND_AI_SUGGEST)
@@ -319,6 +328,30 @@ def load_gap_charts(report_db, session_id: str) -> dict:
             spec = dict(spec)
             spec["updated_by"] = row.get("updated_by") or ""
             spec["updated_at"] = row.get("updated_at") or ""
+            out[row["item_key"]] = spec
+    return out
+
+
+def load_ai_suggestions(report_db, session_id: str) -> dict:
+    """item_raw → {"suggestion","cases","sha","by","ts","provider","raw"?} (2026-09-02).
+
+    클라 Claude CLI 대행이 push 한 [사례]/[제안] 문장의 **세션 고유 진실**이다. 종전
+    analysis_key 단위 공유 파일(ai_suggest_store)을 대신하므로, 같은 rawdata 를 다시
+    올린 형제 세션은 자기 세션이 받은 문장만 본다(KIND_AI_SUGGEST 주석 참조).
+
+    legacy marker 행(item_key='push', value={"ts","count"})은 본문이 아니므로 건너뛴다 —
+    남겨 두면 'push' 라는 이름의 item 이 있는 것처럼 보여 fan-out 이 엉뚱한 행을 짚는다.
+    kind 지정 조회라 note_sheet 등 대용량 값을 끌어오지 않는다(load_gap_charts 동형).
+    """
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_AI_SUGGEST,)):
+        if row["item_key"] == _AI_SUGGEST_MARKER_KEY:
+            continue
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(spec, dict):
             out[row["item_key"]] = spec
     return out
 

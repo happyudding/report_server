@@ -51,12 +51,24 @@ Honey 가 로컬 claude CLI subprocess 로 문장을 생성해 서버에 push, �
 
 ## 핵심 설계 결정 (변경 금지 — 구현 완료)
 
-1. **suggestion 은 캐시가 아니라 영구 오버레이.**
-   [web_report/ai_suggest_store.py](../web_report/ai_suggest_store.py)
-   (`<upload_root>/web_report/<akey>/ai_suggest/<chash12>_<mode>[_p<dig8>].json` —
-   dist_pack_store 패턴, 축출 제외)에 저장하고, aicmt 캐시가 채워질 때마다(콜드 재빌드
-   포함) `service._merge_ai_suggestions` 가 재병합한다. `ai_comment_key` 에 LLM/세션 축을
-   추가하지 않는다(perf_guard S10·S12).
+1. **suggestion 은 캐시가 아니라 영구 오버레이 — 그리고 세션 고유다** (2026-09-02 개정).
+   **저장은 세션 편집 DB**(`report_webreport_edit`, kind=`ai_suggest`, item_key=item_raw,
+   value=JSON `{suggestion,cases,sha,by,ts,provider,raw?}`)이고, 병합은 **payload 조립
+   시점**([service.py](../web_report/service.py) `_session_ai_overlay`)에 한다.
+   > **왜 바꿨나**: 종전엔 `<upload_root>/web_report/<akey>/ai_suggest/…json` 공유 파일에
+   > 저장하고 그 병합 결과를 **aicmt 캐시(`ai_comment_key` — session_id 없음)에 구웠다**.
+   > 그래서 같은 rawdata 를 다시 올린 dedup 형제 세션이 서로의 문장을 봤다 — 새 세션이
+   > 남의 옛 LLM 문장부터 보여 주고(사용자 신고 ①), 한쪽 push 가 이미 만들어진 다른
+   > 세션 화면을 바꿨다(신고 ②). 세션 편집 DB 는 테이블이 세션 단위라 이 간섭이
+   > **구조적으로** 불가능하고, 세션 삭제 시 함께 정리되며 DB 백업에도 포함된다.
+   > 저장 자체가 `payload_rev` +1 이라 별도 marker 행도 필요 없다(legacy `push` 행은
+   > 로더가 건너뛴다). 회귀 가드: perf_guard **S17-ai-suggest-session-scope** +
+   > `tests/test_ai_suggest.py` **(b2) 형제 세션 무간섭**.
+   `ai_comment_key`(엔진 평가 캐시)에는 **여전히** 세션 축을 넣지 않는다(perf_guard
+   S10·S12) — 엔진 산출(signature·[현상]·action_ko·선례)은 결정적이라 형제 공유가 이득이고,
+   그 위에 세션 문장만 덧칠하는 구조다.
+   `ai_suggest_store.py` 는 옛 파일을 읽을 코드가 없어져 **사실상 죽은 모듈**이다
+   (롤백 창구로 한동안 남긴 뒤 제거 예정 — 아래 §행 단위 Loading 참조).
 2. ~~**프롬프트 sha 게이트.**~~ → **폐기됨 (2026-09-02 사용자 결정).** `sha256(prompt)[:12]`
    는 계속 저장하지만 **판정에 쓰지 않는다** — 수용(`apply_ai_suggestions`)·재병합
    (`apply_suggestions`) 둘 다 sha 와 무관하게 최신 저장분을 쓴다.
@@ -521,10 +533,40 @@ UI 스레드를 막지 않도록 워커 스레드에서 돌리고 결과만 `QTi
 이다 — 사용자가 열기 전에 평가가 진행돼 있다. 되돌리지 말 것(CLAUDE.md 규칙 17,
 perf_guard `S15`).
 
-### (선택·미적용) boot.js 재폴링
+### 행 단위 Loading · 처리 주체 아이콘 · 배치 병렬 (2026-09-02 개편)
 
-push 반영은 payload_rev bump 로 다음 조회에 자연 반영된다. 열려 있는 화면의 자동
-재렌더(`ai_suggest` 재폴링, 상한 90초)는 후속 과제 — 미적용 시에도 새로고침으로 반영.
+사용자 요구 6건을 한 번에 반영했다. 앞의 §핵심 설계 결정 ①(세션 고유 저장)이 그 토대다.
+
+| # | 요구 | 구현 |
+|---|---|---|
+| 1 | 형제의 옛 문장 재사용 금지 · 새 세션은 "Loading 중…" | 저장을 세션 편집 DB 로(§①) + payload `ai_llm_pending`{row_key:1} |
+| 2 | 사례 0건 셀은 즉시 `action_ko` | **자동 충족** — `build_prompt` 가 선례 0건이면 None → prompts 에 없음 → pending 대상 아님 |
+| 3 | Signature / 사례없음 / 사례있음 병렬 | 'ai' 잡 1회가 Signature+action_ko 를 **같은 순간** 완성(서버 LLM off 면 L5 는 룰 템플릿 조립이라 비용 ≈0)하고, 사례 있는 셀만 push 로 점진 완성 |
+| 4 | 10분 → 1~2분 | 클라 배치 **4 병렬**(`HONEY_CLAUDE_PARALLEL`, 상한 5) + **배치 완료 즉시 push** + 배치별 진행 알림 |
+| 5 | 처리 주체 아이콘 | payload `ai_sources`{row_key: claude\|llm\|rule} → `sheets.js aicSrcIconHtml`(✴/🤖/⚙) |
+| 6 | 세션 고유 평문 저장 | §핵심 설계 결정 ① |
+
+- **`ai_llm_pending` 은 [제안] 자리만 Loading 으로 바꾼다** — [사례]·Signature 는 이미
+  확정값이라 먼저 보여 준다. 대기 중에는 `hideCase` 를 끄는데, 제안 자리가 Loading 인데
+  사례까지 감추면 셀이 사실상 빈다.
+- ⚠ **TTL 이중 방어**(`AI_LLM_PENDING_TTL_SEC`, 기본 3600초 — 서버 생성 시 + 프런트 렌더 시).
+  워커가 영영 push 하지 않는 PC(Honey 종료·CLI 인증 실패)가 있으면, 이게 없을 때 그 세션은
+  **방문할 때마다** 20분짜리 Loading 을 보여 준다. 만료 후에는 코드가 만든 action_ko 가
+  최종본이다. `boot.js` 의 폴링 포기(`__aiLlmFailed`)도 같은 폴백을 즉시 적용한다.
+- **`boot.js` 폴링이 배치별 push 를 따라간다** — `ai_llm_pending` 이 **줄어들 때마다**
+  DATA 를 갈아 다시 그리고, 남아 있으면 계속 폰다(종전엔 pending 플래그가 풀릴 때 한 번만).
+  입력 중이면 3초 뒤로 미룬다(불변 규칙 #12).
+- **아이콘의 정확도**: `claude` 만 확실하다(그 행에 저장 행이 있다 = 클라 push 가 sanitize·
+  deny 를 통과해 저장됐다는 증거). `llm`/`rule` 은 결과 dict 의 `llm_enabled`(서버 배선
+  상태) 기준 **근사**다 — 엔진이 case 별로 "이 문장은 LLM 이 썼다"를 돌려주지 않는다.
+- 캐시: `AI_COMMENT_SCHEMA_VERSION` v13→**v14**(옛 캐시에 형제 문장이 구워져 있어 반드시
+  갈아야 한다 = 사용자 결정 "기존 문장 전부 초기화"의 실행 수단) + `_eval_rules_suffix` 에
+  영구 표식 **"aisess"**(payload 신규 키 2종). 전역 bump 금지(규칙 14).
+- **기존 공유 문장은 전부 초기화**(사용자 결정) — 서버가 옛 파일을 읽지 않으므로 전 세션이
+  action_ko 로 복귀하고, 재대행된 세션부터 세션 고유 문장이 붙는다. 파일 물리 삭제는
+  롤백 창구로 남겨 두었다가 안정화 후 정리한다.
+
+검증: `tests/test_ai_suggest.py` (b2)(p) · `tests/test_webreport_sheets_js.py` (l).
 
 ## 운영 모니터링 — 어디서 무엇을 보나 (2026-08-28 신설)
 

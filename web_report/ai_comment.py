@@ -57,9 +57,10 @@ _FAIL_ONLY = (os.getenv("WEB_REPORT_EVAL_FAIL_ONLY", "1") or "1").strip().lower(
 # prompts (2026-08-28): 클라 LLM 대행용 {item_raw: {"prompt","sha"}} — docs/23.
 # precedents / precedent_counts (2026-09-02): 사례 상세 팝오버(라우트 조회)와 셀 아래
 # 「📋 사례 N건 상세」 링크(payload) 의 재료 — docs/23.
+# llm_enabled (2026-09-02): 서버 LLM 배선 상태 — 화면 처리 주체 아이콘의 기본값 재료.
 _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
                  "signature_options": [], "prompts": {},
-                 "precedents": {}, "precedent_counts": {}}
+                 "precedents": {}, "precedent_counts": {}, "llm_enabled": False}
 
 # 사례 팝오버에 실을 선례 필드 — 엔진 present._precedent_result 계약의 부분집합.
 # 전량(metrics/features 전체)을 싣지 않는 이유: 화면이 읽는 것만 남겨 캐시 파일과 응답을
@@ -616,6 +617,15 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None,
         out["prompts"] = {}
         out["precedents"] = {}
         out["precedent_counts"] = {}
+    # 이 평가가 서버 LLM 을 쓸 수 있는 상태였나 — 화면의 처리 주체 아이콘 재료(2026-09-02).
+    # ⚠ **행 단위 정밀도가 아니다**: 엔진이 case 별로 "이 문장은 LLM 이 썼다"를 돌려주지
+    # 않으므로 배선 상태(설정)로 근사한다. 정확한 것은 클라 대행분뿐이며, 그건 세션 편집
+    # DB 에 저장 행이 있는지로 서버가 확실히 안다(service._session_ai_overlay).
+    # 콜드 빌드 1회당 1번만 부른다 — 위 evaluate 가 이미 엔진을 로드한 뒤라 값싸다.
+    try:
+        out["llm_enabled"] = bool(llm_status().get("enabled"))
+    except Exception:                                    # noqa: BLE001 — 아이콘은 부가 정보
+        out["llm_enabled"] = False
     return out
 
 

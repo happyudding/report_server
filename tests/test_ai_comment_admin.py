@@ -51,7 +51,6 @@ import diagnostics  # noqa: E402
 from admin_panel import ai_comment_admin as A  # noqa: E402
 from admin_panel import register_admin_panel  # noqa: E402
 from database import report_db  # noqa: E402
-from web_report import ai_suggest_store  # noqa: E402
 
 app = Flask(__name__)
 register_admin_panel(app)
@@ -151,13 +150,17 @@ def test_failures():
 
 
 def test_session_suggestions():
-    session = report_db.get_session("S_CLAUDE_1")
-    from web_report import service as web_report_service
-    akey, chash, mode, prep = web_report_service._ai_suggest_coords(
-        session, "S_CLAUDE_1", report_db=report_db)
-    ai_suggest_store.save_merge(UPLOAD_ROOT, akey, chash, mode,
-                                {"ItemA": {"sha": "a" * 12, "suggestion": "- 점검하세요"}},
-                                by="tester", prep_digest=prep)
+    # 문장은 **그 세션의 편집 DB** 에 있다(2026-09-02 — 종전 공유 파일에서 이관).
+    import json as _json
+
+    from web_report import edits as wr_edits
+    report_db.apply_webreport_edits(
+        "S_CLAUDE_1",
+        [(wr_edits.KIND_AI_SUGGEST, "ItemA",
+          _json.dumps({"sha": "a" * 12, "suggestion": "- 점검하세요",
+                       "provider": "claude", "by": "tester", "ts": 1},
+                      ensure_ascii=False))],
+        updated_by="tester")
 
     out = A.session_suggestions("S_CLAUDE_1")
     assert len(out["items"]) == 1

@@ -309,9 +309,6 @@ document.querySelector(".content").addEventListener("click", e => {
       ui.statsFold = !ui.statsFold;
       applyCmpStatsFold(actPanel);
     }
-    // Signature / AI Comment 열 접기 — 헤더 화살표. 세션 단위로 기억한다(localStorage,
-    // yield_issue.toggleColFold). 어느 패널에서 눌러도 세 표에 함께 적용된다.
-    else if (kind === "col-fold") { toggleColFold(act.dataset.fold || ""); }
     return;
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");

@@ -161,19 +161,31 @@ async function retryWhileBuilding(res, refetch) {
 const AI_POLL = { INTERVAL_MS: 5000, MAX_MS: 20 * 60 * 1000 };
 let _aiPoll = null;
 function stopAiPendingPoll() { if (_aiPoll) { clearTimeout(_aiPoll); _aiPoll = null; } }
+function _aiLlmPendingCount() {
+  // 행 단위 LLM 대기(클라 Claude 대행) — 평가는 끝났고 그 행의 문장만 오는 중이다.
+  // 클라 워커가 배치마다 push 하므로 이 수가 줄어드는 동안 화면이 점진적으로 채워진다.
+  try {
+    const m = (DATA && DATA.web_report && DATA.web_report.ai_llm_pending) || null;
+    if (!m || (typeof aiLlmPendingExpired === "function" && aiLlmPendingExpired())) return 0;
+    return Object.keys(m).length;
+  } catch (e) { return 0; }
+}
 function _aiPendingActive() {
   // 폴링을 계속할지의 판정 — 표시 상태(sheets.js aiCommentState)와 달리 실패 여부를
   // 보지 않는다(실패해도 payload 는 여전히 pending 이다).
   try {
     const web = (DATA && DATA.web_report) || {};
-    return !!(web.ai_comment_pending || web.compare_pending);
+    return !!(web.ai_comment_pending || web.compare_pending) || _aiLlmPendingCount() > 0;
   } catch (e) { return false; }
 }
 // 폴링을 포기했다 — 셀 문구를 "Loading 중…"에서 "미완료"로 바꾼다. 안 그러면 오지 않을
 // 결과를 사용자가 계속 기다린다(리포트 자체는 정상이라 에러 화면을 띄울 일은 아니다).
 function _aiPollGiveUp() {
-  if (window.__aiPendingFailed) return;
+  if (window.__aiPendingFailed && window.__aiLlmFailed) return;
   window.__aiPendingFailed = true;
+  // 행 단위 대기도 함께 접는다 — 그 행들은 Loading 대신 코드가 만든 문장(action_ko)을
+  // 최종본으로 보여 준다. 클라 워커가 실패했어도 셀이 비어 보이지 않게 하는 장치다.
+  window.__aiLlmFailed = true;
   try { renderActive(); } catch (e) { /* 렌더 실패는 표시 문제일 뿐 */ }
 }
 function _editingNow() {
@@ -185,6 +197,8 @@ function maybeStartAiPendingPoll() {
   stopAiPendingPoll();
   if (!_aiPendingActive()) return;
   window.__aiPendingFailed = false;   // 새 로드 = 새 시도 (문구를 "Loading 중…"으로 되돌린다)
+  window.__aiLlmFailed = false;       // 행 단위 대기도 같은 규약
+  let lastLlmPending = _aiLlmPendingCount();
   const deadline = Date.now() + AI_POLL.MAX_MS;
   const tick = async () => {
     _aiPoll = null;
@@ -201,7 +215,11 @@ function maybeStartAiPendingPoll() {
       if (res.status === 200) {
         const data = await res.json();
         const web = data.web_report || {};
-        if (!web.ai_comment_pending && !web.compare_pending) {
+        const llmLeft = Object.keys(web.ai_llm_pending || {}).length;
+        // 평가 pending 이 풀렸거나, 행 단위 LLM 대기가 **줄어들었으면** 다시 그린다.
+        // 후자가 클라 워커의 배치별 push 를 화면에 점진 반영하는 지점이다(2026-09-02).
+        const done = !web.ai_comment_pending && !web.compare_pending;
+        if (done || llmLeft < lastLlmPending) {
           if (_editingNow()) {
             // 사용자가 입력 중 — 다시 그리면 입력을 잃는다(불변 규칙 #12). 잠시 후 재시도.
             _aiPoll = setTimeout(tick, 3000);
@@ -212,7 +230,9 @@ function maybeStartAiPendingPoll() {
           seedEmptyFrames();
           buildDistColorMap(web.sources || []);
           renderActive();
-          return;   // 완료 — 폴링 종료
+          lastLlmPending = llmLeft;
+          // 남은 행이 있으면 계속 폴링한다 — 아직 안 온 문장이 있다는 뜻이다.
+          if (done && llmLeft === 0) return;   // 완료 — 폴링 종료
         }
       } else if (res.status !== 202) {
         _aiPollGiveUp();   // 4xx/5xx — 폴링 중단 (리포트는 이미 떠 있다)

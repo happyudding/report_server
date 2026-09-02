@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path
 
 from . import build_log
@@ -121,8 +122,10 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
 # 죽이지 않게 키가 모자라면 미스로 취급한다.
 # prompts (2026-08-28, aicmt v4): 클라 LLM 대행 프롬프트 — docs/23.
 # precedents/precedent_counts (2026-09-02, aicmt v9): 사례 상세·행별 건수 — docs/23.
+# llm_enabled (2026-09-02, aicmt v14): 서버 LLM 배선 상태 — 처리 주체 아이콘 재료.
 _AI_RESULT_KEYS = ("comments", "etc_auto_items", "row_signatures",
-                   "signature_options", "prompts", "precedents", "precedent_counts")
+                   "signature_options", "prompts", "precedents", "precedent_counts",
+                   "llm_enabled")
 
 
 def _ai_comment_cached(session, session_id: str, tables, manifest, *,
@@ -158,11 +161,12 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     result, ok = ai_comment.safe_build_ex(tables, session,
                                           manifest.get("selected_items") or [])
     if ok:
-        # 클라가 push 해 둔 [제안] suggestion 재병합 — **재빌드 생존 지점**(docs/23 핵심
-        # 결정 ①). suggestion 은 캐시가 아니라 영구 파일이라, aicmt 캐시가 비워져 콜드
-        # 재빌드가 돌아도 프롬프트 sha 가 같으면 여기서 다시 붙는다.
-        result = _merge_ai_suggestions(session, session_id, result,
-                                       report_db=report_db, upload_root=upload_root)
+        # ⚠ 여기서 클라 LLM 문장을 병합하지 않는다 (2026-09-02 개편).
+        # 이 캐시의 키(ai_comment_key)에는 session_id 가 없어 **dedup 형제 세션이 공유**한다
+        # — 종전처럼 문장을 여기에 구우면 한 세션의 push 가 형제 세션 화면까지 바꾸고,
+        # 새 세션은 남의 옛 문장부터 보게 된다(사용자 신고의 실제 원인).
+        # 이 캐시에는 엔진의 순수 산출(signature·[현상]·action_ko·prompts·선례)만 담고,
+        # 세션 문장 덧칠은 payload 조립의 `_session_ai_overlay` 가 맡는다.
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
         disk_cache.save_ai_comment(upload_root, key, result)
@@ -374,44 +378,96 @@ def _ai_suggest_wanted(session) -> bool:
 
 
 def _ai_suggest_coords(session, session_id: str, *, report_db) -> tuple:
-    """ai_suggest_store 파일 좌표 — (akey, chash, mode, prep_digest).
+    """(akey, chash, mode, prep_digest) — 관리자 화면의 데이터 세대 표시용.
 
-    ai_comment_key 와 같은 데이터 세대 축이다(session_id 없음 — dedup 형제 공유가 의도,
-    perf_guard S10 취지). 민감도가 다른 형제는 프롬프트 sha 가 갈려 게이트가 차단한다.
+    2026-09-02 이전에는 ai_suggest_store 공유 파일의 좌표였다. 문장 저장이 세션 편집
+    DB 로 옮겨간 뒤로 저장 좌표로는 쓰이지 않는다(세션 축이 곧 좌표다).
     """
     return (session.get("analysis_key"), str(session.get("content_hash") or ""),
             cache_policy._mode(session),
             _preprocess.session_digest(report_db, session_id))
 
 
-def _merge_ai_suggestions(session, session_id: str, result: dict, *,
-                          report_db, upload_root: Path) -> dict:
-    """영구 저장된 suggestion 을 AI 결과에 재병합 — 실패는 조용히 원본 유지(빌드 불사).
+# 행 단위 "LLM 문장 대기 중" 표식의 유효기간 — 이 시간이 지나면 pending 을 만들지 않는다.
+# 클라 워커가 영영 push 하지 않는 경우(Honey 종료·CLI 인증 실패·PC 종료)에 대비한 안전장치다.
+# 없으면 그 세션은 **방문할 때마다** 20분짜리 Loading 을 보여 주고, 사용자는 영영 오지 않는
+# 문장을 기다리게 된다. 만료 후에는 코드가 만든 action_ko 문장이 그대로 최종본이 된다.
+_AI_LLM_PENDING_TTL_SEC = max(60, int(os.getenv("AI_LLM_PENDING_TTL_SEC", "3600") or 3600))
 
-    sha 게이트 폐기(2026-09-02) 후로는 **저장분이 있으면 항상 붙는다**. 대신 금지 문구를
-    여기서 한 번 더 적용해, 옛 룰 시절 저장된 변명 문장이 되살아나지 않게 한다
-    (= deny 패턴 편집의 소급 적용 — 프롬프트 밖이라 sha 불변, 재대행 불필요).
+# 저장하는 LLM 원문(raw)의 상한 — 종전 ai_suggest_store.MAX_RAW_CHARS 와 같은 값.
+# 관리자 검수용 부가 정보라 세션 편집 DB 를 부풀릴 이유가 없다.
+_AI_SUGGEST_MAX_RAW_CHARS = 4000
+
+
+def _uploaded_epoch(session) -> float:
+    """세션 업로드 시각(epoch) — 파싱 실패는 0.0(= TTL 판정에서 '아주 오래됨')."""
+    raw = str(session.get("uploaded_at") or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _session_ai_overlay(session, session_id: str, result: dict, *,
+                        report_db) -> tuple[dict, dict, dict]:
+    """세션 고유 LLM 문장을 AI 결과에 덧칠 — (merged, llm_pending, sources).
+
+    2026-09-02 개편의 핵심 지점이다. 종전 `_merge_ai_suggestions` 는 이 병합을
+    **공유 aicmt 캐시(ai_comment_key, session_id 없음)에 구워 넣었다** — 그래서 한 세션의
+    push 가 같은 analysis_key 를 쓰는 형제 세션의 화면까지 바꿨다. 이제 병합은 payload
+    조립 시점에만 하고(캐시에 굽지 않는다), 문장은 세션 편집 DB 에서 읽는다.
+
+    반환 3종:
+      merged      — 문장이 덧칠된 결과 (`apply_suggestions` 는 항상 copy 라 캐시 객체 무오염)
+      llm_pending — {row_key: 1} 아직 이 세션의 문장이 안 온 행. 화면이 "Loading 중…" 을
+                    띄우는 근거다. **사례 0건 item 은 프롬프트 자체가 없어 여기에 안 들어간다**
+                    (= 그 셀은 즉시 action_ko 최종본 — 사용자 요구 2).
+      sources     — {row_key: "claude"|"llm"|"rule"} 처리 주체 아이콘 근거.
+
+    row_key 전개는 **한 번만** 하고 셋이 그 결과를 공유한다 — item 하나가 여러 Yield 행으로
+    fan-out 되므로(`key.endswith("|"+item)`, apply_suggestions 와 같은 규약) 세 맵이 서로
+    다른 기준으로 전개되면 어떤 행은 Loading 인데 아이콘은 claude 인 식으로 갈린다.
+    실패는 조용히 원본 유지 — 부가 기능이 콜드 빌드를 죽이면 안 된다.
     """
     try:
-        from . import ai_prompt, ai_suggest_store
-        akey, chash, mode, prep = _ai_suggest_coords(session, session_id,
-                                                     report_db=report_db)
-        stored = ai_suggest_store.load(upload_root, akey, chash, mode, prep)
-        if not stored:
-            return result
+        from . import ai_prompt
+        stored = edits.load_ai_suggestions(report_db, session_id)
         try:
             from . import eval_debug
             deny = ai_prompt.compile_deny_patterns(eval_debug.ai_prompt_rules())
         except Exception:                               # noqa: BLE001
             deny = []                                   # 필터는 부가 안전장치 — 병합은 계속
-        merged, patched = ai_prompt.apply_suggestions(result, stored, deny)
-        if patched:
-            _log.info("ai_suggest 재병합 %d행 (session=%s)", patched, session_id)
-        return merged
+        merged = result
+        if stored:
+            merged, patched = ai_prompt.apply_suggestions(result, stored, deny)
+            if patched:
+                _log.info("ai_suggest 세션 병합 %d행 (session=%s)", patched, session_id)
+        comment_keys = list((merged.get("comments") or {}).keys())
+        wanted = _ai_suggest_wanted(session)
+        fresh = (time.time() - _uploaded_epoch(session)) <= _AI_LLM_PENDING_TTL_SEC
+        llm_pending, sources = {}, {}
+        for item in (merged.get("prompts") or {}):
+            rows = [k for k in comment_keys if k.endswith("|" + str(item))]
+            if item in stored:
+                for k in rows:
+                    sources[k] = str(stored[item].get("provider") or "claude")
+            elif wanted and fresh:
+                for k in rows:
+                    llm_pending[k] = 1
+        # 나머지 행의 기본 출처 — 서버 LLM 이 켜져 있었으면 그 문장(llm), 아니면 룰(rule).
+        # ⚠ 행 단위 정밀도는 없다(엔진이 case 별 LLM 사용 여부를 돌려주지 않는다) — 아이콘은
+        # "이 세션의 코멘트가 어느 경로로 만들어졌나"의 근사다. claude 만 정확하다(저장 행이
+        # 곧 증거 — 클라 push 가 sanitize·deny 를 통과해 저장된 것만 claude 로 뜬다).
+        default_src = "llm" if merged.get("llm_enabled") else "rule"
+        for k in comment_keys:
+            sources.setdefault(k, default_src)
+        return merged, llm_pending, sources
     except Exception:
-        _log.warning("ai_suggest 재병합 실패 — 원본 유지 (session=%s)",
+        _log.warning("ai_suggest 세션 병합 실패 — 원본 유지 (session=%s)",
                      session_id, exc_info=True)
-        return result
+        return result, {}, {}
 
 
 def get_ai_comment_prompts(session_id: str, *, report_db,
@@ -471,13 +527,17 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
                          client_user: str = "") -> dict | None:
     """클라가 생성한 [제안] suggestion 수용 — None=대상 아님(404) / {"pending":True}=202.
 
-    수용 원칙(docs/23 §반드시 4): **서버가 만든 prompts 의 item+sha 일치 건만** 받는다
-    (임의 row_key 제출 불가). 불일치·불합격은 에러가 아니라 조용히 skip+카운트.
-    반영: 영구 store 저장(save_merge — 멱등 upsert) → aicmt RAM+디스크 캐시 패치 →
-    KIND_AI_SUGGEST marker 로 payload_rev +1(기존 rev 채널 재사용 — 표적 캐시 삭제 API
-    없음, docs/23 핵심 결정 ③) → report 선빌드 예약.
+    수용 원칙(docs/23 §반드시 4): **서버가 만든 prompts 에 있는 item 만** 받는다
+    (임의 row_key 제출 불가). sha 일치는 더 이상 요구하지 않는다 — 게이트 폐기
+    (2026-09-02). 불합격은 에러가 아니라 조용히 skip+카운트.
+    반영(2026-09-02 개편): **세션 편집 DB 저장**(kind=ai_suggest, item_key=item_raw) 1회
+    → 그 저장이 곧 payload_rev +1 이라 report/full 캐시가 자연 무효화된다 → report 선빌드.
+    종전의 공유 파일(ai_suggest_store) 저장과 aicmt 캐시 직접 패치는 **하지 않는다** —
+    그 둘이 dedup 형제 세션 간 문장 간섭의 경로였다(`_session_ai_overlay` 주석 참조).
+    클라가 배치마다 나눠 push 해도 안전하다: 항목 단위 upsert 라 멱등이고, 부분 반영이
+    화면에 그때그때 채워지는 것이 이 개편의 의도다.
     """
-    from . import ai_prompt, ai_suggest_store
+    from . import ai_prompt
     session = report_db.get_session(session_id)
     if not session:
         raise KeyError(session_id)
@@ -562,21 +622,34 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
                 continue
         accepted[key] = row
     if accepted:
-        akey, chash, mode, prep = _ai_suggest_coords(session, session_id,
-                                                     report_db=report_db)
-        with cache.keyed_lock_ctx(("ai_suggest", akey, chash, mode, prep)):
-            ai_suggest_store.save_merge(upload_root, akey, chash, mode, accepted,
-                                        by=client_user, prep_digest=prep)
-            merged, _patched = ai_prompt.apply_suggestions(result, accepted, deny)
-            cache_key = cache_policy.ai_comment_key(session, prep)
-            cache.cache_put(cache.AI_COMMENT_CACHE, cache_key, merged,
-                            cache.AI_COMMENT_CACHE_MAX)
-            disk_cache.save_ai_comment(upload_root, cache_key, merged)
-        marker = json.dumps({"ts": int(time.time()), "count": len(accepted)},
-                            ensure_ascii=False)
-        report_db.apply_webreport_edits(
-            session_id, [(edits.KIND_AI_SUGGEST, "push", marker)],
-            updated_by=client_user or None)
+        # perf-guard: allow S10-ai-comment-cache (분리 캐시는 그대로 — 여기의 중복 쓰기만 제거)
+        # 종전 이 자리에는 `cache.cache_put(AI_COMMENT_CACHE, ...)` +
+        # `disk_cache.save_ai_comment(upload_root, cache_key, merged)` 가 있었다. 그것을
+        # 뺀 것은 분리 캐시 우회가 **아니다** — 엔진 평가 결과의 저장은
+        # `_ai_comment_cached`(위)가 그대로 하고 있고(S10 이 지키려는 지점), 여기서 지운
+        # 것은 그 공유 캐시에 **LLM 문장까지 덧칠해 굽던** 중복 쓰기다. 그 키
+        # (ai_comment_key)에는 session_id 가 없어, 계속 두면 한 세션의 push 가 dedup 형제
+        # 세션 화면을 바꾼다(2026-09-02 사용자 신고의 실제 원인 — docs/23 핵심 결정 ①).
+        # 문장 병합은 payload 조립의 `_session_ai_overlay` 로 옮겼다(= 규칙이 말하는 "옮김").
+        #
+        # 세션 편집 DB 에 항목별로 저장한다 — 한 번의 apply_webreport_edits 가 트랜잭션
+        # 1회 + payload_rev +1 이라, 이 push 로 받은 문장들이 원자적으로 함께 보인다.
+        now = int(time.time())
+        changes = []
+        for item, row in accepted.items():
+            spec = {"suggestion": row.get("suggestion") or "",
+                    "cases": row.get("cases") or "",
+                    "sha": row.get("sha") or "",
+                    "provider": "claude", "by": client_user or "", "ts": now}
+            # raw(LLM 원문)는 sanitize 결과와 **다를 때만** 싣는다 — 관리자 검수에서
+            # "모델이 이상한 것" vs "서버가 걷어낸 것"을 가르는 용도(종전 store 와 같은 규약).
+            raw_txt = str(row.get("raw") or "")
+            if raw_txt and raw_txt != spec["suggestion"]:
+                spec["raw"] = raw_txt[:_AI_SUGGEST_MAX_RAW_CHARS]
+            changes.append((edits.KIND_AI_SUGGEST, str(item),
+                            json.dumps(spec, ensure_ascii=False)))
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=client_user or None)
         compute.request_build(session_id, str(upload_root), "report")
     skipped = sum(skips.values())
     try:
@@ -878,6 +951,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             ai_precedents = None
                             ai_how = None
                             ai_pending = False
+                            ai_llm_pending = {}
+                            ai_sources = {}
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
                                 with build_log.stage("ai_comment"):
                                     # 사용자 대기 경로(ai_inline=False)는 캐시 히트만 쓰고
@@ -908,6 +983,11 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                                      "etc_auto_items": [],
                                                      "row_signatures": {},
                                                      "signature_options": []}
+                                # 세션 고유 LLM 문장 덧칠 — **공유 캐시가 아니라 여기서**
+                                # 한다(2026-09-02). 형제 세션 간섭을 구조적으로 막는 지점이며,
+                                # 아직 안 온 행의 Loading 표식·처리 주체 아이콘도 같이 나온다.
+                                ai_result, ai_llm_pending, ai_sources = _session_ai_overlay(
+                                    session, session_id, ai_result, report_db=report_db)
                                 ai_comments = ai_result["comments"]
                                 # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
                                 etc_auto_items = ai_result["etc_auto_items"]
@@ -990,6 +1070,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # AI 백그라운드 계산 중 표시 — 최종본에는 이 키가 없다
                                 # (프런트 하위호환: 플래그 부재 = 종전 렌더).
                                 report["ai_comment_pending"] = True
+                            # 행 단위 LLM 대기·처리 주체 (2026-09-02). 둘 다 **없으면 키 자체를
+                            # 싣지 않는다** — 옛 프런트·비 AI 세션은 종전 렌더 그대로다.
+                            if ai_llm_pending:
+                                report["ai_llm_pending"] = ai_llm_pending
+                            if ai_sources:
+                                report["ai_sources"] = ai_sources
                             # compare_pending 은 build_report_payload 가 이미 세웠다
                             # (compare_deferred=True + 미주입).
                             # 미뤄진 부분들 — pending 저장 키의 꼬리표이자 승격 판정 기준.

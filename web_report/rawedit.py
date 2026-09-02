@@ -512,11 +512,9 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         from . import dist_pack_store
 
         dist_pack_store.delete_stale(Path(upload_root), analysis_key, content_hash)
-        # 구 세대 AI suggestion 도 같은 이유로 회수 — 파일명에 chash 가 있어 새 세대로는
-        # 조회되지 않고, 룰/데이터가 바뀌면 프롬프트 sha 도 갈려 어차피 폴백된다(docs/23).
-        from . import ai_suggest_store
-
-        ai_suggest_store.delete_stale(Path(upload_root), analysis_key, content_hash)
+        # (2026-09-02) AI suggestion 공유 파일 회수는 여기서 하지 않는다 — 문장 저장이
+        # 세션 편집 DB 로 옮겨가 그 파일을 아무도 읽지 않는다(service._session_ai_overlay).
+        # 세션 문장은 rawdata 가 바뀌어도 그 세션 것이므로 여기서 지울 대상이 아니다.
         # 클라가 새 parquet 으로 만들어 보낸 pack 을 새 chash 로 저장 — 있으면 이후 조회가
         # 정렬 없이 덧셈만 한다(업로드 직후와 같은 상태). delete_stale 뒤에 저장할 것.
         pack_saved = _save_dist_pack(dist_pack, analysis_key, content_hash,

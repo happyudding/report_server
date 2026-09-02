@@ -59,6 +59,7 @@ from web_report import ai_comment as wr_ai_comment  # noqa: E402
 from web_report import ai_prompt as wr_ai_prompt  # noqa: E402
 from web_report import ai_suggest_store as store  # noqa: E402
 from web_report import cache as wr_cache  # noqa: E402
+from web_report import edits as wr_edits  # noqa: E402
 from web_report import service as wr_service  # noqa: E402
 from web_report.honeyform import META_COLUMNS, encode_honeyform_parquet  # noqa: E402
 from web_report.validation import canon, webreport_ai_model  # noqa: E402
@@ -337,10 +338,8 @@ def test_denied_lines(prompt_item):
                                      "suggestion": deny_only}]})
     body = r.get_json()
     assert body["accepted"] == 0 and body["skips"]["denied"] == 1, body
-    # store 에는 직전(정상) 문장이 그대로 남아야 한다 — 폐기가 덮어쓰기가 되면 안 된다
-    session = report_db.get_session(SID)
-    coords = wr_service._ai_suggest_coords(session, SID, report_db=report_db)
-    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    # 세션 저장분에는 직전(정상) 문장이 그대로 남아야 한다 — 폐기가 덮어쓰기가 되면 안 된다
+    stored = wr_edits.load_ai_suggestions(report_db, SID)
     assert stored[ITEM]["suggestion"].startswith("- 클로드 제안 1"), stored[ITEM]
 
     # ② 혼합 — 나쁜 줄만 빠지고 나머지는 저장된다
@@ -349,7 +348,7 @@ def test_denied_lines(prompt_item):
                                      "suggestion": deny_only + "\n- edge 링 오염 이력을 확인하라."}]})
     body = r.get_json()
     assert body["accepted"] == 1 and not any(body["skips"].values()), body
-    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    stored = wr_edits.load_ai_suggestions(report_db, SID)
     assert stored[ITEM]["suggestion"] == "- edge 링 오염 이력을 확인하라.", stored[ITEM]
     assert "확인되지 않았습니다" in stored[ITEM]["raw"], "원문(raw) 이 안 남았다"
 
@@ -385,9 +384,7 @@ def test_two_block_push(prompt_item):
     body = r.get_json()
     assert body["accepted"] == 1, body
 
-    session = report_db.get_session(SID)
-    coords = wr_service._ai_suggest_coords(session, SID, report_db=report_db)
-    stored = store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2], prep_digest=coords[3])
+    stored = wr_edits.load_ai_suggestions(report_db, SID)
     assert stored[ITEM]["cases"] == "- P1/L1: 재측정으로 회복된 건", stored[ITEM]
     assert stored[ITEM]["suggestion"].startswith("- edge 이력 먼저"), stored[ITEM]
 
@@ -431,21 +428,66 @@ def _wipe_caches(akey):
     shutil.rmtree(UPLOAD_ROOT / "web_report" / akey / "cache", ignore_errors=True)
 
 
-def test_rebuild_survival():
-    _wipe_caches(AKEY)
-    session = report_db.get_session(SID)
+def _overlay_cell(sid, akey, *, wipe=True):
+    """콜드 재빌드 뒤 payload 에 실릴 AI Comment 셀 — 엔진 결과 + 세션 문장 덧칠.
+
+    2026-09-02 개편으로 문장 병합이 **공유 캐시가 아니라 payload 조립 시점**에 일어난다
+    (service._session_ai_overlay). 그래서 검증도 엔진 캐시(_ai_comment_cached)만이 아니라
+    그 오버레이를 거친 결과를 본다 — 화면이 실제로 받는 값이다.
+    """
+    if wipe:
+        _wipe_caches(akey)
+    session = report_db.get_session(sid)
     tables_sess, tables, manifest = wr_service._load_tables(
-        SID, report_db=report_db, upload_root=UPLOAD_ROOT, session=session)
+        sid, report_db=report_db, upload_root=UPLOAD_ROOT, session=session)
     result, how = wr_service._ai_comment_cached(
-        tables_sess, SID, tables, manifest, report_db=report_db, upload_root=UPLOAD_ROOT)
+        tables_sess, sid, tables, manifest, report_db=report_db, upload_root=UPLOAD_ROOT)
+    merged, pending, sources = wr_service._session_ai_overlay(
+        tables_sess, sid, result, report_db=report_db)
+    return merged, how, pending, sources
+
+
+def test_rebuild_survival():
+    merged, how, _pending, _src = _overlay_cell(SID, AKEY)
     assert how == "build", how
     # 직전 push(두 블록)가 **두 섹션 모두** 재빌드 뒤에도 살아 있어야 한다.
-    cell = result["comments"][f"CPK|{ITEM}"]
+    cell = merged["comments"][f"CPK|{ITEM}"]
     assert cell.endswith("- edge 이력 먼저 확인\n- 이어서 산포 재측정"), \
-        f"재빌드에서 store 재병합이 안 됐다: {cell!r}"
+        f"재빌드에서 세션 문장 재병합이 안 됐다: {cell!r}"
     assert "[사례] - P1/L1: 재측정으로 회복된 건" in cell, \
         f"사례 요약이 재빌드에서 사라졌다: {cell!r}"
     print("  (g) 재빌드 생존(재병합 — 두 섹션) OK")
+
+
+def test_sibling_isolation():
+    """(b2) **형제 세션 무간섭** — 같은 analysis_key 를 쓰는 다른 세션에 문장이 안 샌다.
+
+    2026-09-02 개편의 핵심 회귀 가드다. 종전에는 문장이 analysis_key 단위 공유 파일에
+    저장되고 그 병합 결과가 session_id 없는 aicmt 캐시에 구워져, 같은 rawdata 를 다시
+    올린 형제 세션이 남의 문장을 그대로 봤다(사용자 신고: "새 세션인데 옛 문장이 먼저
+    보인다", "이미 만든 세션이 바뀐다"). 이제 저장이 세션 편집 DB 라 구조적으로 불가능하다.
+    """
+    # 같은 analysis_key·content_hash 를 쓰는 dedup 형제 = 같은 rawdata 재업로드 상황.
+    sib = SID + "SIB"
+    src = report_db.get_session(SID)
+    report_db.create_session(sib, "sibling.parquet", None, product_type="MDDI",
+                             lot_id="LOT1", product="P1", source="web_report",
+                             uploaded_by=USER)
+    report_db.update_session(sib, analysis_key=src["analysis_key"],
+                             content_hash=src.get("content_hash"), status="done",
+                             webreport_options=src.get("webreport_options"))
+    try:
+        stored = wr_edits.load_ai_suggestions(report_db, sib)
+        assert stored == {}, f"형제 세션이 남의 저장분을 읽었다: {stored}"
+        merged, _how, _pending, _src2 = _overlay_cell(sib, AKEY, wipe=False)
+        cell = merged["comments"][f"CPK|{ITEM}"]
+        assert "edge 이력 먼저 확인" not in cell, \
+            f"형제 세션에 남의 LLM 문장이 샜다: {cell!r}"
+        assert "스텁 조치" in cell or "[제안]" in cell, \
+            f"형제 세션이 코드 문장(action_ko)을 못 받았다: {cell!r}"
+    finally:
+        report_db.delete_session(sib)
+    print("  (b2) 형제 세션 무간섭(문장·캐시 분리) OK")
 
 
 def test_sha_drift_keeps_suggestion():
@@ -459,14 +501,9 @@ def test_sha_drift_keeps_suggestion():
     재대행 때 자연히 교체된다(클라 워커는 sha 로 건너뛰지 않는다). **되살리지 말 것.**
     """
     _PROMPT_SALT["v"] = "p2-rules-changed"   # 룰 변경 모사 — 프롬프트가 달라진다
-    _wipe_caches(AKEY)
-    session = report_db.get_session(SID)
-    _s, tables, manifest = wr_service._load_tables(
-        SID, report_db=report_db, upload_root=UPLOAD_ROOT, session=session)
-    result, how = wr_service._ai_comment_cached(
-        _s, SID, tables, manifest, report_db=report_db, upload_root=UPLOAD_ROOT)
+    merged, how, _pending, _src = _overlay_cell(SID, AKEY)
     assert how == "build"
-    cell = result["comments"][f"CPK|{ITEM}"]
+    cell = merged["comments"][f"CPK|{ITEM}"]
     assert cell.endswith("- edge 이력 먼저 확인\n- 이어서 산포 재측정"), \
         f"sha 가 갈렸다고 LLM 문장을 버렸다(게이트 부활): {cell!r}"
     _PROMPT_SALT["v"] = "p1"                 # 원복
@@ -552,16 +589,72 @@ def test_worker_simulation():
     # 기본 모델은 정식명 고정 — 별칭('sonnet')은 새 버전이 나오면 말없이 바뀐다.
     assert t_ai.DEFAULT_MODEL == "claude-sonnet-5"
     assert _FakeCallClaude.models[-1] == "claude-sonnet-5", _FakeCallClaude.models
-    # push 결과가 store 와 payload 에 반영됐는지
-    session = report_db.get_session(SID_W)
-    coords = wr_service._ai_suggest_coords(session, SID_W, report_db=report_db)
-    stored = store.load(UPLOAD_ROOT, *coords[:3], prep_digest=coords[3]) \
-        if coords[3] else store.load(UPLOAD_ROOT, coords[0], coords[1], coords[2])
+    # push 결과가 **그 세션의** 저장분과 payload 에 반영됐는지
+    stored = wr_edits.load_ai_suggestions(report_db, SID_W)
     assert ITEM in stored and stored[ITEM]["suggestion"].startswith("- 워커 생성 제안")
+    assert stored[ITEM].get("provider") == "claude", stored[ITEM]
     text = _full_text(SID_W, must_contain="워커 생성 제안")
     assert "워커 생성 제안" in text
     print("  (i) 클라 워커 시뮬레이션(폴링→생성→push→반영) OK")
     return t_ai
+
+
+def test_worker_parallel_and_incremental_push(t_ai):
+    """(p) 배치 **병렬 실행** + **배치별 즉시 push** (2026-09-02 사용자 요구 4).
+
+    종전엔 배치를 완전 순차로 돌리고 전부 모아 마지막에 한 번만 push 했다 — 100건 세션이
+    7~10분이고 그동안 화면에 아무 변화가 없었다. 여기서 보는 것:
+      ① 동시에 실행 중인 배치가 2개 이상 있었다(순차면 최대 1이다)
+      ② push 가 배치 수만큼 나뉘어 갔다(한 번에 몰아 보내지 않는다) — 화면 점진 갱신의 근거
+      ③ 진행 알림이 배치마다 나온다(종전엔 최대 10분간 무소식)
+    """
+    import threading as _th
+
+    lock = _th.Lock()
+    live = {"now": 0, "peak": 0}
+    orig_batch = _FakeCallClaude.run_batch
+    orig_post = t_ai._post_suggestions
+    pushes = []
+
+    def slow_batch(prompts, *, bin_path=None, model=None, timeout=None, log=None):
+        with lock:
+            live["now"] += 1
+            live["peak"] = max(live["peak"], live["now"])
+        try:
+            time.sleep(0.25)      # 동시성이 실제로 겹치도록 — 순차면 peak 가 1 에 머문다
+            return [f"- 병렬 제안 ({i + 1})" for i in range(len(prompts))]
+        finally:
+            with lock:
+                live["now"] -= 1
+
+    def spy_post(base, session_id, headers, rows):
+        pushes.append(len(rows))
+        return orig_post(base, session_id, headers, rows)
+
+    # 프롬프트 6건 → 배치 크기 2 → 3배치. 병렬 3 이면 peak 가 2 이상 나와야 한다.
+    orig_prompts = t_ai._fetch_prompts
+    t_ai._fetch_prompts = lambda *a, **k: (
+        [{"key": ITEM, "sha": "b" * 12, "prompt": f"스텁 프롬프트 {i}"} for i in range(6)],
+        "", 200)
+    _FakeCallClaude.run_batch = staticmethod(slow_batch)
+    t_ai._post_suggestions = spy_post
+    os.environ["HONEY_CLAUDE_BATCH"] = "2"
+    os.environ["HONEY_CLAUDE_PARALLEL"] = "3"
+    notes = []
+    try:
+        t_ai._worker(SID_W, "http://fake-server", notes.append)
+    finally:
+        _FakeCallClaude.run_batch = orig_batch
+        t_ai._post_suggestions = orig_post
+        t_ai._fetch_prompts = orig_prompts
+        os.environ.pop("HONEY_CLAUDE_BATCH", None)
+        os.environ.pop("HONEY_CLAUDE_PARALLEL", None)
+
+    assert live["peak"] >= 2, f"배치가 순차로 돌았다(동시 최대 {live['peak']}) — 병렬화 회귀"
+    assert len(pushes) >= 2, f"push 가 한 번에 몰렸다({pushes}) — 화면 점진 갱신이 안 된다"
+    assert any("배치" in n and "/" in n for n in notes), \
+        f"배치별 진행 알림이 없다(무소식 구간 재발): {notes}"
+    print(f"  (p) 배치 병렬(동시 {live['peak']})·배치별 push({len(pushes)}회)·진행 알림 OK")
 
 
 def test_worker_failure_reports(t_ai):
@@ -678,8 +771,10 @@ def main():
     # "클로드 제안 1" 상태를 기대한다. 이후 (g)(h) 는 각자 원하는 상태를 다시 만든다.
     test_two_block_push(prompt_item)
     test_rebuild_survival()
+    test_sibling_isolation()
     test_sha_drift_keeps_suggestion()
     t_ai = test_worker_simulation()
+    test_worker_parallel_and_incremental_push(t_ai)
     test_worker_failure_reports(t_ai)
     test_check_status(t_ai)
     test_http_hint(t_ai)

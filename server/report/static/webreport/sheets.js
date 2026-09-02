@@ -33,18 +33,6 @@ function isCmpFoldCol(c) { return CMP_FOLD_COL_RE.test(String(c || "").trim()); 
 // 접기에서 살아남는 비교지표 2종 — 표시만 소수 1자리로 줄인다(원값은 title 툴팁).
 const CMP_PCT_COL_RE = /^(stdev_delta_pct|cpk_ratio_pct)$/i;
 
-// ── Signature / AI Comment 열 개별 접기 (2026-09-02 사용자 요청) ─────────────
-// 두 열은 Issue Table 에서 가장 넓은 축에 속해(AI Comment 330px 고정 + Signature) 다른
-// 숫자 열을 화면 밖으로 밀어낸다. 위 Compare '통계 접기' 와 **같은 장치**를 쓴다:
-// 렌더 시 col/th/td 에 클래스를 붙여 두고 패널 클래스가 CSS 로 통째로 감춘다.
-// 다른 점은 접기 대상이 열 **하나씩**이고, 토글이 툴바가 아니라 그 열 헤더에 붙는다는 것.
-// 열 이름 자체는 저장 키가 아니다(행 키만 저장 키다 — CLAUDE.md §5 규칙 12).
-const FOLDABLE_COLS = [
-  { id: "sig", cls: "fold-col-sig", test: c => String(c || "").trim().toLowerCase() === "signature" },
-  { id: "aic", cls: "fold-col-aic", test: c => isAiCommentCol(c) },
-];
-function foldableColOf(c) { return FOLDABLE_COLS.find(f => f.test(c)) || null; }
-
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
 // narrowSrc: source 컬럼이 SRC_NARROW_MIN 이상일 때 — {src}_yield/_count 폭 힌트를 숫자(xx.xx)
@@ -117,6 +105,46 @@ function aiWaitHtml(extraClass) {
   if (!st) return "";
   const cls = (st === "failed" ? "ai-fail" : "ai-wait") + (extraClass ? " " + extraClass : "");
   return `<span class="${cls}">${esc(st === "failed" ? AI_FAIL_TEXT : AI_WAIT_TEXT)}</span>`;
+}
+
+// ── 행 단위 LLM 대기 / 처리 주체 (2026-09-02) ────────────────────────────────
+// 위 ai_comment_pending 은 **평가 전체**가 아직인 상태(셀 전부 비어 있음)이고, 아래는
+// 평가는 끝났지만 **그 행의 Claude 문장만** 아직 안 온 상태다. 사례가 회수된 행만
+// LLM 을 거치므로(사례 0건 행은 프롬프트 자체가 없다 — 서버 ai_prompt.build_prompt),
+// 사례 없는 행은 여기 안 들어오고 즉시 최종 문장(action_ko)을 보여 준다.
+// 서버가 row_key 로 전개해 내려준다 — 화면은 파서 사본을 두지 않는다(키 규약 단일화).
+const AI_LLM_WAIT_TTL_MS = 3600 * 1000;   // 서버 _AI_LLM_PENDING_TTL_SEC 와 짝
+function aiLlmPendingMap() {
+  try { return (DATA.web_report && DATA.web_report.ai_llm_pending) || null; }
+  catch (e) { return null; }
+}
+// 캐시에 굳은 pending 맵이 영구 Loading 이 되지 않게 하는 두 번째 방어선(서버가 생성
+// 시점에 한 번 거른다). 워커가 영영 push 하지 않는 PC 가 있어도 한 시간 뒤에는 코드
+// 문장이 최종본으로 보인다.
+function aiLlmPendingExpired() {
+  try {
+    const t = Date.parse((DATA.session && DATA.session.uploaded_at) || "");
+    return !isNaN(t) && (Date.now() - t) > AI_LLM_WAIT_TTL_MS;
+  } catch (e) { return false; }
+}
+function aiLlmPendingRow(rowKey) {
+  if (!rowKey || window.__aiLlmFailed) return false;
+  const m = aiLlmPendingMap();
+  return !!(m && m[rowKey]) && !aiLlmPendingExpired();
+}
+// 처리 주체 배지 — claude(클라 CLI 대행이 실제로 저장된 행) / llm(서버 LLM) / rule(룰 문장).
+// claude 만 확실한 값이고 나머지는 서버 배선 기준의 근사다(service._session_ai_overlay).
+const AIC_SRC_ICON = { claude: "✴", llm: "🤖", rule: "⚙" };
+const AIC_SRC_TITLE = { claude: "Claude 가 작성 (Honey 로컬 CLI 대행)",
+                        llm: "LLM 이 작성 (서버 연동 모델)",
+                        rule: "룰 엔진 문장 (LLM 미적용)" };
+function aicSrcIconHtml(rowKey) {
+  let src = "";
+  try { src = ((DATA.web_report && DATA.web_report.ai_sources) || {})[rowKey] || ""; }
+  catch (e) { return ""; }
+  if (!AIC_SRC_ICON[src]) return "";     // 키 부재(옛 payload·비 AI 세션) = 배지 없음
+  return `<span class="aic-src aic-src-${src}" title="${esc(AIC_SRC_TITLE[src])}">` +
+    `${AIC_SRC_ICON[src]}</span>`;
 }
 
 function signatureOptions() {
@@ -370,7 +398,13 @@ function renderAiComment(txt, precCount, rowKey) {
   // 녹아 있어 두 번 적는 셈이기 때문이다(2026-09-02 사용자 요청). "제안 제외" 세션은
   // [제안] 섹션 자체가 없으므로 사례를 그대로 보여 줘야 셀이 비지 않는다.
   const hasSugg = parts.some(p => p.tag === "제안" || p.tag === "점검제안");
-  const hideCase = !!precLink && hasSugg;
+  // 이 행의 Claude 문장이 아직 안 왔으면 [제안] 자리를 Loading 으로 대신한다(2026-09-02).
+  // 셀 전체를 덮지 않는 이유: [사례]·Signature 는 이미 확정값이라 먼저 보여 주는 편이
+  // 낫고, 사례가 없는 행은 애초에 pending 이 아니라 그대로 최종 문장이 보인다.
+  const llmWait = aiLlmPendingRow(rowKey);
+  // 대기 중에는 [사례]를 숨기지 않는다 — 제안 자리가 Loading 이라 사례까지 감추면 셀이
+  // 사실상 비어 보인다(hideCase 의 원래 취지는 "제안에 녹아 있으니 중복" 이다).
+  const hideCase = !!precLink && hasSugg && !llmWait;
   let out = "";
   parts.forEach(p => {
     const t = String(p.body || "").trim();
@@ -391,10 +425,19 @@ function renderAiComment(txt, precCount, rowKey) {
     // 좁아 라벨이 본문 첫 줄을 밀어내는데, 어느 섹션인지는 색(aic-past/aic-act)으로 이미
     // 구분된다. 섹션 div·클래스는 그대로라 색·줄바꿈·4줄 clamp(markAicClamped)가 유지되고,
     // 서버 문자열은 손대지 않으므로 캐시 무효화(콜드 폭풍)도 없다.
+    if (aicIsSuggTag(p.tag) && llmWait) {
+      // 코드가 만든 룰 문장을 지금 보여 주면, 잠시 뒤 Claude 문장으로 바뀌면서 사용자가
+      // "왜 내용이 달라졌나" 를 겪는다. 오는 중임을 명시하고 자리를 비워 둔다.
+      out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
+        `<span class="ai-wait">${esc(AI_WAIT_TEXT)}</span></div>`;
+      return;
+    }
     const body = aicIsSuggTag(p.tag) ? aicStripRuleLabels(t) : t;
     out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">${linkifyComment(body)}</div>`;
   });
   out += precLink;
+  // 처리 주체 배지 — 대기 중에는 아직 확정이 아니므로 달지 않는다.
+  if (!llmWait) out += aicSrcIconHtml(rowKey);
   const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));
   if (shownBadges.length) {
     out += `<div class="aic-badges">` + shownBadges.map(b =>
@@ -973,20 +1016,7 @@ function issueSectionHeadRowsHtml(cols, sec) {
     const parts = [];
     if (isCommentCol(c)) parts.push("st-comment");
     if (isCmpFoldCol(c)) parts.push("cmp-stat-col");
-    const f = foldableColOf(c);
-    if (f) parts.push(f.cls);
     return parts.length ? ` class="${parts.join(" ")}"` : "";
-  };
-  // Signature / AI Comment 헤더의 접기·펼치기 화살표(2026-09-02 사용자 요청).
-  // 접힌 상태에서도 눌러서 되돌릴 수 있어야 하므로 **버튼만은 감추지 않는다**
-  // (CSS: 접힘 시 그 열은 폭 0 이지만 .col-fold-btn 은 남는다 — 실제 배치는
-  //  yield_issue.js 가 표 밖 툴바 자리에 미러 버튼을 두는 방식이 아니라, 접힌 열의
-  //  좁은 헤더에 화살표만 남기는 방식이다).
-  const foldBtn = c => {
-    const f = foldableColOf(c);
-    if (!f) return "";
-    return `<button type="button" class="col-fold-btn" data-issue-act="col-fold"` +
-      ` data-fold="${f.id}" title="이 열 접기/펼치기">◀</button>`;
   };
   // AI Comment 헤더 밑 참고 안내(2026-08-20 사용자 요청). 열 폭은 .st-comment(330px 고정)가
   // 잡고 있어 안내문은 그 안에서 줄바꿈만 한다 — 열이 넓어지지 않는다(.th-note CSS).
@@ -1006,12 +1036,12 @@ function issueSectionHeadRowsHtml(cols, sec) {
           return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
             `${esc(s.short)}${resizeHandle(k)}</th>`;
         }
-        return `<th${commentCls(c)}>${foldBtn(c)}${esc(displayLabel(c))}${aiNote(c)}${mergeNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
+        return `<th${commentCls(c)}>${esc(displayLabel(c))}${aiNote(c)}${mergeNote(c)}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
       }).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
-    : `<th rowspan="2"${commentCls(cols[r.start])}>${foldBtn(cols[r.start])}` +
+    : `<th rowspan="2"${commentCls(cols[r.start])}>` +
       `${esc(displayLabel(cols[r.start]))}` +
       `${aiNote(cols[r.start])}${mergeNote(cols[r.start])}${resizeHandle(r.start)}${toggleAllBtn(r.start)}</th>`
   ).join("");
@@ -1152,13 +1182,9 @@ function renderSheetTable(rows, opts) {
   const narrowSrc = sourceColCount(cols) >= SRC_NARROW_MIN;
   // cmp-stat-col = Compare 통계 9종(툴바 '통계 접기' 대상). col/th/td 세 곳에 같은 클래스를
   // 달아 CSS 한 줄로 컬럼을 통째 감춘다 — colgroup 인덱스는 그대로라 컬럼 리사이즈에 무영향.
-  // Signature/AI Comment 개별 접기(2026-09-02)도 **같은 자리**에서 클래스를 단다 —
-  // 두 접기가 한 컬럼에 겹치는 일은 없다(Compare 통계 ↔ Signature/AI Comment 는 별개 열).
   const foldCls = c => {
     if (opts.kind !== "issue") return "";
-    if (isCmpFoldCol(c)) return " cmp-stat-col";
-    const f = foldableColOf(c);
-    return f ? " " + f.cls : "";
+    return isCmpFoldCol(c) ? " cmp-stat-col" : "";
   };
   const colgroup = "<colgroup>" + cols.map(c => {
     const fc = foldCls(c).trim();
@@ -1374,9 +1400,7 @@ function renderSheetTable(rows, opts) {
       }
       const clsParts = [];
       if (isCommentCol(c)) clsParts.push("st-comment");   // 열너비 고정 (CSS .st-comment)
-      // 접기 대상 클래스 — Compare 통계(cmp-stat-col) 또는 Signature/AI Comment
-      // (fold-col-*). foldCls 가 정하는 값을 그대로 쓴다(종전엔 무엇이 반환되든
-      // cmp-stat-col 을 박아, 새로 추가한 열 접기가 이 경로에서 안 먹었다).
+      // 접기 대상 클래스 — Compare 통계(cmp-stat-col). col/th 와 같은 판정을 쓴다.
       { const fc = foldCls(c).trim(); if (fc) clsParts.push(fc); }
       let cellStyle = "";
       if (isEmpty) clsParts.push("st-empty");
