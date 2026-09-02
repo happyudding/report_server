@@ -539,7 +539,8 @@ def test_llm_pending_row_and_source_icon():
         "var C=" + js_literal(cell) + ";"
         "DATA.web_report.ai_llm_pending={'CPK|Waiting':1};"
         "DATA.web_report.ai_sources={'CPK|Done':'claude','CPK|Srv':'llm','CPK|Rule':'rule'};"
-        "DATA.session={uploaded_at:new Date().toISOString()};"
+        # 세션 시각은 **created_at(초 단위 epoch)** 다 — payload 규약(fmtDate 와 동일).
+        "DATA.session={created_at:Math.floor(Date.now()/1000)};"
         "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
         # ① 대기 행 — 엔진 [제안]은 그대로 읽히고, 대기 줄이 그 **아래**에 붙는다
         "var a=box(renderAiComment(C,1,'CPK|Waiting'));"
@@ -587,8 +588,12 @@ def test_llm_pending_row_and_source_icon():
         "out.gaveUpText=e.textContent; out.gaveUpSpin=!!e.querySelector('.ai-wait');"
         "window.__aiLlmFailed=false;"
         # ⑥ TTL 경과(오래된 세션) — 영구 Loading 방지
-        "DATA.session={uploaded_at:new Date(Date.now()-7200*1000).toISOString()};"
+        "DATA.session={created_at:Math.floor(Date.now()/1000)-7200};"
         "out.staleSpin=!!box(renderAiComment(C,1,'CPK|Waiting')).querySelector('.ai-wait');"
+        # ⑦ 시각 필드가 없어도 **대기는 뜬다** — 서버가 이미 TTL 을 거른 뒤 내려준
+        #    맵이므로, 화면이 값을 못 읽었다고 표시를 지우면 안 된다(2026-09-02 회귀).
+        "DATA.session={};"
+        "out.noTsSpin=!!box(renderAiComment(C,1,'CPK|Waiting')).querySelector('.ai-wait');"
         "var pre=document.createElement('pre');pre.id='res';"
         "pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
         "})();</script>")
@@ -621,6 +626,8 @@ def test_llm_pending_row_and_source_icon():
     assert not r["gaveUpSpin"] and "룰 기본 조치" in r["gaveUpText"], \
         f"폴링 포기 뒤에도 Loading 이 남았습니다: {r}"
     assert not r["staleSpin"], "TTL 이 지난 세션이 계속 Loading 입니다(영구 대기)"
+    assert r["noTsSpin"], \
+        "세션 시각을 못 읽었다고 대기 표시를 지웠습니다(서버가 이미 TTL 을 걸렀다)"
     print("[l] 행 단위 Loading + 처리 주체 아이콘 + TTL/포기 폴백 OK")
 
 

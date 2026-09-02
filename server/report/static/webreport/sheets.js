@@ -123,8 +123,13 @@ function aiLlmPendingMap() {
 // 문장이 최종본으로 보인다.
 function aiLlmPendingExpired() {
   try {
-    const t = Date.parse((DATA.session && DATA.session.uploaded_at) || "");
-    return !isNaN(t) && (Date.now() - t) > AI_LLM_WAIT_TTL_MS;
+    // ⚠ 필드는 **created_at** 이고 값은 **초 단위 epoch** 다(fmtDate 와 같은 규약).
+    // 최초 구현이 `uploaded_at`(없는 필드)을 Date.parse 로 읽어 늘 NaN 이었다 — 이쪽은
+    // "만료 아님"으로 흘러 무해했지만, 짝인 서버 판정은 반대로 늘 만료로 떨어져
+    // 대기 표시가 통째로 사라졌다(2026-09-02).
+    const sec = Number((DATA.session && DATA.session.created_at) || 0);
+    if (!sec) return false;                 // 값이 없으면 만료로 치지 않는다
+    return (Date.now() - sec * 1000) > AI_LLM_WAIT_TTL_MS;
   } catch (e) { return false; }
 }
 function aiLlmPendingRow(rowKey) {

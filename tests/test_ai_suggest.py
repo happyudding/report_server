@@ -468,6 +468,71 @@ def test_rebuild_survival():
     print("  (g) 재빌드 생존(재병합 — 두 섹션) OK")
 
 
+def test_uploaded_epoch_reads_created_at():
+    """(r) TTL 기준 시각은 **created_at(정수 epoch)** 이다 (2026-09-02 회귀).
+
+    최초 구현이 `uploaded_at`(report_session 에 **없는 컬럼**)을 ISO 문자열로 읽어 늘
+    0.0 을 돌려줬다 → `fresh` 가 언제나 False → **행 단위 대기 표시가 한 건도 안 생겼다**
+    (사용자 신고 "Loading…(Claude) 가 안 보인다"). 표시 기능이라 에러 없이 조용히 사라져
+    발견이 늦는 부류다. 컬럼명과 형식을 함께 고정한다.
+    """
+    now = int(time.time())
+    assert wr_service._uploaded_epoch({"created_at": now}) == float(now)
+    assert wr_service._uploaded_epoch({"created_at": str(now)}) == float(now)
+    assert wr_service._uploaded_epoch({}) == 0.0
+    # 실제 스키마에 uploaded_at 이 없다 — 그 이름을 다시 쓰면 이 단언이 깨진다.
+    assert wr_service._uploaded_epoch({"uploaded_at": now}) == 0.0, \
+        "없는 컬럼(uploaded_at)을 읽고 있다 — created_at 이어야 한다"
+    ttl = wr_service._AI_LLM_PENDING_TTL_SEC
+    assert (time.time() - wr_service._uploaded_epoch({"created_at": now - 60})) <= ttl, \
+        "방금 만든 세션이 만료로 판정된다(대기 표시가 안 뜬다)"
+    assert (time.time() - wr_service._uploaded_epoch({"created_at": now - ttl - 600})) > ttl, \
+        "오래된 세션이 만료되지 않는다(영구 Loading)"
+    # 실제 세션 dict 로도 확인한다 — 위 단위 검사는 통과하는데 DB 컬럼명이 달라 다시
+    # 0.0 이 되는 경우를 잡는다(이번 버그가 정확히 그 모양이었다).
+    live = report_db.get_session(SID)
+    assert wr_service._uploaded_epoch(live) > 0, \
+        f"실제 세션에서 기준 시각을 못 읽는다 — 대기 표시가 통째로 사라진다: " \
+        f"{sorted(dict(live).keys())}"
+    print("  (r) TTL 기준 시각 = created_at(정수 epoch) OK")
+
+
+def test_llm_pending_generated():
+    """(r2) 아직 문장이 안 온 행에 **실제로 llm_pending 이 생긴다** (2026-09-02 회귀).
+
+    화면의 "Loading… (Claude)" 는 이 맵이 유일한 근거다. 종전에는 이 맵의 생성 자체를
+    검증하는 테스트가 없어, TTL 기준 시각 버그(위 (r))로 맵이 **항상 비어** 있었는데도
+    전 테스트가 통과했다. 저장분이 있으면 사라지는 것까지 함께 고정한다.
+    """
+    sid, akey = SID + "PEND", AKEY + "PEND"
+    _setup(sid, akey, AI_OPTS)      # ai_model=claude + 방금 생성 = 대기 대상
+    try:
+        merged, _how, pending, sources = _overlay_cell(sid, akey)
+        assert pending, \
+            "대행 대상 신규 세션인데 llm_pending 이 비었다 — 화면에 Loading 이 안 뜬다"
+        # 프롬프트가 있는 item 의 행만 대기여야 한다(사례 0건 행은 즉시 최종본).
+        for k in pending:
+            assert k.endswith("|" + ITEM), f"엉뚱한 행이 대기로 잡혔다: {k}"
+        assert all(sources.get(k) != "claude" for k in pending), \
+            "대기 중인 행에 claude 출처가 붙었다(아직 안 왔는데 확정으로 보인다)"
+
+        # 문장이 저장되면 그 행은 대기에서 빠지고 출처가 claude 가 된다.
+        report_db.apply_webreport_edits(
+            sid, [(wr_edits.KIND_AI_SUGGEST, ITEM,
+                   json.dumps({"suggestion": "- 도착한 제안", "cases": "",
+                               "sha": "a" * 12, "provider": "claude"},
+                              ensure_ascii=False))], updated_by=USER)
+        merged2, _h2, pending2, sources2 = _overlay_cell(sid, akey)
+        assert not pending2, f"문장이 왔는데 대기가 안 풀렸다: {pending2}"
+        assert any(v == "claude" for v in sources2.values()), \
+            f"문장이 왔는데 claude 출처가 안 붙었다: {sources2}"
+        assert "도착한 제안" in merged2["comments"][f"CPK|{ITEM}"], \
+            "저장된 문장이 셀에 병합되지 않았다"
+    finally:
+        report_db.delete_session(sid)
+    print("  (r2) llm_pending 생성 → 문장 도착 시 해제 OK")
+
+
 def test_sources_no_precedent_is_rule():
     """(q) **사례 0건 행은 서버 LLM 을 안 거치므로 아이콘도 rule** (2026-09-02 사용자 지적).
 
@@ -803,6 +868,8 @@ def main():
     # "클로드 제안 1" 상태를 기대한다. 이후 (g)(h) 는 각자 원하는 상태를 다시 만든다.
     test_two_block_push(prompt_item)
     test_rebuild_survival()
+    test_uploaded_epoch_reads_created_at()
+    test_llm_pending_generated()
     test_sources_no_precedent_is_rule()
     test_sibling_isolation()
     test_sha_drift_keeps_suggestion()

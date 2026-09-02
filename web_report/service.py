@@ -400,12 +400,24 @@ _AI_SUGGEST_MAX_RAW_CHARS = 4000
 
 
 def _uploaded_epoch(session) -> float:
-    """세션 업로드 시각(epoch) — 파싱 실패는 0.0(= TTL 판정에서 '아주 오래됨')."""
-    raw = str(session.get("uploaded_at") or "").strip()
-    if not raw:
+    """세션 생성 시각(epoch) — 읽을 수 없으면 0.0(= TTL 판정에서 '아주 오래됨').
+
+    ⚠ 컬럼은 **`created_at`** 이고 값은 **정수 epoch** 다(`report_session` 스키마).
+    2026-09-02 최초 구현이 `uploaded_at`(없는 컬럼)을 ISO 문자열로 읽어, 이 함수가 항상
+    0.0 을 돌려줬다 — 그 결과 `fresh` 가 언제나 False 가 되어 **행 단위 대기 표시가 한
+    건도 생기지 않았다**(사용자 신고 "Loading…(Claude) 가 안 보인다"). 표시 기능이라
+    에러 없이 조용히 사라지는 부류다.
+    ISO 문자열도 받아 둔다 — 다른 저장 경로가 그렇게 넣어도 TTL 이 오작동하지 않게.
+    """
+    raw = session.get("created_at")
+    if raw is None or raw == "":
         return 0.0
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+        return float(raw)                       # 정수/실수 epoch (현행 스키마)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
     except ValueError:
         return 0.0
 
