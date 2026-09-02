@@ -386,7 +386,12 @@ def _ai_suggest_coords(session, session_id: str, *, report_db) -> tuple:
 
 def _merge_ai_suggestions(session, session_id: str, result: dict, *,
                           report_db, upload_root: Path) -> dict:
-    """영구 저장된 suggestion 을 AI 결과에 재병합 — 실패는 조용히 원본 유지(빌드 불사)."""
+    """영구 저장된 suggestion 을 AI 결과에 재병합 — 실패는 조용히 원본 유지(빌드 불사).
+
+    sha 게이트 폐기(2026-09-02) 후로는 **저장분이 있으면 항상 붙는다**. 대신 금지 문구를
+    여기서 한 번 더 적용해, 옛 룰 시절 저장된 변명 문장이 되살아나지 않게 한다
+    (= deny 패턴 편집의 소급 적용 — 프롬프트 밖이라 sha 불변, 재대행 불필요).
+    """
     try:
         from . import ai_prompt, ai_suggest_store
         akey, chash, mode, prep = _ai_suggest_coords(session, session_id,
@@ -394,7 +399,12 @@ def _merge_ai_suggestions(session, session_id: str, result: dict, *,
         stored = ai_suggest_store.load(upload_root, akey, chash, mode, prep)
         if not stored:
             return result
-        merged, patched = ai_prompt.apply_suggestions(result, stored)
+        try:
+            from . import eval_debug
+            deny = ai_prompt.compile_deny_patterns(eval_debug.ai_prompt_rules())
+        except Exception:                               # noqa: BLE001
+            deny = []                                   # 필터는 부가 안전장치 — 병합은 계속
+        merged, patched = ai_prompt.apply_suggestions(result, stored, deny)
         if patched:
             _log.info("ai_suggest 재병합 %d행 (session=%s)", patched, session_id)
         return merged
@@ -534,10 +544,10 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
             # 목록으로 push 한 경우다(docs/23 §반드시 4).
             skips["unknown_item"] += 1
             continue
-        if str(meta.get("sha") or "") != row["sha"]:
-            # 룰·민감도 변경으로 프롬프트가 갈렸다 — 설계상 정상 폐기다.
-            skips["sha_mismatch"] += 1
-            continue
+        # sha 대조는 폐기됐다(2026-09-02) — 룰을 고칠 때마다 프롬프트 sha 가 갈려
+        # 클라가 방금 만든 문장까지 버려졌고, 화면은 재대행 전까지 action_ko 로
+        # 후퇴했다. 알려진 item 이면 받는다. `skips["sha_mismatch"]` 키는 응답 형식
+        # 호환으로 남지만 이제 항상 0 이다.
         if deny:
             # 사례를 줬는데도 "적용할 사례 없음" 이라 답한 줄만 걷어낸다. 남는 줄이 있으면
             # 그것만 저장하고, 두 블록이 **다** 비면 저장하지 않는다(= 룰 문장 폴백).
@@ -557,7 +567,7 @@ def apply_ai_suggestions(session_id: str, items, *, report_db, upload_root: Path
         with cache.keyed_lock_ctx(("ai_suggest", akey, chash, mode, prep)):
             ai_suggest_store.save_merge(upload_root, akey, chash, mode, accepted,
                                         by=client_user, prep_digest=prep)
-            merged, _patched = ai_prompt.apply_suggestions(result, accepted)
+            merged, _patched = ai_prompt.apply_suggestions(result, accepted, deny)
             cache_key = cache_policy.ai_comment_key(session, prep)
             cache.cache_put(cache.AI_COMMENT_CACHE, cache_key, merged,
                             cache.AI_COMMENT_CACHE_MAX)

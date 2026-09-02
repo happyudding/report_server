@@ -211,19 +211,44 @@ def test_apply_suggestions():
         "etc_auto_items": [],
     }
     stored = {"VDD Leak(A)": {"sha": "abcdef012345", "suggestion": "새 제안"},
-              "Other": {"sha": "ffffffffffff", "suggestion": "sha 불일치 — 무시"}}
+              "Other": {"sha": "ffffffffffff", "suggestion": "prompts 에 없는 item — 무시"}}
     out, patched = P.apply_suggestions(result, stored)
     assert patched == 2
     assert out["comments"]["Yield|5|VDD Leak(A)"].endswith("[제안] 새 제안")
     assert out["comments"]["CPK|VDD Leak(A)"].endswith("[제안] 새 제안")
-    assert out["comments"]["ETC|Other"].endswith("그대로")       # sha 게이트 차단
+    # prompts 에 없는 item 은 여전히 무시한다(임의 row_key 제출 차단 — sha 와 무관)
+    assert out["comments"]["ETC|Other"].endswith("그대로")
     assert result["comments"]["CPK|VDD Leak(A)"].endswith("기존")  # 원본 불변(copy 계약)
     assert out is not result and out["comments"] is not result["comments"]
-    # sha 전부 불일치 → 원본 그대로(0건)
+
+    # ⚠ **sha 가 달라도 병합한다**(2026-09-02 사용자 결정 — 게이트 폐기).
+    # 종전에는 여기서 0건이었다. 그 게이트 때문에 지시문을 고칠 때마다 프롬프트 sha 가
+    # 갈려, store 에 멀쩡히 있는 LLM 문장이 전 세션에서 통째로 버려지고 화면이
+    # action_ko 나열로 후퇴했다(사용자 신고의 실제 원인). 옛 프롬프트 기준 문장이라도
+    # 룰 문장보다 낫다 — **되살리지 말 것.**
     out2, patched2 = P.apply_suggestions(result, {"VDD Leak(A)": {"sha": "000000000000",
-                                                                  "suggestion": "x"}})
-    assert patched2 == 0 and out2 is result
-    print("  (h) apply_suggestions sha 게이트·copy 계약 OK")
+                                                                  "suggestion": "옛 sha 문장"}})
+    assert patched2 == 2, "sha 불일치를 이유로 다시 버리고 있다(게이트 부활)"
+    assert out2["comments"]["CPK|VDD Leak(A)"].endswith("[제안] 옛 sha 문장")
+
+    # deny 를 주면 병합 **직전**에 금지 줄을 걷어낸다 — 옛 룰 시절 저장된 변명 문장이
+    # 게이트 폐기로 되살아나는 것을 막고, 금지 패턴 편집이 저장분에도 소급된다.
+    # (배포 패턴 `precedent_denial` 은 only_with_precedents 라 선례가 실린 item 에만 걸린다
+    #  — prompts 에 precedents 를 달아 그 조건을 만든다.)
+    deny = P.compile_deny_patterns(_load_shipped_rules())
+    withprec = dict(result)
+    withprec["prompts"] = {"VDD Leak(A)": {"prompt": "p", "sha": "abcdef012345",
+                                           "precedents": [{"comment": "c"}]}}
+    bad = {"VDD Leak(A)": {"sha": "abcdef012345",
+                           "suggestion": "- 적용할 수 있는 사례는 확인되지 않았습니다.\n- edge 확인"}}
+    out3, patched3 = P.apply_suggestions(withprec, bad, deny)
+    assert patched3 == 2 and out3["comments"]["CPK|VDD Leak(A)"].endswith("[제안] - edge 확인")
+    # 전부 걸리면 병합하지 않는다(= 엔진 폴백 유지)
+    allbad = {"VDD Leak(A)": {"sha": "abcdef012345",
+                              "suggestion": "- 적용할 수 있는 사례는 확인되지 않았습니다."}}
+    out4, patched4 = P.apply_suggestions(withprec, allbad, deny)
+    assert patched4 == 0 and out4 is withprec
+    print("  (h) apply_suggestions sha 무관 병합·deny 소급·copy 계약 OK")
 
 
 _ENRICH = {

@@ -205,8 +205,9 @@ def session_suggestions(session_id: str) -> dict:
     """한 세션에 저장된 [제안] 문장 목록 — 품질 검수용.
 
     본문은 DB 가 아니라 영구 저장 파일(ai_suggest_store)에 있다. **파일 1개만** 읽는다.
-    `stale` 은 "지금 프롬프트 sha 와 달라 폴백 중"인지 — 룰이 바뀌면 저장된 문장은
-    자동으로 안 붙는다(docs/23 sha 게이트). 판정에 캐시를 **새로 만들지 않는다**
+    `stale` 은 "지금 프롬프트 sha 와 다른, 옛 룰 기준으로 만들어진 문장"이라는 표시다 —
+    sha 게이트 폐기(2026-09-02) 후로는 그래도 **화면에 그대로 붙으며**, 다음 재대행 때
+    새 문장으로 교체된다(docs/23 핵심 결정 ②). 판정에 캐시를 **새로 만들지 않는다**
     (allow_build=False) — 관리자 조회가 콜드 빌드를 유발하면 안 된다.
     """
     from web_report import ai_suggest_store, service as web_report_service

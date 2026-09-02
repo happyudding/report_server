@@ -12,10 +12,11 @@ eval_analyzer 는 이 흐름에서 무수정·무관여가 설계이므로 스�
   (b) webreport_ai_model — 결측/파싱실패/미지값 → "default"
   (c) 라우트 가드 — X-Honey-Agent 부재 403 / 비편집자 거부 / ai_model!=claude 404
   (d) GET prompts — 콜드 202 → (백그라운드 ai 잡) → 200 items(sha 포함)
-  (e) POST suggestions — sha 불일치 skip / 일치 accepted + payload_rev bump
+  (e) POST suggestions — accepted + payload_rev bump (**sha 불일치도 수용** — 게이트 폐기)
   (f) /full payload 에 병합된 [제안] 반영 (rev 채널 재사용 확인)
   (g) 재빌드 생존 — 캐시 전부 비워도 store 재병합으로 suggestion 유지
-  (h) 룰 변경 모사 — 프롬프트 sha 가 갈리면 자동 폴백(병합 안 됨)
+  (h) 룰 변경 모사 — 프롬프트 sha 가 갈려도 **저장된 LLM 문장이 계속 붙는다**
+      (2026-09-02 사용자 결정으로 sha 게이트 폐기 — 종전 "자동 폴백"의 반대)
   (i) 클라 워커(transport/ai_suggest._worker) 동기 시뮬레이션 —
       가짜 requests(Flask test_client 위임) + 가짜 call_claude 로 폴링→생성→push 전체
   (m) **금지 문구**(2026-09-02, /pe/eval AI 지시문 탭) — 사례를 줬는데 "적용할 사례 없음"
@@ -277,15 +278,18 @@ def test_prompts_flow():
 def test_push_and_merge(prompt_item):
     url = f"/pe/report/session/{SID}/web_report/ai_comment/suggestions"
     rev0 = report_db.get_webreport_edit_rev(SID)
-    # sha 불일치 → skip
+    # ⚠ **sha 가 달라도 수용한다**(2026-09-02 사용자 결정 — 게이트 폐기).
+    # 종전에는 여기서 skips["sha_mismatch"]==1 이었다. 그 게이트 때문에 지시문을 고칠
+    # 때마다 프롬프트 sha 가 갈려 클라가 방금 만든 문장까지 버려졌고, 화면은 재대행
+    # 전까지 action_ko 나열로 후퇴했다(사용자 신고의 실제 원인). **되살리지 말 것.**
+    # `sha_mismatch` 키는 응답 형식 호환으로 남지만 이제 항상 0 이다.
     r = client.post(url, headers=_headers(),
-                    json={"items": [{"key": ITEM, "sha": "0" * 12, "suggestion": "무시"}]})
+                    json={"items": [{"key": ITEM, "sha": "0" * 12,
+                                     "suggestion": "- 옛 sha 문장"}]})
     body = r.get_json()
-    assert r.status_code == 200 and body["accepted"] == 0 and body["skipped"] == 1, body
-    # 사유별 내역(2026-09-01) — 합계만으로는 "룰이 바뀐 것"과 "모델이 이상한 것"을
-    # 구분할 수 없어 관리자가 다음에 뭘 할지 정하지 못한다.
-    assert body["skips"]["sha_mismatch"] == 1, body
-    assert report_db.get_webreport_edit_rev(SID) == rev0   # 수용 0건 = rev 불변
+    assert r.status_code == 200 and body["accepted"] == 1, body
+    assert body["skips"]["sha_mismatch"] == 0, body
+    rev0 = report_db.get_webreport_edit_rev(SID)   # 위 push 가 수용됐으므로 기준 재설정
     # 일치 → 수용 + rev bump
     r = client.post(url, headers=_headers(),
                     json={"items": [{"key": ITEM, "sha": prompt_item["sha"],
@@ -314,7 +318,7 @@ def test_push_and_merge(prompt_item):
     logs = report_db.get_audit_logs(action="ai_suggest", session_id=SID)
     assert logs, "action='ai_suggest' 감사 기록이 없다"
     assert "ai_suggest(accepted=1,skipped=0)" in {r["changed_fields"] for r in logs}
-    print("  (e) push sha 게이트·rev bump·감사 action 분리 OK")
+    print("  (e) push 수용(sha 무관)·skip 사유·rev bump·감사 action 분리 OK")
 
 
 def test_denied_lines(prompt_item):
@@ -444,7 +448,16 @@ def test_rebuild_survival():
     print("  (g) 재빌드 생존(재병합 — 두 섹션) OK")
 
 
-def test_sha_drift_fallback():
+def test_sha_drift_keeps_suggestion():
+    """룰을 고쳐 프롬프트 sha 가 갈려도 **저장된 LLM 문장이 계속 붙는다**.
+
+    2026-09-02 사용자 결정으로 sha 게이트를 폐기했다. 종전에는 여기서 action_ko
+    기본조치로 폴백하는 것이 정상이었는데, 실제 운영에서는 지시문을 한 번 고칠 때마다
+    전 세션의 LLM 문장이 통째로 사라지고 화면이 룰 문장 나열로 후퇴했다 — store 에는
+    멀쩡한 문장이 있는데 관리자 화면(게이트 없음)과 Issue Table(게이트 있음)이 서로
+    다르게 보이던 신고의 원인. 옛 프롬프트 기준 문장이라도 룰 문장보다 낫고, 다음
+    재대행 때 자연히 교체된다(클라 워커는 sha 로 건너뛰지 않는다). **되살리지 말 것.**
+    """
     _PROMPT_SALT["v"] = "p2-rules-changed"   # 룰 변경 모사 — 프롬프트가 달라진다
     _wipe_caches(AKEY)
     session = report_db.get_session(SID)
@@ -453,10 +466,11 @@ def test_sha_drift_fallback():
     result, how = wr_service._ai_comment_cached(
         _s, SID, tables, manifest, report_db=report_db, upload_root=UPLOAD_ROOT)
     assert how == "build"
-    assert result["comments"][f"CPK|{ITEM}"].endswith("기본조치"), \
-        "sha 가 갈렸는데 옛 suggestion 이 붙었다(게이트 실패)"
+    cell = result["comments"][f"CPK|{ITEM}"]
+    assert cell.endswith("- edge 이력 먼저 확인\n- 이어서 산포 재측정"), \
+        f"sha 가 갈렸다고 LLM 문장을 버렸다(게이트 부활): {cell!r}"
     _PROMPT_SALT["v"] = "p1"                 # 원복
-    print("  (h) 룰 변경 모사 sha 폴백 OK")
+    print("  (h) 룰 변경(sha drift) 후에도 LLM 문장 유지 OK")
 
 
 # ── (i) 클라 워커 동기 시뮬레이션 ────────────────────────────────────────────
@@ -664,7 +678,7 @@ def main():
     # "클로드 제안 1" 상태를 기대한다. 이후 (g)(h) 는 각자 원하는 상태를 다시 만든다.
     test_two_block_push(prompt_item)
     test_rebuild_survival()
-    test_sha_drift_fallback()
+    test_sha_drift_keeps_suggestion()
     t_ai = test_worker_simulation()
     test_worker_failure_reports(t_ai)
     test_check_status(t_ai)

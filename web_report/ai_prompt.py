@@ -632,11 +632,22 @@ def patch_suggestion_text(cell_text, suggestion) -> str:
     return patch_cell(cell_text, suggestion=suggestion)
 
 
-def apply_suggestions(result: dict, stored_items: dict) -> tuple[dict, int]:
+def apply_suggestions(result: dict, stored_items: dict,
+                      deny: list | None = None) -> tuple[dict, int]:
     """AI 결과 dict 에 저장된 suggestion 들을 병합 — (새 dict, 패치 건수).
 
-    sha 게이트: stored_items[item]["sha"] 가 result["prompts"][item]["sha"] 와 일치하는
-    item 만 패치한다(룰 변경 → 프롬프트 sha 갈림 → 자동 action_ko 폴백, docs/23 핵심 결정 ②).
+    **sha 게이트는 폐기됐다(2026-09-02 사용자 결정)** — 저장된 최신 문장을 sha 와
+    무관하게 병합한다. 종전에는 sha 불일치 item 을 건너뛰었는데(구 docs/23 핵심 결정 ②),
+    지시문을 고칠 때마다 프롬프트 sha 가 전부 갈려 **전 세션이 재대행 전까지 action_ko
+    폴백으로 후퇴**했다 — LLM 문장이 store 에 멀쩡히 있는데 화면에는 룰 문장만 보이는
+    회귀의 원인. 옛 프롬프트 기준 문장이라도 action_ko 나열보다 낫다는 것이 사용자
+    결정이다(sha 는 정보용 — 관리자 stale 표시). **게이트를 되살리지 말 것.**
+
+    `deny` (compile_deny_patterns 결과) 를 주면 병합 직전에 금지 문구 줄을 걷어낸다 —
+    게이트 폐기로 옛 룰 시절 저장된 변명 문장이 되살아나는 것을 막고, 금지 패턴 편집이
+    **이미 저장된 문장에도 소급 적용**되게 한다. 두 블록이 다 비면 병합하지 않는다
+    (= 엔진 폴백 유지).
+
     패치 대상 row_key 는 `key.endswith("|"+item)` — Yield fan-out(Yield|<bin>|<item>) +
     CPK|<item> + ETC|<item> 전부.
 
@@ -652,11 +663,13 @@ def apply_suggestions(result: dict, stored_items: dict) -> tuple[dict, int]:
         meta = prompts.get(item)
         if not meta or not isinstance(row, dict):
             continue
-        if str(row.get("sha") or "") != str(meta.get("sha") or ""):
-            continue
         # 두 블록(2026-09-02) — 사례 요약만 온 경우도 반영한다(제안이 비어도 무해).
         suggestion = sanitize_suggestion(row.get("suggestion") or "")
         cases = sanitize_suggestion(row.get("cases") or "")
+        if deny:
+            has_prec = bool(meta.get("precedents"))
+            suggestion = strip_denied_lines(suggestion, deny, has_prec)
+            cases = strip_denied_lines(cases, deny, has_prec)
         if suggestion or cases:
             accepted[str(item)] = (cases, suggestion)
     if not accepted:

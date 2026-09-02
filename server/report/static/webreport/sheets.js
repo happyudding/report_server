@@ -277,6 +277,21 @@ const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "사례
 function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
 // 사례 섹션 토큰인가 — 신/구 토큰 둘 다. 화면에서 숨길지 판단하는 데 쓴다.
 function aicIsCaseTag(tag) { return tag === "사례" || tag === "과거사례"; }
+// 제안 섹션 토큰인가 — 신/구 토큰 둘 다.
+function aicIsSuggTag(tag) { return tag === "제안" || tag === "점검제안"; }
+// [제안] 줄 앞의 룰 이름 라벨("- OUTLIER : ", "-LOW CPK:")만 벗긴다(2026-09-02 사용자
+// 요청 "사람이 읽기 자연스럽게"). 룰 이름은 Signature 칸에 이미 있어 중복인데다 읽는
+// 사람에게는 암호로 보인다. **본문 단어는 건드리지 않는다** — 라벨만 떼는 것이라
+// 태그 라벨 제거(위)와 같은 성격이고, 서버 문자열도 그대로다(Excel·챗봇·eval export
+// 는 종전과 동일). 새 생성분은 yaml `natural_style` 이 애초에 안 붙이게 하고, 이미
+// 저장된 문장은 여기서 화면에서만 정리한다.
+// 대문자·숫자·밑줄·공백으로만 된 2자 이상 토큰 뒤 콜론이 조건 — 한글 본문이나
+// "0xFF 써서" 같은 실제 문장은 대문자 연속이 아니거나 콜론이 없어 걸리지 않는다.
+const AIC_RULE_LABEL_RE = /^([-*\s]*)[A-Z][A-Z0-9_ ]{1,30}\s*[:：]\s*/;
+function aicStripRuleLabels(text) {
+  return String(text || "").split("\n")
+    .map(ln => ln.replace(AIC_RULE_LABEL_RE, (_m, bullet) => bullet)).join("\n");
+}
 // 섹션 토큰이 하나라도 있나 — 분해를 태울지 판단한다. **`g` 플래그를 쓰지 않는다**:
 // 정규식 리터럴은 모듈 전역에 하나뿐이라 `g` 면 `test()` 가 `lastIndex` 를 남겨 다음
 // 호출이 엉뚱한 위치부터 검사한다(셀마다 결과가 달라지는 종류의 버그).
@@ -376,7 +391,8 @@ function renderAiComment(txt, precCount, rowKey) {
     // 좁아 라벨이 본문 첫 줄을 밀어내는데, 어느 섹션인지는 색(aic-past/aic-act)으로 이미
     // 구분된다. 섹션 div·클래스는 그대로라 색·줄바꿈·4줄 clamp(markAicClamped)가 유지되고,
     // 서버 문자열은 손대지 않으므로 캐시 무효화(콜드 폭풍)도 없다.
-    out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">${linkifyComment(t)}</div>`;
+    const body = aicIsSuggTag(p.tag) ? aicStripRuleLabels(t) : t;
+    out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">${linkifyComment(body)}</div>`;
   });
   out += precLink;
   const shownBadges = split.badges.filter(b => !aicIsSeverityBadge(b));

@@ -57,9 +57,18 @@ Honey 가 로컬 claude CLI subprocess 로 문장을 생성해 서버에 push, �
    dist_pack_store 패턴, 축출 제외)에 저장하고, aicmt 캐시가 채워질 때마다(콜드 재빌드
    포함) `service._merge_ai_suggestions` 가 재병합한다. `ai_comment_key` 에 LLM/세션 축을
    추가하지 않는다(perf_guard S10·S12).
-2. **프롬프트 sha 게이트.** `sha256(prompt)[:12]` 를 suggestion 과 함께 저장, 재병합은
-   현재 프롬프트 sha 일치 시에만. 룰 변경으로 판정이 바뀌면 sha 가 갈려 자동으로
-   action_ko 폴백(옛 LLM 문장이 새 판정에 붙는 사고 차단).
+2. ~~**프롬프트 sha 게이트.**~~ → **폐기됨 (2026-09-02 사용자 결정).** `sha256(prompt)[:12]`
+   는 계속 저장하지만 **판정에 쓰지 않는다** — 수용(`apply_ai_suggestions`)·재병합
+   (`apply_suggestions`) 둘 다 sha 와 무관하게 최신 저장분을 쓴다.
+   폐기 이유: 지시문을 한 글자만 고쳐도 sha 가 전량 갈려 **전 세션이 재대행 전까지
+   action_ko 나열로 후퇴**했다. store 에는 멀쩡한 LLM 문장이 있는데 관리자 탭
+   (게이트 없음)과 Issue Table(게이트 있음)이 서로 다르게 보이는 신고의 실제 원인이었고,
+   룰을 자주 고칠수록 화면이 나빠지는 구조였다. 옛 프롬프트 기준 문장이라도 룰 문장보다
+   낫고, 클라 워커는 sha 로 건너뛰지 않으므로(전 항목 재생성) 다음 재대행에 자연 교체된다.
+   대신 **금지 문구(deny)를 병합 시점에도 적용**해 옛 변명 문장이 되살아나는 것을 막는다
+   (= 패턴 편집이 저장분에 소급). sha 는 관리자 `stale` 표시(옛 프롬프트 기준 문장)용으로만
+   남는다. ⚠ 되살리려면 위 회귀를 먼저 해결할 것 —
+   회귀 방지는 `tests/test_ai_suggest.py` (h)·`test_ai_prompt_determinism.py` (h).
 3. **push 반영은 기존 rev 채널 재사용.** 편집 kind `ai_suggest`(marker 1건, item_key
    `"push"`) 저장으로 payload_rev +1 → report/full 캐시 자연 무효화 +
    `request_build("report")` 선빌드. 표적 캐시 삭제 API 없음.

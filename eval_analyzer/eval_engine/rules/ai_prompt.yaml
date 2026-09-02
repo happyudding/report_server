@@ -78,6 +78,12 @@ instructions:
     현상을 우리말로 풀어 쓰되 CPK 와 수율 그리고 단위가 붙은 측정값은 그대로 써도 된다.
     이 금지는 내부 지표에만 걸린다 - 사례 원문에 있는 bin 번호 코드값 레지스터값(0xFF 등)
     item 명 조치 이름은 사례를 알아보게 하는 핵심이므로 반드시 그대로 살려 써라.
+- id: natural_style
+  enabled: true
+  text: '줄 앞에 OUTLIER LOW_CPK FUNC_FAIL 같은 룰 이름을 라벨로 붙이지 마라 - 그 이름은
+    화면 Signature 칸에 이미 있고 읽는 사람에게는 암호로 보인다. "- OUTLIER : 재현성
+    확인" 이 아니라 "- 낙도성 Defective 불량으로 판단된 이력이 있음, retest 재현성 확인"
+    처럼 사람이 그대로 읽을 수 있는 자연스러운 문장으로 써라.'
 - id: terse_lines
   enabled: true
   text: 한 줄은 핵심 단어만 남겨 짧게 써라 - 인사말 같은 말 반복 "~로 판단됩니다" 류의
