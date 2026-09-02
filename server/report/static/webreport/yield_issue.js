@@ -886,13 +886,13 @@ function applyColFold(panel) {
 }
 // 모든 Issue 패널에 한 번에 — 열 접기는 패널마다 따로 기억하지 않는다(같은 열이 세 표에
 // 다 있고, 한쪽만 접히면 오히려 혼란스럽다).
-function applyColFoldAll() { issuePanels().forEach(applyColFold); }
+function applyColFoldAll() { issuePanelEls().forEach(applyColFold); }
 function toggleColFold(id) {
   if (COL_FOLD_IDS.indexOf(id) < 0) return;
   colFoldSet(id, !colFoldGet(id));
   applyColFoldAll();
   // 열이 사라지면 좌측 고정열 오프셋·가로 스크롤 폭이 달라진다(통계 접기와 같은 재실측).
-  issuePanels().forEach(afterIssueRowsToggled);
+  issuePanelEls().forEach(afterIssueRowsToggled);
 }
 
 // 체크 상태를 행 강조(tr.issue-row-sel)에 반영 — 체크박스가 작아 행 전체로 선택을 보인다.

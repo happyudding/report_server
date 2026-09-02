@@ -297,11 +297,20 @@ def save_map(upload_root: Path, cache_key: tuple, blob: bytes) -> None:
     _write(_path_for(upload_root, "map", cache_key, ".gz"), blob)
 
 
-def load_ai_comment(upload_root: Path, cache_key: tuple) -> dict | None:
+def load_ai_comment(upload_root: Path, cache_key: tuple,
+                    require_keys: tuple = ()) -> dict | None:
     """AI Comment 평가 결과(build_ai_comments 반환 dict) 디스크 캐시 조회.
 
     cache_key 는 cache_policy.ai_comment_key — report payload 와 분리 캐시라
     edits_rev·session_id 무관하게 같은 데이터(chash+prep)·메타·룰이면 재사용된다.
+
+    require_keys 를 주면 그 키가 다 있어야 히트로 인정하고, **모자라면 손상 파일과
+    똑같이 지우고 미스로 돌린다**(2026-09-02). 지우는 것이 핵심이다 — 값싼 짝
+    `ai_comment_exists` 는 파일 **존재만** 보므로, 파일을 남긴 채 미스만 돌려주면
+    두 판정이 영영 갈린다(CLAUDE.md 규칙 17 ②: "두 판정이 같은 답을 내야 한다").
+    실제 회귀: `_AI_RESULT_KEYS` 에 키가 추가되자 옛 파일을 가진 세션이 무한 202 에
+    빠졌다 — 콜드 빌드는 pending 을 내는데 `_pending_kinds` 는 파일이 있으니 빈 튜플,
+    백그라운드 잡도 "이미 캐시됨"으로 즉시 종료해 **스스로 낫지 않았다**.
     """
     if not _enabled():
         return None
@@ -310,14 +319,26 @@ def load_ai_comment(upload_root: Path, cache_key: tuple) -> dict | None:
     if blob is None:
         return None
     try:
-        return json.loads(gzip.decompress(blob).decode("utf-8"))
+        result = json.loads(gzip.decompress(blob).decode("utf-8"))
     except Exception:
         _log.warning("disk cache decode failed: %s", path, exc_info=True)
-        try:
-            path.unlink(missing_ok=True)  # 손상 파일은 재평가로 대체
-        except OSError:
-            pass
+        _unlink_quiet(path)               # 손상 파일은 재평가로 대체
         return None
+    if require_keys and not (isinstance(result, dict)
+                             and all(k in result for k in require_keys)):
+        # 구버전 스키마로 쓰인 파일 — 손상과 같은 취급(위 docstring).
+        _log.info("aicmt cache missing required keys — dropping: %s", path)
+        _unlink_quiet(path)
+        return None
+    return result
+
+
+def _unlink_quiet(path: Path) -> None:
+    """캐시 파일 삭제 — 실패는 무시한다(다음 조회가 다시 시도한다)."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def ai_comment_exists(upload_root: Path, cache_key: tuple) -> bool:

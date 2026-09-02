@@ -918,6 +918,23 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, _RETRY_EXC)
 
 
+def _touch_pending(session_id: str, kind: str) -> None:
+    """진행 중임을 알려 TTL 유령 판정 시계를 되감는다 (2026-09-02).
+
+    소비자 루프는 **실행 시작 때 한 번** 갱신한다. 그 전제는 "정상 실행은 워커 타임아웃
+    + 큐 대기 상한 안에 끝난다" 였는데, 'ai'/'compare' 가 2단계가 되면서 워커 `run()` 을
+    **2회** 타 예산이 최대 2배가 됐다(_ONDEMAND_PENDING_TTL_SEC 은 1회분 기준).
+    그러면 아직 정상 실행 중인 잡을 `_expire_ghost_pending` 이 유령으로 오판해 등록을
+    풀고, 다음 폴링의 request_build 가 **같은 잡을 중복 등록**한다(실행 중인 잡은 큐에
+    없어 중복 면제도 못 받는다) → _AI_JOB_LIMIT 슬롯을 잠식해 다른 세션까지 밀린다.
+    단계 사이에서 이걸 불러 TTL 의 의미("이 단계 시작 후 경과")를 유지한다 — 상수를
+    단계 수에 결합시키지 않으므로 나중에 단계가 늘어도 안전하다.
+    """
+    with _ondemand_lock:
+        if (session_id, kind) in _ondemand_pending:
+            _ondemand_pending[(session_id, kind)] = time.time()
+
+
 _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
     "map": lambda sid, root: map_job(sid, root),
@@ -931,8 +948,10 @@ _ONDEMAND_JOBS = {
     # 줄을 섰다**(= "AI Comment 켜면 첫 조회 100초"). ①을 마친 뒤의 ②는 분리 캐시
     # 디스크 히트라 1초 안팎이다. ①이 "할 일 없음"(이미 캐시됨)이면 그냥 ②로 간다.
     # 순서를 되돌리지 말 것 — perf_guard S15 (CLAUDE.md 규칙 17).
+    # 단계 사이의 _touch_pending 은 TTL 유령 오판 방지 — 그 docstring 참조.
     "ai": lambda sid, root: (run(ai_comment_cache_job, sid, root),
-                             report_job(sid, root, True))[1],
+                             _touch_pending(sid, "ai"),
+                             report_job(sid, root, True))[2],
     # Signature 1단계 (2026-08-28) — 'ai' 와 **다른 잡**이다. payload 를 만들지 않고 분리
     # 캐시만 채우므로 'ai' 와 동시에 돌아도 콜드 빌드가 중복되지 않는다. LLM 이 켜진
     # 세션에서 'ai' 보다 훨씬 먼저 끝나 Signature 컬럼을 앞당겨 채우는 것이 목적.
@@ -943,7 +962,8 @@ _ONDEMAND_JOBS = {
     # 기다리는 잡인지 구분되기 때문. Compare 전용 세션(AI 옵션 없음)에서 'ai' 라는
     # 이름의 잡이 도는 것도 진단을 헷갈리게 한다.
     "compare": lambda sid, root: (run(compare_cache_job, sid, root),
-                                  report_job(sid, root, True))[1],
+                                  _touch_pending(sid, "compare"),
+                                  report_job(sid, root, True))[2],
 }
 
 

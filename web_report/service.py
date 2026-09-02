@@ -146,8 +146,10 @@ def _ai_comment_cached(session, session_id: str, tables, manifest, *,
     if result is not None:
         return result, "ram"
     # 본문 짝 — 호출자가 comments 를 실제로 쓴다(폴링 판정은 _ai_cache_ready 를 부른다).
-    result = disk_cache.load_ai_comment(upload_root, key)  # perf-guard: allow S13-cold-poll-cheap
-    if result is not None and all(k in result for k in _AI_RESULT_KEYS):
+    # 키 검증은 disk_cache 가 한다 — 모자라면 **파일까지 지워** 값싼 짝
+    # (_ai_cache_ready = 존재만 확인)과 답이 갈리지 않게 한다(규칙 17 ②).
+    result = disk_cache.load_ai_comment(upload_root, key, _AI_RESULT_KEYS)  # perf-guard: allow S13-cold-poll-cheap
+    if result is not None:
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
         return result, "disk"
@@ -217,8 +219,10 @@ def _ai_signature_cached(session, session_id: str, *, report_db,
     if result is not None:
         return result
     # 본문 짝 — 콜드 빌드가 row_signatures 를 payload 에 싣는다(판정은 _ai_signature_ready).
-    result = disk_cache.load_ai_comment(upload_root, key)  # perf-guard: allow S13-cold-poll-cheap
-    if result is not None and all(k in result for k in _AI_RESULT_KEYS):
+    # 키 부족 파일 삭제도 위 _ai_comment_cached 와 같은 이유다(값싼 짝
+    # _ai_signature_ready 가 존재만 보므로, 남겨 두면 두 판정이 갈린다).
+    result = disk_cache.load_ai_comment(upload_root, key, _AI_RESULT_KEYS)  # perf-guard: allow S13-cold-poll-cheap
+    if result is not None:
         cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
                         cache.AI_COMMENT_CACHE_MAX)
         return result

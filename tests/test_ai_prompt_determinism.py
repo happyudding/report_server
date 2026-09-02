@@ -511,7 +511,13 @@ def test_shipped_deny_patterns_no_info_and_meta():
                "- 사례와 달리 이번은 edge 편중",
                "- 사례에서 확인되지 않은 항목은 별도 확인",
                "- 유사 사례 2건 있었음",
-               "- 진성 여부 판단을 위해 bin map 확인"):
+               "- 진성 여부 판단을 위해 bin map 확인",
+               # 사례 결론이 한마디뿐이어도 이력으로 남긴다 (cite_verdict_history 목표 출력)
+               "- 가성으로 판단된 이력이 있음",
+               "- 유의차 없음으로 판단된 이력이 있음",
+               "- Defective Fail 로 판단된 이력이 있음",
+               "- 기존 Bin5 에서 Bin15 로 전이된 이력이 있어 PGM 확인 및 time 최적화 검토 필요",
+               "- 강제 0xFF 써져서 Fail 된 이력이 있음, 해당 방향 검토 고려"):
         assert P.strip_denied_lines(ok, pat, True) == ok, ok
     # 선례 게이트를 걸지 않는다 — 선례가 실렸는데 내용이 부실한 경우가 바로 이 문장이
     # 나오는 상황이라, 선례 유무로 게이트하면 정작 잡아야 할 때 안 걸린다.
@@ -644,14 +650,29 @@ def test_output_style_rules():
         "예산 부족 시 줄이는 순서가 프롬프트에 없다"
     assert "전체 12줄" in flat, "yaml 예산이 코드(_INSTRUCTION)와 갈렸다"
 
-    # ⑥ 지시문 3건(2026-09-02 사용자 요청) — 현장 영어 보존 / 메타 판단 금지 / 정보 없으면
-    #   생략. 셋 다 "무엇을 쓰지 마라" 라 문장이 빠지면 조용히 옛 문체로 돌아간다.
+    # ⑥ 지시문 3건(2026-09-02 사용자 요청) — 현장 영어 보존 / 메타 판단 금지 / 변명 금지.
+    #   셋 다 "무엇을 쓰지 마라" 라 문장이 빠지면 조용히 옛 문체로 돌아간다.
     assert "retest" in flat and "contact" in flat, \
         "keep_english_terms 의 예시 용어가 빠졌다 — 모델이 무엇을 영어로 둘지 모른다"
     assert "한글로 옮기지" in flat, "현장 영어 보존 지시가 프롬프트에 없다"
-    assert "대표 사례로 선정하기 어렵다" in flat and "그런 사례가 있었다" in flat, \
+    assert "대표 사례로 선정하기 어렵다" in flat, \
         "no_meta_judgment(메타 판단 금지)가 프롬프트에 없다"
-    assert "생략하거나 크게" in flat, "omit_when_no_info(정보 없으면 생략)가 프롬프트에 없다"
+    assert "변명 문장은 절대 쓰지 마라" in flat, \
+        "omit_when_no_info(변명 금지)가 프롬프트에 없다"
+
+    # ⑦ 금지는 **문장의 모양**에만 걸리고 사례 자체는 반드시 인용한다 (2026-09-02 개정).
+    #   금지를 넓게 쓴 첫 판(⑥의 옛 문구 "그런 사례가 있었다는 사실만" · "생략하거나 크게
+    #   줄여라 … 아예 비워 두는 편이 낫다")은 모델이 **사례 인용 자체를 포기**하게 만들어,
+    #   화면에 action_ko 요약만 남는 회귀가 났다. 금지 범위 한정과 인용 의무를 고정한다.
+    assert "사례를 빼라는 뜻이 아니다" in flat, \
+        "no_meta_judgment 가 다시 사례 자체를 막는 문장으로 돌아갔다"
+    assert "반드시 문장에 녹여 써라" in flat, "사례 인용 의무가 프롬프트에서 사라졌다"
+    assert "비워 두는 편이 낫다" not in flat, \
+        "omit_when_no_info 에 '빈칸이 낫다'(사례 포기 유도)가 되살아났다"
+    assert "가성으로 판단된 이력이 있음" in flat, \
+        "cite_verdict_history 의 한마디 사례 예시가 빠졌다 — 모델이 형태를 모른다"
+    assert "PGM 확인 및 time 최적화 검토 필요" in flat, \
+        "cite_verdict_history 의 구체 조치 사례 예시가 빠졌다"
     print("  (t) 출력 문체(12줄·지표명 금지·사례 위주) + 재료 비대칭 OK")
 
 
