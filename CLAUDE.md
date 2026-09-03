@@ -656,6 +656,21 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     동안 사용자 조회가 즉시 열리는가" 를 직접 잰다.
     → [docs/12](docs/12_web_report_cache.md) · [docs/23](docs/23_ai_comment_client_llm.md)
 
+18. **DB 컬럼·payload 키 이름은 추측하지 말고 정본에서 확인한다.**
+    `dict.get("없는키")` 는 **예외 없이 None** 이라, 이름을 틀리면 에러가 아니라 **기능이
+    조용히 사라진다** — 화면에는 "원래 그런 기능이 없는 것"처럼 보여 발견이 가장 늦다.
+    2026-09-02 실사례: `session.get("uploaded_at")`(실제 컬럼은 `created_at`, 정수 epoch)
+    때문에 TTL 이 항상 만료로 떨어져 AI Comment 대기 표시가 **한 건도 안 생겼다**. 테스트도
+    전부 통과했다 — 그 맵의 생성 자체를 아무도 검증하지 않았기 때문이다.
+    - 컬럼명은 [server/database/core.py](server/database/core.py) `SCHEMA` 가 정본이다.
+      기억이나 이름의 자연스러움(`uploaded_at` 이 더 그럴듯하다)에 기대지 말 것.
+    - 기계 검사 [tools/schema_guard.py](tools/schema_guard.py) 가 `session.get(...)` 을
+      스키마와 대조해 Stop 훅에서 막는다. 의도한 키(조회 시점에 얹는 파생 필드)면
+      `# schema-guard: allow (사유)` 를 달거나 `_EXTRA_OK` 에 등재한다.
+    - **새 기능이 "표시"라면 그 표시를 만드는 값의 생성 자체를 테스트한다.** 값을 소비하는
+      쪽만 검사하면(스텁으로 값을 넣어 주면) 생성이 0건이어도 통과한다 — 이번 버그가
+      정확히 그 모양이었다(가드: `tests/test_ai_suggest.py` (r)(r2)).
+
 ---
 
 ## 6. 코드 포인터
@@ -712,6 +727,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 | web_report 성능 벤치 (이전 실행 대비 회귀 리포트) | [tests/bench_webreport.py](tests/bench_webreport.py) — 결과 `tests/bench_results/`(gitignore), 실행 절차 스킬 `.claude/skills/webreport-bench` |
 | web_report 성능 회귀 가드 (지뢰 재밟기 차단 — 훅 자동) | [tools/perf_guard.py](tools/perf_guard.py) (`--list` 가 규칙 정본) + [.claude/settings.json](.claude/settings.json) → [docs/18](docs/18_perf_guard.md) |
+| **DB 컬럼명 오타 가드** (`.get()` 은 None 이라 조용히 죽는다 — 훅 자동) | [tools/schema_guard.py](tools/schema_guard.py) — `SCHEMA` 정본과 대조, 면제는 `# schema-guard: allow` → CLAUDE.md §5 규칙 18 |
 
 ---
 

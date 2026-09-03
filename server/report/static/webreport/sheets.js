@@ -419,9 +419,12 @@ function renderAiComment(txt, precCount, rowKey) {
   // 당장 있는 편이 낫고, 곧 더 나은 문장으로 바뀐다는 것도 함께 알린다.
   // (기다리는 동안 빈 자리를 두면 정보가 0 인 칸을 보게 된다.)
   const llmWait = aiLlmPendingRow(rowKey);
-  // 대기 중에는 [사례]를 숨기지 않는다 — 아직 Claude 가 사례를 요약하기 전이라
-  // "제안에 녹아 있으니 중복"(hideCase 의 원래 취지)이 아직 성립하지 않는다.
-  const hideCase = !!precLink && hasSugg && !llmWait;
+  // [사례] 숨김 조건은 **대기 여부와 무관하다** — 제안이 있으면 숨긴다(원문은 아래
+  // 「📋 사례 N건 상세」에서 본다). 서버 LLM 이 먼저 뱉은 문장이든 Claude 문장이든
+  // 화면 규칙은 같아야 한다.
+  // ⚠ 2026-09-02 회귀: 여기에 `&& !llmWait` 를 달았더니 Claude 대행 세션에서 서버 LLM
+  // 문장이 나오는 동안 [사례]가 통째로 노출됐다(사용자 신고). 다시 달지 말 것.
+  const hideCase = !!precLink && hasSugg;
   let out = "";
   parts.forEach(p => {
     const t = String(p.body || "").trim();

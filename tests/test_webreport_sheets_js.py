@@ -542,7 +542,8 @@ def test_llm_pending_row_and_source_icon():
         # 세션 시각은 **created_at(초 단위 epoch)** 다 — payload 규약(fmtDate 와 동일).
         "DATA.session={created_at:Math.floor(Date.now()/1000)};"
         "function box(h){var d=document.createElement('div');d.innerHTML=h;return d;}"
-        # ① 대기 행 — 엔진 [제안]은 그대로 읽히고, 대기 줄이 그 **아래**에 붙는다
+        # ① 대기 행 — 엔진 [제안]은 그대로 읽히고, 대기 줄이 그 **아래**에 붙는다.
+        #    [사례]는 대기 여부와 무관하게 숨긴다(제안이 있으면 숨김 = 기본 규칙).
         "var a=box(renderAiComment(C,1,'CPK|Waiting'));"
         "out.waitText=a.textContent; out.waitSpin=!!a.querySelector('.ai-wait');"
         "out.waitIcon=!!a.querySelector('.aic-src');"
@@ -614,8 +615,13 @@ def test_llm_pending_row_and_source_icon():
         f"서버 LLM 문장을 가렸습니다 — 그대로 보여 주고 아래에 대기 줄을 답니다: {r['srvText']!r}"
     assert r["noSecSpin"], "[제안] 토큰이 없는 셀에 대기 줄이 안 보입니다"
     assert r["plainSpin"], "섹션 토큰이 없는 옛 평문 셀에 대기 줄이 안 보입니다"
-    assert "사례 원문" in r["waitText"], \
-        f"대기 중 [사례]까지 숨겨 셀이 비었습니다: {r['waitText']!r}"
+    # [사례] 숨김은 **대기 여부와 무관**하다 — 제안이 있으면 숨기고 원문은 상세 링크로
+    # 본다(2026-09-02 사용자: "서버 LLM 도 [사례] 숨김이 default"). 대기 중이라고
+    # 노출하면 서버 LLM 문장이 나오는 동안 사례가 통째로 보인다(실제 회귀).
+    assert "사례 원문" not in r["waitText"], \
+        f"대기 중이라고 [사례]를 노출했습니다(숨김이 기본): {r['waitText']!r}"
+    assert "사례 1건 상세" in r["waitText"], \
+        f"사례를 숨겼으면 상세 링크는 있어야 합니다: {r['waitText']!r}"
     assert not r["waitIcon"], "확정 전인데 처리 주체 배지가 붙었습니다"
     assert not r["ruleSpin"] and "룰 기본 조치" in r["ruleText"], \
         f"대기 대상이 아닌 행이 Loading 입니다: {r}"

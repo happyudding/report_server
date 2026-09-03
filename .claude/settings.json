@@ -26,6 +26,13 @@
           {
             "type": "command",
             "shell": "bash",
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-/f/COINAPI/report_server}\"; PYTHONIOENCODING=utf-8 \"$D/server/.venv/Scripts/python.exe\" \"$D/tools/schema_guard.py\" --stop",
+            "timeout": 30,
+            "statusMessage": "DB 컬럼명 검사"
+          },
+          {
+            "type": "command",
+            "shell": "bash",
             "command": "D=\"${CLAUDE_PROJECT_DIR:-/f/COINAPI/report_server}\"; PYTHONIOENCODING=utf-8 \"$D/server/.venv/Scripts/python.exe\" \"$D/tools/upload_smoke_gate.py\"",
             "timeout": 200,
             "statusMessage": "업로드 스모크"

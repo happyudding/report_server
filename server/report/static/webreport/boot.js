@@ -230,11 +230,24 @@ function maybeStartAiPendingPoll() {
             _aiPoll = setTimeout(tick, 3000);
             return;
           }
+          // 스크롤 위치를 보존한다 (2026-09-02 사용자 요청). Claude 문장이 배치로
+          // 도착할 때마다 여기서 다시 그리는데, 그때 페이지가 맨 위로 튀면 아래쪽
+          // 데이터를 보던 사용자가 매번 자리를 잃는다 — 배치가 여러 번이라 반복된다.
+          // 표 안쪽 가로/세로 스크롤은 renderActive 가 자체 규약으로 복원한다
+          // (yield_issue 의 페이지↔표 동기화) — 여기서는 **페이지 스크롤**만 되돌린다.
+          const _sx = window.scrollX || 0;
+          const _sy = window.scrollY || document.documentElement.scrollTop || 0;
           DATA = data;
           _globalBinColors = null;
           seedEmptyFrames();
           buildDistColorMap(web.sources || []);
           renderActive();
+          // 렌더 직후 되돌린다. rAF 로 한 번 더 미루는 이유: 표를 다시 그리면 높이가
+          // 나중에 확정돼(청크 삽입·이미지) 즉시 복원한 값이 밀릴 수 있다.
+          try {
+            window.scrollTo(_sx, _sy);
+            requestAnimationFrame(() => window.scrollTo(_sx, _sy));
+          } catch (e) { /* 스크롤 복원 실패는 표시 문제일 뿐 */ }
         }
         // 재렌더 여부와 **무관하게** 기준선을 갱신한다 — 안 그러면 서버가 pending 을
         // 새로 만든 경우(예: 재빌드로 맵이 다시 채워짐) 다음 tick 이 계속 "줄었다"로

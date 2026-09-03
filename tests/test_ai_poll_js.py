@@ -132,6 +132,48 @@ def test_poll_updates_without_reentering():
           f"(렌더 {r['renders']}회)")
 
 
+def test_poll_preserves_scroll():
+    """(e) 재렌더해도 **페이지 스크롤이 유지된다** (2026-09-02 사용자 요청).
+
+    Claude 문장은 배치로 도착하므로 이 재렌더가 세션당 여러 번 일어난다. 그때마다
+    페이지가 맨 위로 튀면, 아래쪽 데이터를 보던 사용자가 반복해서 자리를 잃는다.
+    """
+    harness = (
+        "<script>(function(){var out={};"
+        # 스크롤이 가능하도록 페이지를 길게 만든다.
+        "var filler=document.createElement('div');"
+        "filler.style.height='4000px';document.body.appendChild(filler);"
+        # 실제 renderActive 는 표를 통째로 다시 만들어 스크롤을 잃는다 — 그 상황을
+        # 스텁으로 재현한다(안 그러면 이 테스트가 아무것도 검사하지 않는다).
+        "renderActive=function(){RENDERS++; filler.style.height='100px';"
+        "  window.scrollTo(0,0); filler.style.height='4000px';};"
+        "var seq=[{web_report:{ai_llm_pending:{'CPK|A':1}}},{web_report:{}}];"
+        "var i=0;"
+        "window.fetch=function(){"
+        "  var body=seq[Math.min(i++, seq.length-1)];"
+        "  return Promise.resolve({status:200, json:function(){return Promise.resolve(body);}});"
+        "};"
+        "AI_POLL.INTERVAL_MS=30;"
+        "DATA={web_report:{ai_llm_pending:{'CPK|A':1}}};"
+        "window.scrollTo(0, 1500);"
+        "out.before=Math.round(window.scrollY);"
+        "maybeStartAiPendingPoll();"
+        "setTimeout(function(){"
+        "  out.after=Math.round(window.scrollY);"
+        "  out.renders=RENDERS;"
+        "  var pre=document.createElement('pre');pre.id='res';"
+        "  pre.textContent=JSON.stringify(out);document.body.appendChild(pre);"
+        "}, 700);"
+        "})();</script>")
+    r = json.loads(run_probe(harness, "poll_scroll"))
+    assert r["before"] > 1000, f"하네스 오류 — 스크롤이 안 됐습니다: {r}"
+    assert r["renders"] >= 1, f"재렌더가 일어나지 않아 검사 의미가 없습니다: {r}"
+    assert abs(r["after"] - r["before"]) <= 5, \
+        f"재렌더 후 스크롤이 튀었습니다({r['before']} → {r['after']}) — " \
+        "보던 자리를 잃습니다"
+    print(f"  (e) 재렌더 후 스크롤 유지 OK ({r['before']}px 유지, 렌더 {r['renders']}회)")
+
+
 def test_poll_defers_while_editing():
     """(d) 입력 중에는 다시 그리지 않는다 — 규칙 #12(사용자 입력 불소실)."""
     harness = (
@@ -166,6 +208,7 @@ def main():
         print(f"SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
         return
     test_poll_updates_without_reentering()
+    test_poll_preserves_scroll()
     test_poll_defers_while_editing()
     print("\ntest_ai_poll_js: 전부 통과")
     shutil.rmtree(_TMP, ignore_errors=True)
