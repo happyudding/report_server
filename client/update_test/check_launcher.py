@@ -166,6 +166,7 @@ def main():
 
         check_running_process_detection(work)
         check_apply_update(work)
+        check_update_gate(work)
 
         print("\nALL OK")
     finally:
@@ -393,6 +394,126 @@ def check_apply_update(work):
         au.download = real_download
     check("완성된 폴더는 adopt", mode == "adopt")
     check("adopt 는 다운로드 0", not downloads)
+
+
+def check_update_gate(work):
+    """try_update 의 판정 관문 — current.txt 가 아니라 '실제로 뜰 버전' 으로 비교한다.
+
+    이 관문이 무너지면 그 PC 는 영영 업데이트되지 않는데, 에러가 아니라 "조용히
+    최신이라고 판정" 이라 로그도 안 남았다(2026-09-03). 그래서 판정 결과가 어느
+    갈래로 가든 로그 한 줄이 남는지도 함께 검사한다.
+    """
+    sys.path.insert(0, str(CLIENT_DIR))
+    import importlib
+
+    launcher = importlib.import_module("launcher")
+
+    def run_gate(root, server_version, argv=()):
+        """try_update 를 창 없이 돌리고 (반환값, 설치 호출 인자, 로그) 를 준다."""
+        calls = []
+        real_fetch = launcher.app_update.fetch_manifest
+        real_update = launcher._update_with_ui
+        real_wait = launcher.wait_for_other_launcher
+        launcher.app_update.fetch_manifest = lambda _url: (
+            {"version": server_version} if server_version is not None else {})
+        launcher._update_with_ui = lambda _root, _url, remote, _man, current, _logf: (
+            calls.append({"remote": remote, "current": current})
+            or {"ok": True, "error": "", "cancelled": False, "local_error": None})
+        # 진짜 프로세스 스캔은 이 검사와 무관하고 느리다 - 아무도 안 떠 있는 상태로 둔다.
+        launcher.wait_for_other_launcher = lambda *_a, **_k: ([], False)
+        try:
+            result = launcher.try_update(root, list(argv), show_ui=True)
+        finally:
+            launcher.app_update.fetch_manifest = real_fetch
+            launcher._update_with_ui = real_update
+            launcher.wait_for_other_launcher = real_wait
+        return result, calls, launcher_log(root).splitlines()
+
+    def has(logs, needle):
+        return any(needle in line for line in logs)
+
+    print("[7] current.txt 없음 → 실행 후보 기준으로 비교한다")
+    root = work / "gate-nocurrent"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    _result, calls, logs = run_gate(root, "9.0.1")
+    check("업데이트로 진입", len(calls) == 1 and calls[0]["remote"] == "9.0.1")
+    check("델타 원본은 실재하는 9.0.0", calls[0]["current"] == "9.0.0")
+    check("current.txt 가 새 버전으로", read_current(root) == "9.0.1\n9.0.0")
+    check("판정 근거 로그", has(logs, "실행 불가 — 실행 후보 9.0.0"))
+    check("서버 응답 로그", has(logs, "version check: server=9.0.1 current=없음"))
+
+    print("[7-1] current.txt 가 깨진 폴더를 가리키면 그 버전으로 다시 받는다")
+    root = work / "gate-broken"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    make_version(root, "9.0.1", STUB_OK, internal=False)   # 설치 잔재 = 실행 불가
+    write_current(root, "9.0.1\n9.0.0\n")
+    _result, calls, logs = run_gate(root, "9.0.1")
+    check("같은 버전이어도 업데이트 진입", len(calls) == 1 and calls[0]["remote"] == "9.0.1")
+    check("비교 기준은 실행 가능한 9.0.0", calls[0]["current"] == "9.0.0")
+    check("서버/포인터 값을 모두 남긴다",
+          has(logs, "version check: server=9.0.1 current=9.0.1"))
+
+    print("[7-2] 정상 최신 - 업데이트하지 않고 사유를 남긴다")
+    root = work / "gate-latest"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    write_current(root, "9.0.0\n")
+    _result, calls, logs = run_gate(root, "9.0.0")
+    check("업데이트 안 함", not calls)
+    check("무로그 아님", has(logs, "update 없음 (server=9.0.0 <= local=9.0.0)"))
+
+    print("[7-3] 서버 응답에 version 이 없으면 '최신' 으로 위장하지 않는다")
+    root = work / "gate-noversion"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    write_current(root, "9.0.0\n")
+    _result, calls, logs = run_gate(root, None)
+    check("업데이트 안 함", not calls)
+    check("서버 이상을 로그로 구분", has(logs, "서버 응답에 version 없음"))
+
+    # --force-update 는 main 의 인자 분기라 실제 프로세스로 돌린다. 업데이트 시도
+    # 여부만 보면 되므로 서버는 없는 주소를 준다 - 시도했으면 version check skipped,
+    # 안 했으면 그 줄 자체가 없다.
+    def run_main(root, *args):
+        env = dict(os.environ)
+        env["HONEY_SERVER_URL"] = "http://127.0.0.1:1"   # 즉시 연결 거부
+        # 복사본 launcher.py 옆에는 transport/ 가 없다 - 없으면 app_update 가 None 이
+        # 되어 업데이트 코드가 통째로 비활성화되므로(검사할 것이 사라진다) 경로를 준다.
+        env["PYTHONPATH"] = str(CLIENT_DIR)
+        subprocess.run([sys.executable, str(root / "launcher.py"), *args],
+                       capture_output=True, text=True, timeout=120, env=env)
+        return launcher_log(root).splitlines()
+
+    print("[8] --force-update - 앱의 [지금 업데이트] 가 런처를 부른 경우")
+    root = work / "gate-force"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    write_current(root, "9.0.0\n")
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    logs = run_main(root, "--wait-pid", str(dead.pid), "--force-update")
+    check("사유 로그", has(logs, "forced update check (from app)"))
+    check("업데이트를 실제로 확인했다", has(logs, "version check"))
+    check("확인 뒤 앱은 그대로 실행", has(logs, "launch 9.0.0"))
+
+    print("[8-1] --wait-pid 만이면 종전대로 확인하지 않는다")
+    root = work / "gate-waitpid"
+    root.mkdir()
+    shutil.copy2(CLIENT_DIR / "launcher.py", root / "launcher.py")
+    make_version(root, "9.0.0", STUB_OK)
+    write_current(root, "9.0.0\n")
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    logs = run_main(root, "--wait-pid", str(dead.pid))
+    check("업데이트 확인 없음 (방금 업데이트를 마친 재실행)", not has(logs, "version check"))
+    check("앱은 실행", has(logs, "launch 9.0.0"))
 
 
 if __name__ == "__main__":

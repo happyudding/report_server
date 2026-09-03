@@ -352,10 +352,12 @@ FEATURES = (
     _feature(
         "distribution", "report_tabs", "Distribution",
         ("Distribution", "산포도 갤러리"),
-        ("CPK 필터", "Fail Only", "Limit 없는 Data", "Bin1", "P/F 제거", "source 강조", "온도 그룹"),
+        ("Item Filter", "Chart Option", "CPK 필터", "Fail Only", "Limit 안 Data만", "Bin1",
+         "P/F 없애기", "Serial 순", "source 강조", "온도 그룹"),
         "available", ("web_report",), ("all",), "모든 Web Report",
         "항목별 ECDF 카드를 필터링하고 source나 Temperature 그룹을 강조합니다.",
-        ("전체·CPK·Fail·Limit·Bin1·P/F 필터를 조합합니다.",
+        ("Item Filter 로 볼 항목을 고르고(CPK·Fail·P/F·신규항목), Chart Option 으로 그리는 방식을 정합니다"
+         "(Serial 순·Limit 안 Data만·Bin1).",
          "source 범례나 Temperature RT·CT·HT·그룹을 선택해 비교합니다.", "카드를 눌러 Item Detail을 엽니다."),
         ("Temperature의 Bin1 필터는 RT 기준입니다.",),
         "distribution", ("item-detail", "note")),

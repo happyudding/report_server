@@ -117,6 +117,10 @@ function gcValidate(tokens) {
 // `/gap_chart/<id>` 응답은 두 모드가 **같다**(서버는 order 를 모르고, 값은 이미 rawdata 행
 // 순서다). 프런트가 같은 응답에서 ECDF(entry)와 Serial 순(seqEntry) 두 그림을 만든다.
 // seq 키를 여기 넣지 말 것 — 아래 gcDropCache 의 키 목록과 어긋나면 수식을 고쳐도 옛 값이 남는다.
+// ⚠️ **"DUT 별 분리" 축도 여기 넣지 말 것** — Gap Chart 는 여러 항목을 수식으로 합성한
+// 파생 분포라 DUT 축 자체가 없다(어느 DUT 의 값인지가 수식 결과에 남지 않는다). 렌더가
+// distGalleryVariant()(bin1 축만)를 쓰므로 분리를 켜도 이 카드는 자동으로 제외된다 —
+// 그게 의도된 동작이고, 이 리터럴 3종이 그 계약을 고정한다(테스트가 검사).
 const _gcCache = { all: {}, bin1: {}, rtbin1: {} };
 const _gcInflight = { all: new Set(), bin1: new Set(), rtbin1: new Set() };
 
@@ -159,14 +163,15 @@ function gcChipHits(seriesName, cdf, xpos, ypos, perSource) {
   return hits;
 }
 // 시리즈 전체분을 한 번에 모은다(크로스헤어 판정이 차트 단위여야 하므로 — mapSelMarkerTraces).
-function gcChipMarkers(hit, chart) {
+// opts 는 마커 크기 등(호출부가 갤러리 카드라 카드 크기를 넘긴다).
+function gcChipMarkers(hit, chart, opts) {
   if (!hit || !mapSelChips.length) return null;
   const perSource = gcModeOf(chart && chart.tokens) !== "explicit";
   let hits = [];
   (hit.series || []).forEach(s => {
     hits = hits.concat(gcChipHits(s.name, s.cdf, s.src.xpos, s.src.ypos, perSource));
   });
-  return mapSelMarkerTraces(hits);
+  return mapSelMarkerTraces(hits, false, opts);
 }
 
 // 실패한 차트 — `${variantKey}\x1f${id}` → 사유. 이 기록이 없으면 IntersectionObserver
@@ -315,7 +320,7 @@ function gcRenderGapCell(cell) {
   series.forEach(s => { pts[s.name] = distDisplayPoints(s.entry, cap); });
   const sentinel = distSentinelTrace(pts);
   // Map Analysis 선택 좌표 — 일반 카드와 같은 마커(값·누적%는 이 차트 곡선에서 읽는다).
-  const cm = gcChipMarkers(hit, chart);
+  const cm = gcChipMarkers(hit, chart, { size: MAPSEL_CARD_MARKER_SIZE });
   const traces = sentinel ? [sentinel] : [];
   if (cm) traces.push(...cm.traces);
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",

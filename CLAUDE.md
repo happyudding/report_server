@@ -347,6 +347,14 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    - 런처(`Honey.exe`)를 고쳤으면 `launcher.LAUNCHER_BUILD` 를 올린다(실패 카운터 리셋).
      각 PC 반영은 payload 동봉 사본을 앱이 교체한다
      ([launcher_selfupdate.py](client/transport/launcher_selfupdate.py)).
+   - **`current.txt` 는 포인터일 뿐이다 — 업데이트 판정·로그는 `runnable` 한 실행 후보
+     기준으로 한다**(`launcher.update_base_version`, 2026-09-03). 글자로 비교하면 포인터와
+     실제 설치본이 어긋난 PC 가 "이미 최신"으로 조용히 빠져 회복 경로가 없어진다.
+     **무로그 분기를 만들지 말 것** — 판정이 어느 갈래로 가든 `launcher.log` 에 한 줄 남긴다.
+   - **런처를 거치지 않고 앱만 뜨는 PC 가 있다**(작업표시줄에 `HoneyApp.exe` 고정 등).
+     앱은 설치하지 않으므로 그런 PC 는 영영 업데이트가 안 된다 — 복귀 경로는 앱의
+     `🔄 지금 업데이트` 버튼/도움말 메뉴 → `app_update.relaunch_via_launcher()`(런처를
+     `--force-update` 로 띄우고 앱 종료). 이 경로를 없애지 말 것.
 5. **Distribution 차트 데이터 다운샘플링 절대 금지.**
    모든 데이터 포인트를 빠짐없이 차트에 표현해야 한다.
    `_MAX_CDF_POINTS`, `_downsample`, `max_points` 같은 포인트 상한 로직을 절대 추가하지 말 것.
@@ -585,9 +593,13 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     | [gap_chart.py](web_report/gap_chart.py) `MAX_TOKENS`/`MAX_DEPTH`/`MAX_REFS` | `gap_chart.js` `GC_MAX_TOKENS`/`GC_MAX_DEPTH`/`GC_MAX_REFS` |
     | [service.py](web_report/service.py) `_DC_MAX_PAIRS` / `_DC_PAIR_SEP`(U+001F) | `dist_composite.js` `DC_MAX_PAIRS` / `DC_SEP` |
     | [routes_webreport.py](server/report/routes_webreport.py) `_DIST_SEQ_BATCH_MAX` | `distribution.js` `DIST.SEQ_SIZE` (서버 상한 이하) |
+    | [routes_webreport.py](server/report/routes_webreport.py) `_DIST_DUT_BATCH_MAX` | `distribution.js` `DIST_BATCH.DUT_SIZE` (서버 상한 이하) |
+    | [dist_dut.py](web_report/dist_dut.py) `DUT_SOURCE_SEP`(`" · DUT "`) | `distribution.js` `DIST_DUT_SEP` (**문자 그대로 동일** — 시리즈명 파싱) |
     | [tabs/cpk.py](web_report/tabs/cpk.py) `TOTAL_SOURCE`("TOTAL") | `cpk.js` `CPK_TOTAL_SOURCE` (CPK 탭 TOTAL 행 판별) |
+    | [routes_webreport.py](server/report/routes_webreport.py) `_COMMONALITY_LOOKUP_MAX`(300) | `map_select.js` `MAPSEL_MAX` (동시 강조 좌표 수) |
 
-    기계 검사는 [tests/test_dist_seq_js.py](tests/test_dist_seq_js.py) 의 배치 크기 하나뿐이다
+    기계 검사는 [tests/test_dist_seq_js.py](tests/test_dist_seq_js.py) 의 배치 크기와
+    [tests/test_dist_dut_js.py](tests/test_dist_dut_js.py) 의 배치 크기·구분자 두 짝뿐이다
     — 나머지는 사람이 지켜야 한다. 상수를 새로 이중 정의하면 그 짝을 이 표에 추가할 것.
     ([formula.py](web_report/formula.py) 는 `gap_chart.py` 파서의 확장 사본이며, 그쪽 드리프트는
     `tests/test_formula_item.py` 의 동치 테스트가 막는다.)

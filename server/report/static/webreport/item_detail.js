@@ -21,7 +21,11 @@ let idetHistMode = "analysis";     // 히스토그램 블록 탭: "analysis"(빈
 let _idetNormalRendered = false;   // report 정규분포 곡선 1회 렌더 가드(항목 진입마다 리셋)
 // ── CDF 칩 편집(임시, 클라이언트 전용) — 항목 이동/새로고침 시 초기화 ──────────────
 let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` → CDF 곡선에서 뺌(분모 감소)
-let cdfEditMode = "none";          // "none" | "exclude" (선택이 cdfExcluded 에 들어가는지)
+// "none" | "exclude" | "chipsel"
+//   exclude — 선택한 die 를 cdfExcluded 에 넣어 이 항목 곡선에서 뺀다(항목 이동 시 초기화).
+//   chipsel — 선택한 die 를 **Map Analysis 좌표 선택(mapSelChips)** 에 더한다. 그쪽은 전역이라
+//             항목을 옮겨도, Distribution 카드·Map 탭에서도 같은 die 가 옥색으로 강조된다.
+let cdfEditMode = "none";
 // CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
 // 적용 시 {min, max, major|null, minorDiv|null} — minorDiv 는 "기본 단위를 몇 등분할지"의
 // 정수(n≥2)라 보조 눈금 간격은 항상 major/n 이다(기본 단위보다 커져 안 보이는 일이 없다).
@@ -46,8 +50,104 @@ const IDET_AXIS = {
 function cdfChipKey(source, serial, xpos, ypos) {
   return `${source}||${serial}||${xpos == null ? "" : xpos}||${ypos == null ? "" : ypos}`;
 }
+// 제외 칩 키를 만드는 **유일한 창구**. 시리즈 이름이 "WF1 · DUT 3" 일 수 있는데(DUT 별
+// 분리) 그대로 키를 만들면 분리를 켜고 끌 때마다 키가 갈려 **이미 제외한 die 가
+// 되살아난다**(CLAUDE.md §5-12 — 사용자 입력은 무슨 일이 있어도 잃지 않는다).
+// 항상 base source 로 정규화한다. 분리되지 않은 이름은 distDutBase 가 원본을 돌려주므로
+// 기존 동작이 완전히 불변이다. cdfChipKey 를 직접 부르지 말고 이 함수를 쓸 것
+// (tests/test_dist_dut_js.py 가 직접 호출 개수를 고정한다).
+function cdfKeyOf(sourceName, serial, xpos, ypos) {
+  return cdfChipKey(distDutBase(sourceName), serial, xpos, ypos);
+}
 function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : null; }
 function cdfResetEdits() { cdfExcluded.clear(); cdfEditMode = "none"; }
+
+// Item_detail 에서 DUT 별 trace 수 상한. WebGL(scattergl)은 trace 마다 draw call·버퍼가
+// 생겨 시리즈가 수백이면 컨텍스트가 무너진다. 초과하면 **분할하지 않고 source 단위를
+// 유지**한다 — 점을 버리는 게 아니라 그룹핑만 되돌리는 것이라 규칙 #5(다운샘플 금지)와
+// 무관하다.
+const IDET_DUT_MAX_TRACES = 120;
+
+// sources[].dut(값과 같은 순서·길이)로 source 하나를 DUT 라벨별 pseudo-source 로 가른다.
+// 이름 규칙·정렬은 서버 dist_dut.dut_source_name / _dut_sort_key 와 **같아야** 갤러리와
+// 상세의 색이 맞는다(규칙 #13). dut 배열이 없거나 길이가 다르면 원본을 그대로 둔다
+// (옛 캐시 응답·Gap 등 파생 차트 방어).
+// idx 는 **원본 rawdata 행 번호(1-based)** 다 — DUT 는 interleave 로 측정되므로 seq 차트가
+// DUT 안에서 1..m 으로 다시 매기면 측정 순서 정보가 통째로 사라진다.
+function distSplitSourcesByDut(sources) {
+  const list = sources || [];
+  let total = 0;
+  list.forEach(s => {
+    const d = s.dut;
+    total += (Array.isArray(d) && d.length === (s.values || []).length)
+      ? new Set(d).size : 1;
+  });
+  if (total > IDET_DUT_MAX_TRACES) {
+    if (typeof showToast === "function")
+      showToast(`DUT 시리즈가 ${total}개로 너무 많아 source 단위로 표시합니다.`);
+    return list;
+  }
+  const out = [];
+  list.forEach(s => {
+    const d = s.dut, vals = s.values || [];
+    if (!Array.isArray(d) || d.length !== vals.length) { out.push(s); return; }
+    const by = new Map();
+    for (let i = 0; i < d.length; i++) {
+      let g = by.get(d[i]);
+      if (!g) { g = { values: [], serial: [], xpos: [], ypos: [], idx: [] }; by.set(d[i], g); }
+      g.values.push(vals[i]);
+      g.serial.push(s.serial ? s.serial[i] : undefined);
+      g.xpos.push(s.xpos ? s.xpos[i] : undefined);
+      g.ypos.push(s.ypos ? s.ypos[i] : undefined);
+      g.idx.push(i + 1);
+    }
+    Array.from(by.keys()).sort(distDutSortCmp).forEach(lbl =>
+      out.push({ ...by.get(lbl), name: s.name + DIST_DUT_SEP + lbl }));
+  });
+  return out;
+}
+// 상세 차트가 실제로 그릴 source 목록 — 분리가 켜져 있을 때만 가른다.
+function distDetailSources(data) {
+  const list = (data && data.sources) || [];
+  return distDutOnly ? distSplitSourcesByDut(list) : list;
+}
+// 상세 trace 색 — DUT 분리 시에는 base source 색의 명도 변주(갤러리와 같은 규칙),
+// 아니면 종전 그대로. 분리가 꺼져 있으면 distActiveColorFor 와 완전히 같은 값이다.
+let _idetDutColorFor = null;
+function idetColorFor(name) {
+  if (!distDutOnly) return distActiveColorFor(name);
+  if (!_idetDutColorFor) return distActiveColorFor(name);
+  return _idetDutColorFor(name);
+}
+// 렌더 직전에 이 화면의 시리즈 이름으로 색 해석기를 굳힌다(항목마다 DUT 구성이 다르다).
+function idetSyncDutColors(list) {
+  _idetDutColorFor = distDutOnly
+    ? distMakeDutColorFor((list || []).map(s => s.name)) : null;
+}
+
+// ── 좌표 강조(chipsel) — 차트 위 점 → Map Analysis 선택 좌표(mapSelChips) ────────────
+// 점 1개 = die 1개이고 customdata 에 (SERIAL, XPOS, YPOS) 가 실려 있어 그 die 를 정확히
+// 겨냥할 수 있다. 값·누적%는 여기서 계산하지 않는다 — 서버(commonality)가 준 것을 써야
+// 어느 화면에서든 같은 자리에 찍힌다(CLAUDE.md 규칙 13).
+// chip 마커 자신의 점은 customdata 가 없어 자연히 걸러진다.
+function cdfPointChip(pt) {
+  if (!pt || !pt.customdata || !pt.data || !pt.data.name) return null;
+  return { source: pt.data.name, serial: pt.customdata[0],
+    xpos: pt.customdata[1], ypos: pt.customdata[2] };
+}
+function cdfChipSelFromPoints(points) {
+  const list = [];
+  (points || []).forEach(pt => { const c = cdfPointChip(pt); if (c) list.push(c); });
+  if (!list.length) return;
+  mapSelAddChips(list)
+    .then(r => {
+      if (!r) return;
+      showToast(`${r.added}개 강조` +
+        (r.missing ? ` · ${r.missing}개 못 찾음` : "") +
+        (r.cut ? ` · ${r.cut}개 상한 초과` : ""));
+    })
+    .catch(e => showToast("좌표 조회 실패: " + (e.message || "네트워크 오류")));
+}
 
 // opts.url 을 주면 /scatter 대신 그 URL 로 데이터를 받는다 (Gap Chart 가 이 화면을
 // 그대로 재사용한다 — 서버 응답 구조가 같다).
@@ -96,7 +196,11 @@ function openItemDetail(subject, navList, opts = null) {
     `<span class="idet-title"><b>${esc(subject)}</b></span></div><div class="placeholder">로드 중…</div></div>`;
   // Bin1 계열 토글이 켜져 있으면 상세도 같은 기준의 분포/통계를 받는다(?bin1=1[&bin1_scope=rt]).
   // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
-  const scatterVariantQ = distVariantQuery(distGalleryVariant()).replace(/^&/, "?");
+  // ⚠️ bin1 축은 distGalleryVariant()(order 없음)를 쓰고, DUT 는 여기서 직접 붙인다 —
+  // distGalleryDataVariant() 를 쓰면 order=seq 가 섞이는데 /scatter 는 order 를 모른다.
+  // Gap Chart 등 opts.url 경로(합성 파생 값)는 DUT 축이 없으므로 붙이지 않는다.
+  const scatterVariantQ = (distVariantQuery(distGalleryVariant())
+    + ((distDutOnly && !(opts && (opts.url || opts.urlOf))) ? "&dut=1" : "")).replace(/^&/, "?");
   // opts.urlOf(subject) 가 있으면 subject 마다 URL 을 다시 정한다 — Gap Chart 처럼 차트끼리
   // prev/next 로 이동하는 경우 고정 opts.url 을 쓰면 다음 차트가 이전 차트 데이터를 받는다.
   const optUrl = opts && (typeof opts.urlOf === "function" ? opts.urlOf(subject) : opts.url);
@@ -202,7 +306,14 @@ function idetOptsHtml() {
   // 상세는 /scatter 응답이 이미 rawdata 행 순서라 **데이터를 다시 받지 않는다**(차트만 재렌더).
   const seqBtn = `<button class="distseg${distSeqOnly ? " active" : ""}" data-idet-seg="seq" ` +
     `title="켜짐: 이 항목을 각 source 의 rawdata 순서(Serial 순)로 x=측정 순서 · y=측정값 표시 · 꺼짐: 누적분포 CDF">Serial 순</button>`;
-  return `<div class="distseg-group idet-opts">${seqBtn}${limitBtn}${bin1Btn}</div>`;
+  // DUT 별 분리 — 갤러리 툴바 메뉴와 같은 전역 상태(distDutOnly)를 공유한다.
+  // seq 와 달리 **서버 재조회가 필요하다** — /scatter 응답에 die 별 DUT 라벨(sources[].dut)
+  // 이 실려 와야 시리즈를 가를 수 있고, 그건 ?dut=1 로만 온다.
+  // 이미 DUT 모드인 세션에서는 내린다(갤러리 Chart Option 과 같은 처방).
+  const dutBtn = (webReportMode() === "DUT") ? ""
+    : `<button class="distseg${distDutOnly ? " active" : ""}" data-idet-seg="dut" ` +
+      `title="켜짐: 이 항목을 각 source 의 DUT 값별 색으로 분리 · 꺼짐: source 단위">DUT 별 분리</button>`;
+  return `<div class="distseg-group idet-opts">${seqBtn}${dutBtn}${limitBtn}${bin1Btn}</div>`;
 }
 
 // CDF 자리 차트의 제목 — Serial 순 모드에서는 같은 자리에 run chart 를 그리므로 문구도 바뀐다.
@@ -315,12 +426,15 @@ function idetChipValuesHtml(subject) {
       `<td>${esc(c.source || "")}</td>` +
       `<td>X ${esc(c.xpos)} · Y ${esc(c.ypos)}</td>` +
       `<td>${esc(c.serial == null ? "" : c.serial)}</td>` +
-      `<td class="num">${esc(val)}</td><td class="num">${esc(cum)}</td></tr>`;
+      `<td class="num">${esc(val)}</td><td class="num">${esc(cum)}</td>` +
+      `<td><button type="button" class="mapsel-del" data-mapsel-del="${esc(c.key)}" title="강조 해제">×</button></td></tr>`;
   }).join("");
-  return `<div class="section-title small">선택 좌표의 이 항목 값 (Map Analysis)</div>` +
-    `<table class="idet-chipval-table"><thead><tr>` +
-    `<th></th><th>Source</th><th>좌표</th><th>SERIAL</th><th>값</th><th>누적%</th>` +
-    `</tr></thead><tbody>${rows}</tbody></table>`;
+  return `<div class="section-title small idet-chipval-head">` +
+    `<span>강조 좌표 ${mapSelChips.length}개 — 이 항목 값 (Map Analysis 공유)</span>` +
+    `<button type="button" class="btn-sm" data-mapsel-clear>전체 해제</button></div>` +
+    `<div class="idet-chipval-wrap"><table class="idet-chipval-table"><thead><tr>` +
+    `<th></th><th>Source</th><th>좌표</th><th>SERIAL</th><th>값</th><th>누적%</th><th></th>` +
+    `</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function renderIdetChipVals() {
   const host = document.getElementById("idetChipVals");
@@ -368,7 +482,7 @@ function renderItemFailRows() {
   const chkTh = `<th class="idet-fail-chk-col">${chkLabel}</th>`;
   const head = "<thead><tr>" + chkTh + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
   const body = "<tbody>" + page.map(r => {
-    const key = cdfChipKey(r.SOURCE, r.SERIAL, r.XPOS, r.YPOS);
+    const key = cdfKeyOf(r.SOURCE, r.SERIAL, r.XPOS, r.YPOS);
     const checked = activeSet && activeSet.has(key) ? " checked" : "";
     const chkTd = `<td class="idet-fail-chk-col"><input type="checkbox" class="cdf-fail-chk" data-chipkey="${esc(key)}"${editing ? "" : " disabled"}${checked}></td>`;
     return "<tr>" + chkTd + cols.map(c => {
@@ -556,6 +670,11 @@ function bindItemDetailPanel() {
       } else if (kind === "rtbin1") {
         distRtBin1Only = !distRtBin1Only;
         if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+      } else if (kind === "dut") {
+        // DUT 분리도 데이터 변형이다 — /scatter 에 sources[].dut 가 실려 와야 가를 수
+        // 있으므로 seq 처럼 재렌더만 할 수는 없다(?dut=1 로 다시 연다).
+        distDutOnly = !distDutOnly;
+        if (distDutOnly) ensureDistDutData();
       } else return;
       if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
       if (_itemDetailSubject) openItemDetail(_itemDetailSubject, _itemDetailNav, _itemDetailOpts);
@@ -566,6 +685,11 @@ function bindItemDetailPanel() {
     const mb = e.target.closest("[data-cdf-mode]");
     if (mb) { cdfEditMode = mb.dataset.cdfMode; cdfAfterEdit(); return; }
     if (e.target.closest(".cdf-reset")) { cdfResetEdits(); cdfAfterEdit(); return; }
+    // 강조 좌표 표의 개별 해제/전체 해제 — mapSelRemove/Clear 가 Map·카드·상세·편집바까지
+    // 되그린다(applyChipToDistribution). 초기화 버튼은 '제외' 전용이라 여기와 별개다.
+    const md = e.target.closest("[data-mapsel-del]");
+    if (md) { mapSelRemove(md.dataset.mapselDel); return; }
+    if (e.target.closest("[data-mapsel-clear]")) { mapSelClear(); return; }
     const axb = e.target.closest("[data-cdf-axis]");
     if (axb) {   // 감싸는 바에서 어느 차트(cdf|hist)의 축옵션인지 되짚는다
       const host = axb.closest("[data-axis-key]");
@@ -635,7 +759,7 @@ function distHistPolygon(sources, lo, hi, excluded) {
     const counts = new Array(B).fill(0);
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     for (let i = 0; i < s.values.length; i++) {
-      if (useExcl && hasId && excluded.has(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
+      if (useExcl && hasId && excluded.has(cdfKeyOf(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
       const v = s.values[i];
       let idx = Math.floor((v - rlo) / step);
       if (idx === B) idx = B - 1;
@@ -685,14 +809,18 @@ function renderCdfEditBar() {
   if (_itemDetailData && _itemDetailData.is_gap) { bar.innerHTML = ""; return; }
   const modeBtn = (m, label, cls) =>
     `<button type="button" class="btn-sm cdf-mode ${cls}${cdfEditMode === m ? " active" : ""}" data-cdf-mode="${m}">${label}</button>`;
+  const hint = {
+    exclude: "CDF: 점 클릭·드래그 박스 · 히스토그램: 드래그로 x구간 제외 · 하단 Fail 표 체크박스",
+    chipsel: "CDF·Serial순 차트에서 점 클릭(토글)·드래그 박스 → 그 die 를 전 항목·Distribution 카드·Map 에 옥색 강조",
+  }[cdfEditMode] || "";
   bar.innerHTML =
     `<span class="cdf-eb-label">분포 편집</span>` +
     modeBtn("none", "선택 없음", "cdf-mode-none") +
     modeBtn("exclude", "제외", "cdf-mode-exclude") +
+    modeBtn("chipsel", "좌표 강조", "cdf-mode-highlight") +
     `<button type="button" class="btn-sm cdf-reset">초기화</button>` +
-    `<span class="cdf-eb-count">제외 ${cdfExcluded.size}</span>` +
-    (cdfEditMode !== "none"
-      ? `<span class="cdf-eb-hint">CDF: 점 클릭·드래그 박스 · 히스토그램: 드래그로 x구간 제외 · 하단 Fail 표 체크박스</span>` : "");
+    `<span class="cdf-eb-count">제외 ${cdfExcluded.size} · 강조 ${mapSelChips.length}</span>` +
+    (hint ? `<span class="cdf-eb-hint">${hint}</span>` : "");
 }
 function cdfToggleChip(key) {
   const set = cdfActiveSet();
@@ -824,14 +952,17 @@ function distRenderCdf(data) {
   // chip.items 에 없어 여기서 곡선과 **같은 배열**로부터 모은다(제외 편집도 자동 반영).
   let gapChipHits = [];
   // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(distOrderedSources).
-  const traces = distOrderedSources(data.sources).map(s => {
+  // DUT 분리가 켜져 있으면 source 하나가 DUT 라벨별 trace 로 갈린다(distDetailSources).
+  const _dsrc = distDetailSources(data);
+  idetSyncDutColors(_dsrc);   // 이 화면의 시리즈 이름으로 DUT 색 해석기 고정
+  const traces = distOrderedSources(_dsrc).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     // 제외 칩을 뺀 값/식별정보 — 제외는 CDF 곡선에만 반영(분모 n 감소로 곡선 재계산).
     let vals = s.values, serial = s.serial, xpos = s.xpos, ypos = s.ypos;
     if (hasId && cdfExcluded.size) {
       vals = []; serial = []; xpos = []; ypos = [];
       for (let i = 0; i < s.values.length; i++) {
-        if (cdfExcluded.has(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
+        if (cdfExcluded.has(cdfKeyOf(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
         vals.push(s.values[i]); serial.push(s.serial[i]); xpos.push(s.xpos[i]); ypos.push(s.ypos[i]);
       }
     }
@@ -844,7 +975,7 @@ function distRenderCdf(data) {
       if (c.x[0] < cdfMin) cdfMin = c.x[0];
       if (c.x[c.x.length - 1] > cdfMax) cdfMax = c.x[c.x.length - 1];
     }
-    const base = distActiveColorFor(s.name);
+    const base = idetColorFor(s.name);
     const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name,
       x: c.x, y: c.y };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
@@ -893,16 +1024,24 @@ function distRenderCdf(data) {
   // 재렌더마다 중복 방지 후 편집 모드에서만 동작하는 선택 이벤트 바인딩.
   if (cdfDiv.removeAllListeners) { cdfDiv.removeAllListeners("plotly_click"); cdfDiv.removeAllListeners("plotly_selected"); }
   cdfDiv.on("plotly_click", ev => {
-    if (!cdfActiveSet() || !ev.points || !ev.points.length) return;
+    if (!ev || !ev.points || !ev.points.length) return;
+    if (cdfEditMode === "chipsel") {
+      const c = cdfPointChip(ev.points[0]);
+      if (c) mapSelToggle(c).catch(e => showToast("좌표 조회 실패: " + (e.message || "네트워크 오류")));
+      return;
+    }
+    if (!cdfActiveSet()) return;
     const pt = ev.points[0];
     if (!pt.customdata) return;
-    cdfToggleChip(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2]));
+    cdfToggleChip(cdfKeyOf(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2]));
     cdfAfterEdit();
   });
   cdfDiv.on("plotly_selected", ev => {
+    if (!ev || !ev.points || !ev.points.length) return;
+    if (cdfEditMode === "chipsel") { cdfChipSelFromPoints(ev.points); return; }
     const set = cdfActiveSet();
-    if (!set || !ev || !ev.points || !ev.points.length) return;
-    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
+    if (!set) return;
+    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfKeyOf(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
     cdfAfterEdit();
   });
   // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
@@ -925,6 +1064,30 @@ function distRenderCdf(data) {
 // (§5-12 "사용자 입력은 잃지 않는다"). 저장값은 그대로 두고 표시만 생략한다 — CDF 로
 // 돌아가면 그대로 다시 보인다. Map Analysis 선택 좌표 마커·Compare before-limit 선도
 // 같은 이유로 제외(누적% 축 전용).
+// 선택 좌표(mapSelChips)에 해당하는 점을 이 차트 좌표계에 옥색 큰 마커로 얹는다.
+// 서버가 준 (값, 누적%) 마커는 이 축에서 못 쓰지만(x 가 측정 순서다), 곡선 trace 가
+// 이미 die 를 식별하고 있으므로 **그 배열에서 그대로 읽어** 같은 자리에 찍는다 —
+// 값을 다시 계산하지 않으므로 다른 화면과 어긋날 여지가 없다(규칙 13).
+function idetSeqHighlightTrace(srcTraces, useGl) {
+  if (!mapSelChips.length) return null;
+  const want = new Map();
+  mapSelChips.forEach(c => { want.set(mapSelChipKey(c), c.color); });
+  const xs = [], ys = [], cols = [];
+  (srcTraces || []).forEach(t => {
+    if (!t.customdata || !t.name) return;
+    for (let i = 0; i < t.customdata.length; i++) {
+      const cd = t.customdata[i];
+      const col = want.get(mapSelChipKey({ source: t.name, serial: cd[0], xpos: cd[1], ypos: cd[2] }));
+      if (col) { xs.push(t.x[i]); ys.push(t.y[i]); cols.push(col); }
+    }
+  });
+  if (!xs.length) return null;
+  const t = { type: useGl ? "scattergl" : "scatter", mode: "markers", x: xs, y: ys,
+    marker: { color: cols, size: MAPSEL_MARKER_SIZE, line: { width: 1.5, color: MAPSEL_HL_LINE } },
+    hoverinfo: "skip", showlegend: false };
+  if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
+  return t;
+}
 function distRenderSeq(data, seqDiv) {
   if (seqDiv.data) { try { Plotly.purge(seqDiv); } catch (e) { /* no-op */ } }
   const useGl = !!DIST.CDF_GL && webglOk();
@@ -933,22 +1096,28 @@ function distRenderSeq(data, seqDiv) {
   const unit = data.units || "";
   let yMin = Infinity, yMax = -Infinity;
   // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(CDF 와 동일 규칙).
-  const traces = distOrderedSources(data.sources).map(s => {
+  const _dsrc = distDetailSources(data);
+  idetSyncDutColors(_dsrc);   // 이 화면의 시리즈 이름으로 DUT 색 해석기 고정
+  const traces = distOrderedSources(_dsrc).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     // 제외 칩(cdfExcluded)은 CDF 와 같은 규칙으로 뺀다 — 남은 점의 순서는 그대로 유지되고
     // x 는 1..m 으로 다시 매긴다(빈 자리를 남기면 없던 결측 구간처럼 보인다).
+    // ⚠️ **DUT 분리는 예외**다 — DUT 는 interleave 로 측정되므로 DUT 안에서 1..m 으로
+    // 다시 매기면 "언제 측정됐는가"가 통째로 사라져 조용히 틀린 run chart 가 된다.
+    // 그때는 분할이 실어 준 원본 행 번호(s.idx)를 x 로 쓴다.
+    const useIdx = Array.isArray(s.idx) && s.idx.length === s.values.length;
     const xs = [], ys = [], cd = [];
     for (let i = 0; i < s.values.length; i++) {
       if (hasId && cdfExcluded.size
-          && cdfExcluded.has(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
+          && cdfExcluded.has(cdfKeyOf(s.name, s.serial[i], s.xpos[i], s.ypos[i]))) continue;
       const v = s.values[i];
-      xs.push(xs.length + 1);
+      xs.push(useIdx ? s.idx[i] : xs.length + 1);
       ys.push(v);
       if (hasId) cd.push([s.serial[i], s.xpos[i], s.ypos[i]]);
       if (v < yMin) yMin = v;
       if (v > yMax) yMax = v;
     }
-    const base = distActiveColorFor(s.name);
+    const base = idetColorFor(s.name);
     const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name,
       x: xs, y: ys, marker: { color: base, size: 5 } };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
@@ -960,6 +1129,8 @@ function distRenderSeq(data, seqDiv) {
     }
     return trace;
   });
+  const hlTrace = idetSeqHighlightTrace(traces, useGl);
+  if (hlTrace) traces.push(hlTrace);
   // "Limit 안 Data만" 은 여기서 **y**(측정값) 축 클램프다 — 계산식은 축과 무관해 재사용한다.
   const yr = distLimitRange(lo, hi, yMin, yMax);
   Plotly.newPlot(seqDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
@@ -978,16 +1149,24 @@ function distRenderSeq(data, seqDiv) {
     seqDiv.removeAllListeners("plotly_selected");
   }
   seqDiv.on("plotly_click", ev => {
-    if (!cdfActiveSet() || !ev.points || !ev.points.length) return;
+    if (!ev || !ev.points || !ev.points.length) return;
+    if (cdfEditMode === "chipsel") {
+      const c = cdfPointChip(ev.points[0]);
+      if (c) mapSelToggle(c).catch(e => showToast("좌표 조회 실패: " + (e.message || "네트워크 오류")));
+      return;
+    }
+    if (!cdfActiveSet()) return;
     const pt = ev.points[0];
     if (!pt.customdata) return;
-    cdfToggleChip(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2]));
+    cdfToggleChip(cdfKeyOf(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2]));
     cdfAfterEdit();
   });
   seqDiv.on("plotly_selected", ev => {
+    if (!ev || !ev.points || !ev.points.length) return;
+    if (cdfEditMode === "chipsel") { cdfChipSelFromPoints(ev.points); return; }
     const set = cdfActiveSet();
-    if (!set || !ev || !ev.points || !ev.points.length) return;
-    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
+    if (!set) return;
+    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfKeyOf(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
     cdfAfterEdit();
   });
 }
@@ -1048,7 +1227,7 @@ function distRenderHist(data) {
       for (let i = 0; i < s.values.length; i++) {
         const v = s.values[i];
         if (v < x0 || v > x1) continue;
-        set.add(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]));
+        set.add(cdfKeyOf(s.name, s.serial[i], s.xpos[i], s.ypos[i]));
         n++;
       }
     });
@@ -1128,8 +1307,10 @@ function idetRestyleSourceColors(div, prop) {
   if (!div || !div.data) return;
   const idx = [], cols = [];
   div.data.forEach((t, i) => {
-    if (!t.name || !(t.name in distColorMap)) return;
-    idx.push(i); cols.push(distActiveColorFor(t.name));
+    // DUT 분리 시 trace 이름은 "<src> · DUT n" 이라 distColorMap 에 없다 — base 로 판정해야
+    // 강조(dim)가 상세 차트에도 반영된다(안 그러면 갤러리만 dim 되고 상세는 원색 그대로).
+    if (!t.name || !(distDutBase(t.name) in distColorMap)) return;
+    idx.push(i); cols.push(idetColorFor(t.name));
   });
   if (idx.length) { try { Plotly.restyle(div, { [prop]: cols }, idx); } catch (e) { /* no-op */ } }
   idetReorderSourceTraces(div);
@@ -1143,11 +1324,12 @@ function idetReorderSourceTraces(div) {
   if (!div || !div.data || !_itemDetailData) return;
   const rank = {};
   (_itemDetailData.sources || []).forEach((s, i) => { rank[s.name] = i; });
+  // DUT 분리 시 trace 이름은 "<src> · DUT n" 이라 rank 에 없다 — base 로 되짚는다.
   const slots = [];   // source trace 가 차지한 현재 인덱스(오름차순)
-  div.data.forEach((t, i) => { if (t.name && (t.name in rank)) slots.push(i); });
+  div.data.forEach((t, i) => { if (t.name && (distDutBase(t.name) in rank)) slots.push(i); });
   if (slots.length < 2) return;
   const want = slots.slice().sort((a, b) => {
-    const na = div.data[a].name, nb = div.data[b].name;
+    const na = distDutBase(div.data[a].name), nb = distDutBase(div.data[b].name);
     const ha = distSourceFilter.has(na) ? 1 : 0, hb = distSourceFilter.has(nb) ? 1 : 0;
     return (ha - hb) || (rank[na] - rank[nb]);
   });
@@ -1223,7 +1405,13 @@ function distBindPanel() {
       restoreDistSearch(sq);
       return;
     }
-    const seg = e.target.closest(".distseg");
+    // Item Filter / Chart Option 드롭다운 트리거 — 옛 개별 버튼을 성격별로 접은 것
+    // (distribution.js distToolbarHtml). 아래 .distseg 분기보다 **먼저** 가려야 한다:
+    // 트리거도 .distseg 라 안 그러면 data-seg 없는 세그로 떨어져 갤러리만 재렌더된다.
+    const mtrig = e.target.closest("[data-distmenu]");
+    if (mtrig) { distOpenMenu(mtrig, mtrig.dataset.distmenu); return; }
+    // 세그 토글 — 옛 툴바 버튼과 드롭다운 메뉴 항목이 같은 data-seg 키를 쓴다.
+    const seg = e.target.closest(".distseg, .issue-menu-item[data-seg]");
     if (seg) {
       if (seg.dataset.seg === "clearsel") distSelected.clear();
       // 전체 보기 — 항목 숨김 필터 3종 일괄 해제 (토글 아님, distToolbarHtml 참조).
@@ -1244,10 +1432,18 @@ function distBindPanel() {
         // Serial 순 — bin1 축과 직교(둘 다 켤 수 있다). 데이터 변형이라 seq 배치를 받는다.
         distSeqOnly = !distSeqOnly;
         if (distSeqOnly) ensureDistSeqData();
+      } else if (seg.dataset.seg === "dut") {
+        // DUT 별 분리 — bin1·정렬 두 축과 모두 직교. 서버가 source 를 쪼개 주는 별도
+        // 배치(?dut=1)라 데이터 변형이다.
+        distDutOnly = !distDutOnly;
+        if (distDutOnly) ensureDistDutData();
       }
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();
       restoreDistSearch(q);
+      // 재렌더로 툴바·메뉴 DOM 이 통째로 갈렸으니 열려 있던 메뉴를 같은 자리에 다시 연다
+      // (체크 표시·트리거 배지가 새 상태로 갱신된다).
+      distReopenMenu();
       return;
     }
     // Distribution composite — 분석하기 버튼/메뉴/카드 ✎✕/합성 카드 클릭.

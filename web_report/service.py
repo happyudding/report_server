@@ -28,6 +28,7 @@ from . import cache_policy
 from . import compute
 from . import disk_cache
 from . import dist_blob as _dist_blob
+from . import dist_dut as _dist_dut
 from . import dist_pack as _dist_pack
 from . import dist_seq as _dist_seq
 from . import dist_pack_store
@@ -1348,7 +1349,8 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: boo
 
 
 def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root: Path,
-                           bin1: bool = False, bin1_scope: str = "") -> dict:
+                           bin1: bool = False, bin1_scope: str = "",
+                           dut: bool = False) -> dict:
     """항목 배치 ECDF — 요청한 subject 만 계산한 compact dict (다운샘플 없음).
 
     전체 dist(get_distribution)는 대형 세션에서 수천만 포인트라 프런트가 한 번에 받으면
@@ -1358,7 +1360,19 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
 
     pack 세션은 요청 항목이 든 chunk 만 읽어 덧셈으로 만든다 — **tables 디코드조차 하지
     않는다**(스크롤할 때마다 반복되던 서버 재정렬이 사라지는 지점).
+
+    ``dut`` ("DUT 별 분리 보기")면 **pack 지름길을 쓸 수 없다** — pack 은 업로드 시점에
+    `np.unique` 로 count 를 집약해 DUT 축이 소실된 산출물이다(seq 가 순서를 잃는 것과
+    같은 사정). 항상 tables 를 읽는다. off 면 첫 분기에서 종전 경로로 빠져 **기존 동작이
+    바이트 단위로 불변**이다.
     """
+    if dut:
+        session, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                                 upload_root=upload_root)
+        return _dist_dut.compute_dut_compact(
+            tables, manifest.get("selected_items") or [], session.get("mode"),
+            only=subjects, bin1=bin1,
+            bin1_sources=_bin1_source_filter(session, bin1_scope))
     session = report_db.get_session(session_id)
     if session:
         srcs = _bin1_source_filter(session, bin1_scope)
@@ -1374,16 +1388,25 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
 
 
 def get_distribution_seq_batch(session_id: str, subjects, *, report_db, upload_root: Path,
-                               bin1: bool = False, bin1_scope: str = "") -> dict:
+                               bin1: bool = False, bin1_scope: str = "",
+                               dut: bool = False) -> dict:
     """항목 배치 **Serial 순**(rawdata 누적 순) 값 배열 — 요청한 subject 만 (다운샘플 없음).
 
     ECDF 배치(`get_distribution_batch`)의 짝이다. 다른 점 하나: **dist pack 지름길을 쓰지
     않는다.** pack 은 업로드 시점에 값을 정렬(np.unique)해 굳힌 산출물이라 rawdata 순서가
     남아 있지 않다 — 순서가 이 응답의 존재 이유이므로 항상 tables 를 읽는다(TABLES_CACHE
     공유라 `/scatter` 와 같은 비용). 계산은 `dist_seq.compute_seq_compact` 한 곳이다.
+
+    ``dut`` 면 source 를 DUT 로 쪼갠 뒤 같은 순서 보존 계산을 한다 — 두 축은 직교다
+    (DUT별 측정순서 흐름 = 사이트 드리프트 진단).
     """
     session, tables, manifest = _load_tables(session_id, report_db=report_db,
                                              upload_root=upload_root)
+    if dut:
+        return _dist_dut.compute_dut_compact(
+            tables, manifest.get("selected_items") or [], session.get("mode"),
+            only=subjects, bin1=bin1,
+            bin1_sources=_bin1_source_filter(session, bin1_scope), seq=True)
     return _dist_seq.compute_seq_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"),
         only=subjects, bin1=bin1, bin1_sources=_bin1_source_filter(session, bin1_scope))
@@ -1831,11 +1854,13 @@ def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
 
 def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
                  bin1: bool = False, bin1_scope: str = "",
-                 session=None) -> dict:
+                 session=None, dut: bool = False) -> dict:
     """Distribution 상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status 지연 로드.
 
     ``bin1`` 이면 분포/통계를 양품(BIN==PASS_BIN) die 만으로 낸다("Bin1 only" 상세).
     ``bin1_scope="rt"`` 면 그 필터를 RT source 에만 건다(Temperature "Bin1(RT만)").
+    ``dut`` 면 die 별 DUT 라벨 배열(``sources[].dut``)을 함께 실어 프런트가 시리즈를
+    DUT 별로 가를 수 있게 한다 — source 자체는 쪼개지 않는다(제외 칩 키 호환, dist_dut 참조).
     항목이 어떤 소스에도 없으면 KeyError (라우트가 404 처리).
     """
     from .tabs.distribution import scatter_item as _scatter_item
@@ -1854,7 +1879,7 @@ def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
             session.get("webreport_options") or "", [t.source for t in tables]) or {}).get("groups")
     return _scatter_item(tables, subject, bin1=bin1,
                          bin1_sources=_bin1_source_filter(session, bin1_scope),
-                         temperature_groups=temp_groups)
+                         temperature_groups=temp_groups, dut=dut)
 
 
 def gap_chart_item(session_id: str, chart_id: str, *, report_db, upload_root: Path,
@@ -1932,6 +1957,22 @@ def commonality_chip(session_id: str, *, report_db, upload_root: Path,
                             index=_commonality_index(
                                 session, tables,
                                 _preprocess.session_digest(report_db, session_id)))
+
+
+def commonality_chips_lookup(session_id: str, *, report_db, upload_root: Path,
+                             chips: list) -> dict:
+    """여러 chip 의 항목별 값 + 누적%를 1회 조회 (Item_detail 드래그 강조).
+
+    단건 ``commonality_chip`` 과 **같은 인덱스**를 쓰므로 새 계산은 없다. 못 찾은 chip 은
+    응답 배열에서 None 이다(전체 실패로 만들지 않는다 — tabs.commonality 규약).
+    """
+    from .tabs.commonality import chip_percentiles_many
+
+    session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    return chip_percentiles_many(tables, chips,
+                                 index=_commonality_index(
+                                     session, tables,
+                                     _preprocess.session_digest(report_db, session_id)))
 
 
 def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,

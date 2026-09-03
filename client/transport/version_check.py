@@ -46,7 +46,11 @@ def _honey_headers():
 def fetch_latest(base_url=None) -> dict:
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/honey/version"
-    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
+    # no-cache: 사내 프록시가 낡은 version.json 을 돌려주면 그 PC 만 옛 버전을 보고
+    # "이미 최신" 으로 판정한다 — 에러가 아니라 업데이트가 조용히 멈춘다.
+    headers = dict(_honey_headers())
+    headers.update({"Cache-Control": "no-cache", "Pragma": "no-cache"})
+    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC, headers=headers)
     resp.raise_for_status()
     return resp.json()
 

@@ -2,12 +2,29 @@
 //    Distribution 전 항목 CDF 에 반영). 선택 상태는 전역 — Map redraw 와 Distribution 이 함께 참조. ──
 const MAPSEL_PALETTE = ["#e11d48", "#2563eb", "#059669", "#d97706", "#7c3aed",
   "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5"];
+// 강조 색·크기 (2026-09-03) — Item_detail 드래그로 수십~수백 die 를 한 번에 잡게 되면서
+// chip 마다 다른 색(팔레트 순환)은 의미가 없어졌다. 전 화면(Item_detail·Distribution 카드·
+// Map 썸네일/상세/레전드·Honey Excel)이 **같은 옥색**을 쓴다. 색 결정은 mapSelColorAt 한 곳뿐이라
+// 팔레트로 되돌리려면 MAPSEL_USE_PALETTE 만 true 로 바꾸면 된다.
+const MAPSEL_HL_COLOR = "#2DD4BF";   // 밝은 청록(옥색) — 채움
+const MAPSEL_HL_LINE = "#0F766E";    // 진한 청록 — 테두리(밝은 배경·점 무리 위에서도 윤곽 유지)
+const MAPSEL_USE_PALETTE = false;
+const MAPSEL_MARKER_SIZE = 10;       // 상세 차트(Item_detail·composite 상세) — 종전 7
+const MAPSEL_CARD_MARKER_SIZE = 9;   // 갤러리 미니셀(canvas) — 종전 7
+// 동시에 강조할 수 있는 좌표 수. chip 하나가 전 항목의 값·누적%를 들고 있어(항목 수천 개)
+// 이 값이 곧 브라우저 힙·응답 크기의 상한이다. 서버도 같은 값으로 자른다
+// (routes_webreport.py _COMMONALITY_LOOKUP_MAX — 한쪽만 바꾸면 400 이 난다).
+const MAPSEL_MAX = 300;
 let mapSelChips = [];   // [{serial,shot,dut,xpos,ypos,bin,source,x,y, key, color, items:{subject:{value,cum_pct}}}]
 let _mapSelLastQ = { serial: "", xpos: "", ypos: "" };  // 직전 검색 필드값 — 추가 후 검색 패널 재실행에 재사용(연속 추가 편의).
 let _mapSelResults = []; // 직전 검색 결과 chip 배열 — 체크박스 index → chip 매핑용.
 
 function mapSelChipKey(c) { return `${c.source || ""}|${c.serial || ""}|${c.xpos || ""}|${c.ypos || ""}`; }
-function mapSelReassignColors() { mapSelChips.forEach((c, i) => { c.color = MAPSEL_PALETTE[i % MAPSEL_PALETTE.length]; }); }
+// 색 결정 단일 지점 — 기본은 전 chip 단일 옥색. 팔레트 순환으로 되돌리려면 여기만 보면 된다.
+function mapSelColorAt(i) {
+  return MAPSEL_USE_PALETTE ? MAPSEL_PALETTE[i % MAPSEL_PALETTE.length] : MAPSEL_HL_COLOR;
+}
+function mapSelReassignColors() { mapSelChips.forEach((c, i) => { c.color = mapSelColorAt(i); }); }
 
 // Honey 클라이언트 Excel Download 가 runJavaScript 로 읽어가는 선택 좌표 스냅샷.
 // 선택 상태는 이 페이지 메모리에만 있어(서버·URL 미저장) 클라가 알 수 없으므로, 화면과
@@ -34,16 +51,22 @@ window.honeyMapSelSnapshot = honeyMapSelSnapshot;
 // 마커를 두면 trace 순서와 무관하게 **데이터 점 아래로 깔려 안 보인다**. chip 마커는
 // 정의상 곡선 위(같은 좌표)에 놓이므로 100% 가려진다 — Item detail 에서 마커가 안 보이던
 // 원인이 이것이다(갤러리 카드는 점을 canvas 로 직접 그리며 마커도 같이 다시 그려서 보였다).
-function mapSelMarkerTraces(hits, useGl) {
+//
+// ⚠ hit 마다 trace 를 만들지 말 것 — **차트당 trace 1개**다. Item_detail 드래그 선택이
+// 생기면서 chip 이 수백 개가 될 수 있어, hit 당 trace 면 카드 30장 × chip 300개 = 9,000 개
+// trace 가 되어 갤러리가 통째로 멈춘다. 소비처 canvas(distDrawPoints)도 trace 안의
+// **모든 점**을 도는 전제라, 여기를 되돌리면 카드에 첫 점만 그려진다.
+function mapSelMarkerTraces(hits, useGl, opts) {
   if (!hits || !hits.length) return null;
-  const traces = hits.map(h => {
-    const t = {
-      type: useGl ? "scattergl" : "scatter", mode: "markers", x: [h.value], y: [h.cum],
-      marker: { color: h.color, size: 7, line: { width: 1, color: "#fff" } },
-      hoverinfo: "skip", showlegend: false };
-    if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
-    return t;
-  });
+  const size = (opts && opts.size) || MAPSEL_MARKER_SIZE;
+  const t = {
+    type: useGl ? "scattergl" : "scatter", mode: "markers",
+    x: hits.map(h => h.value), y: hits.map(h => h.cum),
+    marker: { color: hits.map(h => h.color), size,
+      line: { width: 1.5, color: MAPSEL_HL_LINE } },
+    hoverinfo: "skip", showlegend: false };
+  if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
+  const traces = [t];
   const shapes = [];
   if (mapSelChips.length === 1 && hits.length === 1) {
     const h = hits[0];
@@ -58,7 +81,7 @@ function mapSelMarkerTraces(hits, useGl) {
 // 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색).
 // 해당 항목 값 없는 chip 은 건너뜀. 값·누적% 는 **서버가 준 것**(chip_percentiles)을 쓴다 —
 // 같은 chip 이 어느 화면에 나오든 같은 좌표에 찍혀야 하기 때문(CLAUDE.md 규칙 13).
-function chipMarkersFor(subject, useGl) {
+function chipMarkersFor(subject, useGl, opts) {
   if (!mapSelChips.length) return null;
   const hits = [];
   mapSelChips.forEach(c => {
@@ -66,13 +89,13 @@ function chipMarkersFor(subject, useGl) {
     if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
     hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
   });
-  return mapSelMarkerTraces(hits, useGl);
+  return mapSelMarkerTraces(hits, useGl, opts);
 }
 
 // Distribution composite 용 — pair(source×item) 목록 전체에 대한 마커를 **한 번에** 모은다.
 // pair 마다 따로 만들면 크로스헤어 판정(점 1개)이 pair 수만큼 걸려 선이 여러 벌 생긴다.
 // chip 은 특정 source 의 die 이므로 그 source 의 pair 에만 찍는다.
-function chipMarkersForPairs(pairs, useGl) {
+function chipMarkersForPairs(pairs, useGl, opts) {
   if (!mapSelChips.length) return null;
   const hits = [];
   (pairs || []).forEach(p => {
@@ -83,7 +106,7 @@ function chipMarkersForPairs(pairs, useGl) {
       hits.push({ color: c.color, value: it.value, cum: it.cum_pct });
     });
   });
-  return mapSelMarkerTraces(hits, useGl);
+  return mapSelMarkerTraces(hits, useGl, opts);
 }
 
 // 선택 변경 후 Distribution 소비처(보이는 갤러리 카드 + 열려있는 Item_detail) 재렌더.
@@ -92,8 +115,20 @@ function applyChipToDistribution() {
   document.querySelectorAll('#panel-distribution .distg-card').forEach(c => { c.dataset.rendered = ""; });
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]').forEach(distQueueRender);
   if (_itemDetailData) { distRenderCdf(_itemDetailData); renderIdetChipVals(); }
+  // 편집바의 '강조 N' 카운트도 같이 맞춘다(Item_detail 이 열려 있을 때만 요소가 있다).
+  if (typeof renderCdfEditBar === "function") renderCdfEditBar();
   // composite 상세는 별도 패널이라 갤러리 재렌더에 걸리지 않는다.
   if (typeof _dcDetailId !== "undefined" && _dcDetailId) dcRenderDetailCharts();
+}
+
+// Map 패널 갱신 — **보이고 있을 때만** 즉시 다시 그린다. Item_detail 에서 드래그로 좌표를
+// 고르는 동안 Map 패널은 화면에 없는데, 매번 renderMapAnalysis() 를 부르면 안 보이는
+// 썸네일 canvas 를 소스 수만큼 다시 그리게 된다. 안 보일 때는 dirty 표시만 남기고
+// edit_mode.js renderTab 이 탭에 들어갈 때 그린다(wafer_charts.js 의 기존 패턴과 동일).
+function mapSelRefreshMap() {
+  const p = document.getElementById("panel-map-analysis");
+  if (p && p.classList.contains("active")) renderMapAnalysis();
+  else if (typeof tabDirty !== "undefined") tabDirty["map-analysis"] = true;
 }
 
 // 좌표 검색 패널의 펼침 상태 — 좌표를 추가/해제하면 renderMapAnalysis 가 Map 패널을
@@ -184,19 +219,56 @@ function updateMapSelAddBtn() {
   btn.disabled = !n;
 }
 
-// chip 좌표 → /chip 로 항목별 값·누적% 조회. 이미 선택돼 있으면 null 반환(중복 무시).
-function mapSelFetchChip(chip) {
+// chip 여러 개를 **한 요청**으로 조회해 선택에 추가한다. 반환 {added, missing, cut}.
+//
+// chip 마다 GET /commonality/chip 을 순차로 부르던 종전 방식은 Map 검색(몇 개)에는 맞았지만
+// Item_detail 드래그(수십~수백 개)에는 못 쓴다 — chip 수만큼 왕복이 쌓인다. 서버가 같은
+// 인덱스 위에서 한 번에 계산하므로(chips_lookup) 새 계산은 없다.
+// 못 찾은 chip 은 서버가 null 로 돌려주며 나머지는 그대로 추가된다(하나 때문에 전체 실패 금지).
+async function mapSelAddChips(chipsIn) {
+  const have = new Set(mapSelChips.map(c => c.key));
+  const seen = new Set();
+  const todo = [];
+  (chipsIn || []).forEach(c => {
+    const key = mapSelChipKey(c);
+    if (have.has(key) || seen.has(key)) return;   // 이미 선택됐거나 입력 안에서 중복
+    seen.add(key);
+    todo.push({ source: c.source || "", serial: c.serial == null ? "" : String(c.serial),
+      xpos: c.xpos == null ? "" : String(c.xpos), ypos: c.ypos == null ? "" : String(c.ypos), key });
+  });
+  const room = Math.max(MAPSEL_MAX - mapSelChips.length, 0);
+  let cut = 0;
+  if (todo.length > room) { cut = todo.length - room; todo.length = room; }
+  if (!todo.length) {
+    if (cut) showToast(`강조 좌표는 최대 ${MAPSEL_MAX}개입니다`);
+    return { added: 0, missing: 0, cut };
+  }
+  const resp = await fetch(`/pe/report/session/${SESSION_ID}/web_report/commonality/chips_lookup`, {
+    method: "POST", cache: "no-cache", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chips: todo.map(c => ({ source: c.source, serial: c.serial, xpos: c.xpos, ypos: c.ypos })) }),
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+  const j = await resp.json();
+  let added = 0, missing = 0;
+  (j.chips || []).forEach((res, i) => {
+    if (!res) { missing++; return; }
+    const names = (j.item_lists || [])[res.items_ref] || [];
+    const items = {};
+    names.forEach((nm, k) => { items[nm] = { value: res.value[k], cum_pct: res.cum_pct[k] }; });
+    mapSelChips.push({ ...(res.chip || {}), key: todo[i].key, items });
+    added++;
+  });
+  mapSelReassignColors();
+  mapSelRefreshMap();           // Map 강조 반영(보일 때만 즉시)
+  applyChipToDistribution();    // Distribution 카드+상세 재렌더
+  return { added, missing, cut };
+}
+
+// 좌표 1개 토글 — 이미 강조 중이면 해제, 아니면 추가 (Item_detail 점 클릭).
+function mapSelToggle(chip) {
   const key = mapSelChipKey(chip);
-  if (mapSelChips.some(c => c.key === key)) return Promise.resolve(null);
-  const p = new URLSearchParams({ serial: chip.serial || "", xpos: chip.xpos || "",
-    ypos: chip.ypos || "", source: chip.source || "" });
-  return fetch(`/pe/report/session/${SESSION_ID}/web_report/commonality/chip?${p.toString()}`, { cache: "no-cache" })
-    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then(j => {
-      const items = {};
-      (j.items || []).forEach(it => { items[it.subject] = { value: it.value, cum_pct: it.cum_pct }; });
-      return { ...(j.chip || {}), key, items };
-    });
+  if (mapSelChips.some(c => c.key === key)) { mapSelRemove(key); return Promise.resolve({ removed: 1 }); }
+  return mapSelAddChips([chip]);
 }
 
 // 체크된 좌표를 일괄 추가 → 색 재배정 → Map 강조 + Distribution 재렌더 → 검색결과 갱신.
@@ -208,29 +280,31 @@ async function mapSelAddSelected() {
   if (!chips.length) { showToast("선택된 좌표가 없습니다"); return; }
   const btn = document.getElementById("mapSelAddSelected");
   if (btn) { btn.disabled = true; btn.textContent = "추가 중..."; }
-  let added = 0, failed = 0, lastErr = null;
-  for (const chip of chips) {
-    try { const obj = await mapSelFetchChip(chip); if (obj) { mapSelChips.push(obj); added++; } }
-    catch (e) { failed++; lastErr = e; console.warn("chip 조회 실패", chip, e); }
+  try {
+    const r = await mapSelAddChips(chips);
+    // 검색 패널 복원(추가된 항목 disabled 반영)은 renderMapAnalysis 끝의
+    // mapSelRestoreSearchBox 가 이미 했다.
+    showToast(`${r.added}개 추가` +
+      (r.missing ? ` · ${r.missing}개 못 찾음` : "") +
+      (r.cut ? ` · ${r.cut}개 상한 초과` : ""));
+  } catch (e) {
+    console.warn("chip 조회 실패", e);
+    showToast(`좌표 추가 실패 (${e.message || "네트워크 오류"})`);
+  } finally {
+    updateMapSelAddBtn();
   }
-  mapSelReassignColors();
-  renderMapAnalysis();          // Map 강조 반영(전역 상태 읽어 redraw)
-  applyChipToDistribution();    // Distribution 카드+상세 재렌더
-  // 검색 패널 복원(추가된 항목 disabled 반영)은 renderMapAnalysis 끝의
-  // mapSelRestoreSearchBox 가 이미 했다.
-  showToast(`${added}개 추가${failed ? ` · ${failed}개 실패 (${(lastErr && lastErr.message) || "네트워크 오류"})` : ""}`);
 }
 
 function mapSelRemove(key) {
   mapSelChips = mapSelChips.filter(c => c.key !== key);
   mapSelReassignColors();
-  renderMapAnalysis();
+  mapSelRefreshMap();
   applyChipToDistribution();
 }
 
 function mapSelClear() {
   mapSelChips = [];
-  renderMapAnalysis();
+  mapSelRefreshMap();
   applyChipToDistribution();
 }
 

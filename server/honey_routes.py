@@ -70,7 +70,11 @@ def get_version():
         data = json.loads(HONEY_VERSION_JSON.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return jsonify({"error": f"version.json invalid: {exc}"}), 500
-    return jsonify(data)
+    resp = jsonify(data)
+    # 중간 프록시가 낡은 응답을 재사용하면 그 PC 만 옛 버전을 보고 "이미 최신" 으로
+    # 판정한다 — 에러가 아니라 업데이트가 조용히 멈추므로 캐시를 원천 차단한다.
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @honey_bp.get("/announcement")

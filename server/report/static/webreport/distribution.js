@@ -156,6 +156,25 @@ let distSeqCache = {};         // subject → {lower_limit, upper_limit, units, 
 let distSeqBin1Cache = {};
 let distSeqRtBin1Cache = {};
 
+// ── "DUT 별 분리" — 각 source 를 DUT 값별 서브시리즈로 가르는 3번째 축 (2026-09-03) ──
+// 병렬 테스트의 site(DUT)별 편차는 source 단위 그림으로는 안 보인다. 서버가 source 를
+// "<src> · DUT <label>" pseudo-source 로 쪼개 주고(GET .../distribution_batch?dut=1,
+// web_report/dist_dut.py) 프런트는 색만 갈라 칠한다.
+// bin1 축(3종) · 정렬 축(2종) 과 **직교**라 캐시가 6벌 더 늘어난다.
+// ⚠️ 어느 source 를 볼지는 서버가 아니라 **우측 범례 선택(distSourceFilter)** 이 정한다 —
+// 캐시 키에 "선택한 source" 를 넣으면 클릭마다 키가 갈려 파편화가 폭발한다.
+let distDutOnly = false;
+let distDutReady = false;
+let distDutCache = {};
+let distDutBin1Cache = {};
+let distDutRtBin1Cache = {};
+let distSeqDutCache = {};
+let distSeqDutBin1Cache = {};
+let distSeqDutRtBin1Cache = {};
+// 서버 web_report/dist_dut.py `DUT_SOURCE_SEP` 와 **문자 그대로 같아야** 한다
+// (CLAUDE.md §5 규칙 15 — 서버/JS 이중 정의 상수는 짝으로 고친다).
+const DIST_DUT_SEP = " · DUT ";
+
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
   const out = {};
@@ -204,8 +223,11 @@ function distBadgeEl(create) {
       const b = ev.target.closest("[data-dist-retry]");
       if (!b) return;
       distBadgeHide();
-      // seq 계열 키("seq" / "seq-bin1" / "seq-rtbin1")는 어느 것이든 갤러리 재큐잉이면 된다.
-      if (distVariantIsSeq(b.dataset.distRetry)) ensureDistSeqData();
+      // seq/dut 계열 키는 어느 것이든 갤러리 재큐잉이면 된다(어느 ensure* 든 같은 일을
+      // 한다 — ready 플래그를 세우고 refreshDistGallery). 조합 키("seq-dut-bin1" 등)는
+      // 이미 두 토글이 켜져 있으므로 하나만 불러도 재큐잉이 정상 동작한다.
+      if (distVariantIsDut(b.dataset.distRetry)) ensureDistDutData();
+      else if (distVariantIsSeq(b.dataset.distRetry)) ensureDistSeqData();
       else if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
       else if (b.dataset.distRetry === "rtbin1") ensureDistRtBin1Data();
       else if (b.dataset.distRetry === "map") ensureMapData();
@@ -251,9 +273,15 @@ const DIST_BATCH = {
   // 되므로 seq 만 잘게 나눈다 — 받는 총량은 같고 요청당 크기만 준다(규칙 #5 무관).
   // 서버 상한은 routes_webreport._DIST_SEQ_BATCH_MAX(10) — 넘기면 400 이다.
   SEQ_SIZE: 8,
+  // DUT 분리는 항목당 sources 엔트리가 DUT 배로 늘어(시리즈·JSON 구조 오버헤드) 배치를
+  // 조금 줄인다. 서버 상한 routes_webreport._DIST_DUT_BATCH_MAX(20) 이하여야 한다 —
+  // 한쪽만 바꾸면 400 이 난다(CLAUDE.md §5 규칙 15).
+  DUT_SIZE: 16,
   MAX_INFLIGHT: 2,   // 동시 요청 수 — 스크롤을 빨리 내려도 요청이 쌓이지 않게
   DEBOUNCE_MS: 50,   // 관측 이벤트가 몰려 들어오므로 모아서 한 번에 보낸다
   CACHE_MAX: 300,    // 보유 항목 상한(LRU) — 오래 스크롤해도 힙이 무한히 자라지 않게
+  // DUT 변형은 항목 1개가 시리즈 N배라 같은 300 개를 들고 있으면 힙이 N배가 된다.
+  CACHE_MAX_DUT: 80,
 };
 
 let _distSubjectSet = null;    // distribution_index 항목 Set (ECDF 존재 여부의 단일 진실)
@@ -293,11 +321,16 @@ function distSpecLimits(subject, info) {
   return { lo: info ? info.lower_limit : null, hi: info ? info.upper_limit : null };
 }
 
-// 변형 6종 = bin1 축 3종(all 전체 / bin1 전 소스 양품 / rtbin1 RT 만 양품 — Temperature 전용)
-// × 정렬 축 2종(기본 ECDF / "seq-" 접두 = Serial 순 = rawdata 누적 순). 두 축은 직교하고
-// 캐시는 변형마다 따로다 — 축 의미가 다른 데이터가 섞이면 그림이 조용히 잘못 그려진다.
+// 변형 12종 = bin1 축 3종(all 전체 / bin1 전 소스 양품 / rtbin1 RT 만 양품 — Temperature 전용)
+// × 정렬 축 2종(기본 ECDF / "seq-" 접두 = Serial 순 = rawdata 누적 순)
+// × DUT 축 2종(source 단위 / "dut" 포함 = source 를 DUT 값별로 분리).
+// 세 축은 직교하고 캐시는 변형마다 따로다 — 축 의미가 다른 데이터가 섞이면 그림이 조용히
+// 잘못 그려진다. 조합 이름은 distGalleryDataVariant() 가 만드는 것과 **정확히 일치**해야
+// 한다(없는 키면 distCacheFor 가 all 로 폴백해 다른 축 데이터를 그린다).
 // 순서가 곧 배치 처리 우선순위다(distFlushBatch) — ECDF 계열을 먼저 비운다.
-const DIST_VARIANTS = ["all", "bin1", "rtbin1", "seq", "seq-bin1", "seq-rtbin1"];
+const DIST_VARIANTS = ["all", "bin1", "rtbin1", "seq", "seq-bin1", "seq-rtbin1",
+                       "dut", "dut-bin1", "dut-rtbin1",
+                       "seq-dut", "seq-dut-bin1", "seq-dut-rtbin1"];
 const _distPending = {};   // variant → Set (요청 대기)
 const _distHave = {};      // variant → Set (완료/진행 중)
 const _distOrder = {};     // variant → [] (LRU 축출 순서)
@@ -317,6 +350,8 @@ function distVariantKey(v) {
 }
 // Serial 순 변형인가 (캐시 스키마·렌더러·요청 쿼리가 갈리는 분기점).
 function distVariantIsSeq(v) { return distVariantKey(v).indexOf("seq") === 0; }
+// DUT 분리 변형인가 (source 가 "<src> · DUT <label>" 로 쪼개져 오는 응답).
+function distVariantIsDut(v) { return distVariantKey(v).indexOf("dut") >= 0; }
 function distCacheFor(v) {
   switch (distVariantKey(v)) {
     case "bin1": return distBin1Cache;
@@ -324,15 +359,21 @@ function distCacheFor(v) {
     case "seq": return distSeqCache;
     case "seq-bin1": return distSeqBin1Cache;
     case "seq-rtbin1": return distSeqRtBin1Cache;
+    case "dut": return distDutCache;
+    case "dut-bin1": return distDutBin1Cache;
+    case "dut-rtbin1": return distDutRtBin1Cache;
+    case "seq-dut": return distSeqDutCache;
+    case "seq-dut-bin1": return distSeqDutBin1Cache;
+    case "seq-dut-rtbin1": return distSeqDutRtBin1Cache;
     default: return distDataCache;
   }
 }
-// variant → 요청 쿼리 조각 (서버 routes_webreport 가 bin1/bin1_scope/order 로 받는다).
+// variant → 요청 쿼리 조각 (서버 routes_webreport 가 bin1/bin1_scope/order/dut 로 받는다).
 function distVariantQuery(v) {
   const k = distVariantKey(v);
-  const ord = distVariantIsSeq(k) ? "&order=seq" : "";
-  if (k === "bin1" || k === "seq-bin1") return "&bin1=1" + ord;
-  if (k === "rtbin1" || k === "seq-rtbin1") return "&bin1=1&bin1_scope=rt" + ord;
+  const ord = (distVariantIsSeq(k) ? "&order=seq" : "") + (distVariantIsDut(k) ? "&dut=1" : "");
+  if (k.indexOf("rtbin1") >= 0) return "&bin1=1&bin1_scope=rt" + ord;
+  if (k.indexOf("bin1") >= 0) return "&bin1=1" + ord;
   return ord;
 }
 function _distPendingTotal() {
@@ -352,8 +393,10 @@ function distScheduleRefresh() {
 // 버린 항목은 _distHave 에서도 빼야 다시 보일 때 재요청이 걸린다.
 function distCachePut(variant, subject, info) {
   const key = distVariantKey(variant);
+  // DUT 변형은 항목 1개가 시리즈 N배(source × DUT)라 같은 개수를 들고 있으면 힙이 N배다.
+  const max = distVariantIsDut(key) ? DIST_BATCH.CACHE_MAX_DUT : DIST_BATCH.CACHE_MAX;
   cachePutCapped(distCacheFor(variant), _distOrder[key], subject, info,
-                 DIST_BATCH.CACHE_MAX, old => _distHave[key].delete(old));
+                 max, old => _distHave[key].delete(old));
 }
 
 // 이 항목의 ECDF 를 요청 큐에 넣는다 (이미 보유/요청 중이면 no-op).
@@ -397,7 +440,9 @@ function distFlushBatch() {
   const key = DIST_VARIANTS.find(k => _distPending[k].size);
   if (!key) return;
   const pending = _distPending[key];
-  const size = distVariantIsSeq(key) ? DIST_BATCH.SEQ_SIZE : DIST_BATCH.SIZE;
+  // 두 축이 함께 걸리면 더 작은 쪽을 쓴다 — 서버도 같은 규칙으로 상한을 낮춘다.
+  let size = distVariantIsSeq(key) ? DIST_BATCH.SEQ_SIZE : DIST_BATCH.SIZE;
+  if (distVariantIsDut(key)) size = Math.min(size, DIST_BATCH.DUT_SIZE);
   const subjects = Array.from(pending).slice(0, size);
   subjects.forEach(s => { pending.delete(s); _distHave[key].add(s); });
 
@@ -412,6 +457,7 @@ function distFlushBatch() {
       const built = distVariantIsSeq(key) ? buildDistSeqFromCompact(j)
                                          : buildDistDataFromCompact(j);
       Object.keys(built).forEach(s => distCachePut(key, s, built[s]));
+      if (distVariantIsDut(key)) distDutWarnIfCrowded(built);
       distScheduleRefresh();
     })
     .catch(e => {
@@ -491,6 +537,14 @@ function ensureDistSeqData() {
   refreshDistGallery();
   return Promise.resolve();
 }
+// DUT 별 분리 — 같은 배치 로더의 dut 변형(?dut=1). 서버가 source 를 쪼개 주므로 프런트는
+// 색만 갈라 칠한다. 시리즈가 많아지면 첫 배치 도착 후 안내 토스트를 1회 띄운다.
+function ensureDistDutData() {
+  distDutReady = true;
+  _distBatchFailed = false;
+  refreshDistGallery();
+  return Promise.resolve();
+}
 
 // 현재 갤러리가 쓰는 **bin1 축** 변형 키 ("all" | "bin1" | "rtbin1").
 // ⚠️ 여기에 seq 를 섞지 말 것 — 이 값을 dist_composite.js `_dcCache[…]` / gap_chart.js
@@ -502,11 +556,14 @@ function distGalleryVariant() {
   if (distRtBin1Only) return "rtbin1";
   return "all";
 }
-// 갤러리 미니셀이 쓰는 변형 키 — Serial 순 토글이 켜지면 seq 계열로 갈린다.
+// 갤러리 미니셀이 쓰는 변형 키 — Serial 순·DUT 분리 토글이 켜지면 계열로 갈린다.
+// 조합 결과 12개는 DIST_VARIANTS 와 **정확히 일치**해야 한다(테스트가 고정한다).
 function distGalleryDataVariant() {
-  const b = distGalleryVariant();
-  if (!distSeqOnly) return b;
-  return b === "all" ? "seq" : "seq-" + b;
+  const b = distGalleryVariant();          // "all" | "bin1" | "rtbin1"
+  let k = b;
+  if (distDutOnly) k = (b === "all") ? "dut" : "dut-" + b;
+  if (!distSeqOnly) return k;
+  return k === "all" ? "seq" : "seq-" + k;
 }
 
 // 갤러리에 보이는(관측 중) 카드만 재큐잉 — Bin1 데이터 도착 시 미니셀을 다시 채운다.
@@ -543,13 +600,121 @@ function distActiveColorFor(source) {
   if (!distSourceFilter.size) return distColorFor(source);
   return distSourceFilter.has(source) ? distColorFor(source) : DIST_DIM_COLOR;
 }
+
+// ── "DUT 별 분리" 시리즈 이름·색 ─────────────────────────────────────────────
+// 서버가 준 "<src> · DUT <label>" 을 base(원래 source)와 라벨로 가른다. 파싱은 이 두 곳
+// 한 벌만 두고 나머지는 전부 이걸 부른다.
+// ⚠️ **오파싱 방어**: source 이름 자체에 " · DUT " 가 들어 있을 수 있다. base 가 실제
+// payload 의 source 목록(distColorMap)에 없으면 분할된 이름이 아니라고 보고 원본을
+// 돌려준다 — 그래야 분리를 끄고 쓰는 세션이 영향을 받지 않는다.
+function distDutBase(name) {
+  const i = String(name || "").indexOf(DIST_DUT_SEP);
+  if (i < 0) return name;
+  const b = name.slice(0, i);
+  return (b in distColorMap) ? b : name;
+}
+function distDutLabel(name) {
+  const i = String(name || "").indexOf(DIST_DUT_SEP);
+  if (i < 0) return "";
+  return (name.slice(0, i) in distColorMap) ? name.slice(i + DIST_DUT_SEP.length) : "";
+}
+// 서버 honeyform._dut_sort_key 와 **같은 규칙**: 숫자 라벨은 수치 오름차순(1,2,…,10),
+// 비숫자('(blank)' 등)는 뒤로 문자순. 갤러리와 상세의 색 인덱스가 어긋나면 같은 DUT 가
+// 화면마다 다른 색이 된다.
+function distDutSortCmp(a, b) {
+  const na = Number(a), nb = Number(b);
+  const aN = a !== "" && isFinite(na), bN = b !== "" && isFinite(nb);
+  if (aN && bN) return na - nb;
+  if (aN !== bN) return aN ? -1 : 1;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+// hex 색의 각 채널을 t 배 (0~255 클램프). t<1 어둡게, t>1 밝게.
+function distScaleHex(hex, t) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ""));
+  if (!m) return hex;
+  const v = parseInt(m[1], 16);
+  const ch = [(v >> 16) & 255, (v >> 8) & 255, v & 255]
+    .map(c => Math.max(0, Math.min(255, Math.round(c * t))));
+  return "#" + ch.map(c => c.toString(16).padStart(2, "0")).join("");
+}
+// 같은 source 의 DUT 서브시리즈 색 — base 색의 **명도 변주**로 만든다.
+// 별도 팔레트는 쓰지 않는다: source 구분(1차 정보)이 DUT 구분(2차)보다 우선이고, 팔레트를
+// 섞으면 서로 다른 source 의 DUT 가 비슷한 색이 되어 범례가 거짓말을 한다.
+const DIST_DUT_LIGHT_MIN = 0.65, DIST_DUT_LIGHT_MAX = 1.35;
+function distDutColor(base, i, n) {
+  if (n <= 1 || i < 0) return base;
+  const t = DIST_DUT_LIGHT_MIN + (DIST_DUT_LIGHT_MAX - DIST_DUT_LIGHT_MIN) * (i / (n - 1));
+  return distScaleHex(base, t);
+}
+// 이 칸(항목)의 시리즈 이름 목록으로 색 해석기를 만든다 — 항목마다 DUT 구성이 다를 수
+// 있으므로 전역 lookup 대신 클로저로 고정한다. `plot._distColorFor` 에 주입하면
+// distDrawPoints 가 이걸 쓴다(composite 가 이미 쓰는 훅 재사용).
+// 강조 판정(dim)은 **base source** 기준이다 — 범례는 base 를 클릭하기 때문.
+function distMakeDutColorFor(names) {
+  const byBase = {};
+  (names || []).forEach(n => {
+    const b = distDutBase(n), l = distDutLabel(n);
+    if (!l) return;
+    (byBase[b] = byBase[b] || []).push(l);
+  });
+  Object.keys(byBase).forEach(b => byBase[b].sort(distDutSortCmp));
+  return function (name) {
+    const b = distDutBase(name), l = distDutLabel(name);
+    if (!l) return distActiveColorFor(name);          // 분할 안 된 source
+    if (distSourceFilter.size && !distSourceFilter.has(b)) return DIST_DIM_COLOR;
+    const labels = byBase[b] || [];
+    return distDutColor(distColorFor(b), labels.indexOf(l), labels.length);
+  };
+}
+// 시리즈가 이만큼 넘으면 "범례에서 source 를 골라 좁히라"고 1회 안내한다. source 가 여럿인
+// 세션에서 분리를 켜면 (source × DUT) 시리즈가 한 칸에 겹쳐 색 구분이 사실상 무의미해지는데,
+// 그걸 말없이 던지면 첫인상이 "고장"으로 읽힌다. DUT 수는 payload 에 없으므로 **첫 배치가
+// 도착한 뒤** 실제 시리즈 수를 세어 판단한다(그 전에 알 방법이 없고, 억지로 알아내려
+// /full payload 에 필드를 더하면 전역 스키마 bump = 콜드 폭풍이다).
+const DIST_DUT_WARN_SERIES = 48;
+let _distDutWarned = false;
+function distDutWarnIfCrowded(built) {
+  if (_distDutWarned) return;
+  const first = Object.keys(built || {})[0];
+  const n = first ? Object.keys(built[first].bySource || {}).length : 0;
+  if (n < DIST_DUT_WARN_SERIES) return;
+  _distDutWarned = true;
+  if (typeof showToast === "function")
+    showToast(`DUT 분리 시리즈가 ${n}개입니다 — 우측 범례에서 source 를 골라 좁혀 보세요.`);
+}
+// 갤러리 셀 1장에 DUT 색 해석기를 물린다(+ 프레임당 장수 판정용 시리즈 수 기록).
+// 분리가 꺼져 있으면 훅을 남기지 않는다 — distDrawPoints 가 종전 경로 그대로 돈다.
+function distDutTagPlot(plot, srcNames) {
+  if (!plot) return;
+  if (!distDutOnly) { plot._distColorFor = null; return; }
+  _distLastSeriesCount = (srcNames || []).length;
+  plot._distColorFor = distMakeDutColorFor(srcNames);
+}
+// 현재 DUT 변형 캐시에 들어온 아무 항목의 시리즈 이름 목록 — 범례 스와치가 "이 source 가
+// 몇 갈래인지" 를 알기 위해 쓴다. DUT 구성은 항목마다 다를 수 있지만 범례는 대표값 하나면
+// 충분하다(정확한 라벨은 상세 hover). 아직 배치가 안 왔으면 빈 배열 → 종전 단색 스와치.
+function distDutSeriesNames() {
+  const c = distCacheFor(distGalleryDataVariant());
+  const k = Object.keys(c || {})[0];
+  return k ? Object.keys(c[k].bySource || {}) : [];
+}
+// 범례 스와치용 — 그 source 의 DUT 색 목록(정렬 순). 없으면 빈 배열.
+function distDutRamp(base, names) {
+  const labels = (names || []).filter(n => distDutBase(n) === base)
+    .map(distDutLabel).filter(Boolean).sort(distDutSortCmp);
+  const c = distColorFor(base);
+  return labels.map((_, i) => distDutColor(c, i, labels.length));
+}
 // 강조가 걸리면 dim 소스가 먼저(=아래에) 그려지도록 정렬한 사본 — 산포가 겹치면 색만
 // 바꿔서는 강조 소스가 뒤 trace 에 깔려 안 보인다(distDrawPoints 의 order 정렬과 같은
 // 규칙, 안정 정렬이라 그룹 내부는 원래 순서 유지). 필터가 비면 원본 그대로(그리기 순서 불변).
 function distOrderedSources(list) {
   list = list || [];
   if (!distSourceFilter.size) return list;
-  return list.slice().sort((a, b) => (distSourceFilter.has(a.name) ? 1 : 0) - (distSourceFilter.has(b.name) ? 1 : 0));
+  // DUT 분리 시 시리즈명은 "<src> · DUT n" 이라 그대로 비교하면 전부 dim 취급된다 —
+  // base source 로 판정한다(분할 안 된 이름은 distDutBase 가 원본을 돌려줘 동작 불변).
+  return list.slice().sort((a, b) => (distSourceFilter.has(distDutBase(a.name)) ? 1 : 0)
+                                   - (distSourceFilter.has(distDutBase(b.name)) ? 1 : 0));
 }
 
 // ── source 색 범례 (갤러리 툴바 · item_detail 상단 공용) ──────────────────────
@@ -569,10 +734,20 @@ function distLegendHtml(sources, cls) {
   const vert = String(cls || "").indexOf(DIST_LEGEND_VERT_CLS) >= 0;
   const many = list.length >= DIST_LEGEND_COLLAPSE_MIN;
   const open = vert || !many || distLegendOpen;
+  // DUT 분리 시에도 범례는 **base source 목록 그대로** 둔다(클릭 대상도 base). DUT 를
+  // 항목으로 늘어놓으면 source×DUT 개가 되어 세로 칸이 스크롤 지옥이 된다 — 대신 스와치를
+  // 그 source 의 DUT 색 그라데이션으로 바꿔 "몇 갈래로 갈렸는지"만 보여주고, 정확한 DUT
+  // 라벨은 Item_detail hover(`source : WF1 · DUT 3`)에서 읽는다.
+  const dutNames = distDutOnly ? distDutSeriesNames() : null;
   const items = list.map(s => {
     const on = distSourceFilter.has(s.name);
-    return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(s.name)}">` +
-      `<span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>` +
+    const ramp = dutNames ? distDutRamp(s.name, dutNames) : null;
+    const sw = (ramp && ramp.length > 1)
+      ? `background:linear-gradient(90deg,${ramp.join(",")})`
+      : `background:${distColorFor(s.name)}`;
+    const tip = (ramp && ramp.length > 1) ? `${s.name} · DUT ${ramp.length}종` : s.name;
+    return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(tip)}">` +
+      `<span class="dist-leg-sw" style="${sw}"></span>` +
       `<span class="dist-leg-nm">${esc(s.name)}</span></span>`;
   }).join("");
   const toggle = (many && !vert)
@@ -1165,6 +1340,7 @@ function distRenderGallerySeqCell(plot, info, status, subject) {
     const srcNames = Object.keys(info.bySource);
     const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_CARD);
     srcNames.forEach(src => { pts[src] = distSeqDisplayPoints(info.bySource[src], cap); });
+    distDutTagPlot(plot, srcNames);
   }
   const b = distSeqBounds(pts);
   const traces = [];
@@ -1244,8 +1420,10 @@ function distDrawPoints(plot) {
   // Object.keys 순서 그대로다. 필터가 비면 정렬 자체를 건너뛰어 기존과 그리기 순서·
   // 출력이 바이트 단위로 같다.
   const srcs = Object.keys(pts);
+  // DUT 분리 시 키가 "<src> · DUT n" 이라 base 로 판정한다(분할 안 된 이름은 원본 반환).
   const order = distSourceFilter.size
-    ? srcs.slice().sort((a, b) => (distSourceFilter.has(a) ? 1 : 0) - (distSourceFilter.has(b) ? 1 : 0))
+    ? srcs.slice().sort((a, b) => (distSourceFilter.has(distDutBase(a)) ? 1 : 0)
+                                - (distSourceFilter.has(distDutBase(b)) ? 1 : 0))
     : srcs;
   // pts 의 키는 보통 source 명이지만 Distribution composite 는 pairKey(source+U+001F+item)
   // 라 색 해석기를 plot 에 주입한다(dist_composite.js). 미설정이면 종전과 완전히 동일.
@@ -1261,14 +1439,20 @@ function distDrawPoints(plot) {
     }
     ctx.fill();
   });
+  // extra(선택 좌표 마커)는 **trace 1개에 점 N개**다(map_select.mapSelMarkerTraces) —
+  // 첫 점만 그리면 드래그로 여러 die 를 고른 경우 하나만 강조된다. marker.color 는
+  // 점별 색 배열일 수 있다(단색이면 문자열 그대로).
   (plot._distExtra || []).forEach(t => {
     if (!t.x || !t.x.length) return;
     const m = t.marker || {}, r = (m.size || 7) / 2;
-    const px = ox + xa.l2p(t.x[0]), py = oy + ya.l2p(t.y[0]);
-    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU);
-    ctx.fillStyle = m.color || "#000"; ctx.fill();
-    if (m.line && m.line.width) {
-      ctx.lineWidth = m.line.width; ctx.strokeStyle = m.line.color || "#fff"; ctx.stroke();
+    const cols = Array.isArray(m.color) ? m.color : null;
+    for (let i = 0; i < t.x.length; i++) {
+      const px = ox + xa.l2p(t.x[i]), py = oy + ya.l2p(t.y[i]);
+      ctx.beginPath(); ctx.arc(px, py, r, 0, TAU);
+      ctx.fillStyle = (cols ? cols[i] : m.color) || "#000"; ctx.fill();
+      if (m.line && m.line.width) {
+        ctx.lineWidth = m.line.width; ctx.strokeStyle = m.line.color || "#fff"; ctx.stroke();
+      }
     }
   });
   return true;
@@ -1309,6 +1493,9 @@ function distRepaintPoints() {
 function distGalleryCache() { return distCacheFor(distGalleryDataVariant()); }
 function distGalleryReady() {
   const v = distGalleryDataVariant();
+  // 축 하나라도 준비 안 됐으면 안 그린다. dut 를 seq 보다 먼저 본다 — 조합 키에서
+  // 두 판정이 겹치는데 dut 쪽이 더 늦게 켜지는 축이기 때문(어느 쪽이든 배치는 같이 온다).
+  if (distVariantIsDut(v)) return distDutReady;
   if (distVariantIsSeq(v)) return distSeqReady;
   return v === "bin1" ? distBin1Ready : (v === "rtbin1" ? distRtBin1Ready : distDataReady);
 }
@@ -1349,15 +1536,17 @@ function distRenderGalleryCell(cell) {
   const pts = {};
   if (info) {
     const srcNames = Object.keys(info.bySource);
+    // DUT 분리 시 시리즈 수가 (source × DUT) 라 예산이 자동으로 나뉜다(수식 무변경).
     const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_CARD);
     srcNames.forEach(src => { pts[src] = distDisplayPoints(info.bySource[src], cap); });
+    distDutTagPlot(plot, srcNames);
   }
   const traces = [];
   const sentinel = distSentinelTrace(pts);
   if (sentinel) traces.push(sentinel);
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));
-  const cm = chipMarkersFor(subject);
+  const cm = chipMarkersFor(subject, false, { size: MAPSEL_CARD_MARKER_SIZE });
   if (cm) { traces.push(...cm.traces); shapes = shapes.concat(cm.shapes); }
   // 단측 스펙 클램프용 데이터 끝값 — ECDF xs 는 오름차순이라 양끝만 보면 된다.
   let gMin = Infinity, gMax = -Infinity;
@@ -1392,8 +1581,13 @@ function distPurgeGalleryCell(cell) {
 // 같지만 프레임당 초과를 막아 스크롤 끊김이 준다. 실측(40소스·미니셀 150×112px, 칸 예산
 // 적용 후): 셀 1장 콜드 11.3ms / 재스크롤 4.4ms → 3장이면 34ms 로 프레임 예산(16.7ms)을
 // 넘지만 1장이면 들어온다. 소스가 적으면(<8) 셀이 가벼워 기존 3장 그대로.
+// DUT 분리를 켜면 칸 하나의 시리즈가 (source × DUT) 배로 늘어 렌더 비용도 그만큼 커진다 —
+// source 수만 보면 프레임당 3장을 계속 그려 스크롤이 끊긴다. 정확한 DUT 수는 항목마다
+// 다를 수 있어(빠진 DUT) 마지막으로 그린 칸의 시리즈 수를 표본으로 쓴다(첫 칸만 종전 기준).
+let _distLastSeriesCount = 0;
 function distPerFrame() {
-  const n = ((DATA.web_report && DATA.web_report.sources) || []).length;
+  let n = ((DATA.web_report && DATA.web_report.sources) || []).length;
+  if (distDutOnly) n = Math.max(n, _distLastSeriesCount);
   if (n >= 16) return 1;
   if (n >= 8) return 2;
   return DIST.PER_FRAME;
@@ -1423,45 +1617,97 @@ function distFlushRender() {
 }
 
 // ── 툴바 + 갤러리 ─────────────────────────────────────────────────────────────
+// 툴바 버튼이 8개까지 늘어 가로로 꽉 차던 것을 성격별 드롭다운 2개로 접었다
+// (사용자 요청 2026-09-03). **접기만 한 것이라 상태 변수·토글 로직은 종전 그대로**다 —
+// 메뉴 항목의 data-seg 키가 옛 버튼과 같아 distBindPanel 의 분기를 그대로 재사용한다.
+//   Item Filter  = 어떤 항목 카드를 보여줄지 (카드 개수가 변하는 것)
+//   Chart Option = 각 카드 차트를 어떻게 그릴지 (개수는 그대로, 그림만 변하는 것)
+// "전체 보기" 는 Item Filter 를 한 번에 푸는 액션이라 툴바에 그대로 노출한다.
+// 메뉴 룩·배치는 Issue Table 액션 메뉴(.issue-menu)를 그대로 쓴다.
+function distMenuItemHtml(on, key, label, title) {
+  return `<button type="button" class="issue-menu-item${on ? " checked" : ""}" data-seg="${key}"` +
+    ` title="${esc(title)}"><span class="issue-menu-mark">${on ? "✓" : ""}</span>` +
+    `<span class="issue-menu-label">${esc(label)}</span></button>`;
+}
+// 메뉴 항목 정의는 한 벌만 둔다 — 트리거의 "켜진 개수" 배지와 열린 메뉴 본문이 같은
+// 목록을 봐야 한다(따로 두면 조건부 항목이 생겼을 때 개수가 어긋난다).
+// [켜짐, data-seg 키, 라벨, title] 튜플.
+function distFilterMenuItems() {
+  const items = [
+    [distCpkOnly, "cpk", "cpk < 1.33", "cpk 가 1.33 미만인 항목만 표시"],
+    [distFailOnly, "fail", "Fail Only", "fail 이 있는 항목만 표시"],
+    [distHidePassfail, "nopf", "P/F 없애기",
+      "켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시"],
+  ];
+  // Compare 모드에서만, 그리고 신규 항목이 실제로 있을 때만 노출한다(Compare 계산이
+  // 아직 pending 이면 new_items 가 없어 자동으로 숨겨진다).
+  const newItems = distNewItemSet();
+  if (webReportMode() === "Compare" && newItems.size) {
+    items.push([distNewOnly, "newitem", `신규항목보기 (${newItems.size})`,
+      "Before 에 없고 After 에만 있는 신규 Test Item 만 표시 (판정 기준: 그룹 전체 합집합)"]);
+  }
+  return items;
+}
+function distChartMenuItems() {
+  const items = [
+    // Serial 순(rawdata 누적 순) — 데이터 변형이라 별도 배치(order=seq)를 받는다.
+    // Item_detail 에도 같은 상태를 쓰는 버튼이 있다(item_detail.js idetOptsHtml) —
+    // 어느 쪽에서 켜도 둘 다 같은 모드가 된다.
+    [distSeqOnly, "seq", "Serial 순",
+      "켜짐: 각 source 의 rawdata 가 쌓인 순서(Serial 순)로 x=측정 순서 · y=측정값 표시 (Limit 은 수평 점선) · 꺼짐: 누적분포(ECDF)"],
+    [distLimitOnly, "limit", "Limit 안 Data만", "x 축을 Limit(LSL~USL) 범위로 고정"],
+  ];
+  // DUT 별 분리 — 각 source 를 DUT 값별 색으로 가른다(데이터 변형, ?dut=1 배치).
+  // **이미 DUT 모드인 세션에서는 내린다** — 그 세션은 업로드 시점에 이미 DUT 로 쪼개져
+  // 있어 다시 쪼갤 게 없다. 항목과 함께 상태도 끈다(다른 세션에서 켠 채 넘어왔을 때
+  // 끌 항목이 없는 상태로 갇히는 것 방지 — Temperature 의 bin1 처방과 같다).
+  if (webReportMode() === "DUT") {
+    if (distDutOnly) distDutOnly = false;
+  } else {
+    items.push([distDutOnly, "dut", "DUT 별 분리",
+      "켜짐: 각 source 를 DUT 값별 색으로 분리 (우측 범례에서 source 를 고르면 그 source 의 DUT 만 강조) · 꺼짐: source 단위"]);
+  }
+  // Temperature 모드에서는 "Bin1 only" 를 내리고 "Bin1 (RT만)" 하나만 남긴다
+  // (2026-08-11 요청) — CT/HT 까지 양품으로 좁히는 변형은 RT limit 재판정 결과와 기준이
+  // 어긋나 오해를 부른다. 항목과 함께 상태도 끈다 — 안 끄면 다른 세션에서 켠 채 넘어왔을
+  // 때 끌 항목이 없는 상태로 갇힌다.
+  if (tempIsMode()) {
+    if (distBin1Only) distBin1Only = false;
+    // Temperature 전용 변형 — RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체를 유지한다.
+    items.push([distRtBin1Only, "rtbin1", "Bin1 (RT만)",
+      "켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die"]);
+  } else {
+    items.push([distBin1Only, "bin1", "Bin1 only",
+      "켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die"]);
+  }
+  return items;
+}
 function distToolbarHtml() {
-  // cpk<1.33 / Fail Only 독립 토글(둘 다 켜면 교집합). 둘 다 끄면 전체.
-  const seg = (on, key, label) => `<button class="distseg${on ? " active" : ""}" data-seg="${key}">${esc(label)}</button>`;
   // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 표시. 세그먼트 그룹 밖(검색창 뒤)에
   // 둔다 — 그룹 안에 있으면 선택 개수에 따라 그룹 폭이 변해 오른쪽 검색창이 좌우로 밀렸다.
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
-  // Temperature 모드에서는 "Bin1 only" 를 내리고 "Bin1 (RT만)" 하나만 남긴다
-  // (2026-08-11 요청) — CT/HT 까지 양품으로 좁히는 변형은 RT limit 재판정 결과와 기준이
-  // 어긋나 오해를 부른다. 버튼과 함께 상태도 끈다 — 안 끄면 다른 세션에서 켠 채 넘어왔을
-  // 때 끌 버튼이 없는 상태로 갇힌다.
-  if (tempIsMode() && distBin1Only) distBin1Only = false;
-  const bin1Btn = tempIsMode() ? ""
-    : `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
-  // Temperature 전용 변형 — RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체를 유지한다.
-  const rtBin1Btn = tempIsMode()
-    ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-seg="rtbin1" title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
-    : "";
-  const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
+  // 접힌 안쪽 상태는 보이지 않으므로 트리거에 켜진 개수를 붙인다 — 없으면 필터가 걸린 줄
+  // 모른 채 "항목이 안 보인다" 로 오해한다.
+  const trigger = (key, label, title, items) => {
+    const on = items.filter(it => it[0]).length;
+    return `<button type="button" class="distseg dist-menu-btn${on ? " active" : ""}"` +
+      ` data-distmenu="${key}" aria-haspopup="true" aria-expanded="false" title="${esc(title)}">` +
+      `${esc(label)}${on ? ` (${on})` : ""} ▾</button>`;
+  };
   // 전체 보기 — 항목을 숨기는 필터(cpk<1.33 / Fail Only / P/F 없애기 / 신규항목보기)를
   // 한 번에 해제하는 액션 버튼(토글 아님).
   // 데이터 변형(Bin1 계열)과 축 옵션(Limit)은 건드리지 않는다.
-  // Compare 모드에서만, 그리고 신규 항목이 실제로 있을 때만 노출한다(Compare 계산이
-  // 아직 pending 이면 new_items 가 없어 자동으로 숨겨진다).
-  const newItems = distNewItemSet();
-  const newBtn = (webReportMode() === "Compare" && newItems.size)
-    ? `<button class="distseg${distNewOnly ? " active" : ""}" data-seg="newitem" title="Before 에 없고 After 에만 있는 신규 Test Item 만 표시 (판정 기준: 그룹 전체 합집합)">신규항목보기 (${newItems.size})</button>`
-    : "";
-  // Serial 순(rawdata 누적 순) — 데이터 변형이라 별도 배치(order=seq)를 받는다.
-  // 툴바 **맨 앞**(좌상단, 사용자 요청 2026-08-24). Item_detail 에도 같은 상태를 쓰는
-  // 버튼이 있다(item_detail.js idetOptsHtml) — 어느 쪽에서 켜도 둘 다 같은 모드가 된다.
-  const seqBtn = `<button class="distseg${distSeqOnly ? " active" : ""}" data-seg="seq" title="켜짐: 각 source 의 rawdata 가 쌓인 순서(Serial 순)로 x=측정 순서 · y=측정값 표시 (Limit 은 수평 점선) · 꺼짐: 누적분포(ECDF)">Serial 순</button>`;
   const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 · 신규항목보기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
   // "분석하기" — 합성 산포 차트(Distribution composite) 만들기 메뉴. 편집모드에서만
   // 노출한다(Issue Table 액션 메뉴와 같은 정책). 만들어진 카드는 전원에게 보인다.
   const analyzeBtn = (typeof MODE !== "undefined" && MODE === "edit"
                       && typeof dcAnalyzeBtnHtml === "function") ? dcAnalyzeBtnHtml() : "";
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seqBtn}${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}${newBtn}</div>
+    <div class="distseg-group">${allBtn}` +
+    trigger("filter", "Item Filter", "표시할 항목 카드를 고르는 필터", distFilterMenuItems()) +
+    trigger("chart", "Chart Option", "각 카드 차트를 그리는 방식", distChartMenuItems()) +
+    `</div>
     ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
@@ -1475,6 +1721,57 @@ function distToolbarHtml() {
   // 둔다 — 소스가 최대 21개라 가로로 늘어놓으면 읽기 어렵고, 툴바 안에 넣으면 sticky
   // 헤더가 갤러리 세로 공간을 계속 잡아먹었다(사용자 요청 2026-08-04).
 }
+
+// ── Item Filter / Chart Option 드롭다운 ──────────────────────────────────────
+// 배치는 dist_composite.js 의 "분석하기" 메뉴와 같은 처방(fixed + 실측 뒤집기)이지만
+// 상태는 독립이다. 항목을 눌러도 메뉴는 닫지 않는다 — 여러 개를 연속으로 켜고 끄는
+// 쓰임이라(체크 토글) 매번 닫히면 옛 버튼보다 오히려 클릭이 늘어난다.
+let _distMenuEl = null, _distMenuAnchor = null, _distMenuKey = null;
+function distCloseMenu() {
+  if (!_distMenuEl) return;
+  if (_distMenuAnchor) _distMenuAnchor.setAttribute("aria-expanded", "false");
+  _distMenuEl.remove();
+  _distMenuEl = null; _distMenuAnchor = null; _distMenuKey = null;
+}
+function distMenuBody(key) {
+  const items = key === "filter" ? distFilterMenuItems() : distChartMenuItems();
+  return items.map(it => distMenuItemHtml(it[0], it[1], it[2], it[3])).join("");
+}
+function distOpenMenu(btn, key) {
+  if (_distMenuAnchor === btn) { distCloseMenu(); return; }
+  distCloseMenu();
+  const panel = document.getElementById("panel-distribution");
+  if (!panel) return;
+  const menu = document.createElement("div");
+  menu.className = "issue-menu dist-menu";
+  menu.innerHTML = distMenuBody(key);
+  menu.style.position = "fixed";
+  menu.style.visibility = "hidden";
+  panel.appendChild(menu);
+  const rect = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let top = rect.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - mw - 12)) + "px";
+  menu.style.top = top + "px";
+  menu.style.visibility = "";
+  btn.setAttribute("aria-expanded", "true");
+  _distMenuEl = menu; _distMenuAnchor = btn; _distMenuKey = key;
+}
+// 갤러리 재렌더(distRenderGallery)는 툴바 DOM 을 통째로 갈아치우므로 열려 있던 메뉴의
+// 앵커 버튼이 사라진다. 메뉴는 패널의 자식이라 innerHTML 교체와 함께 지워지지만 참조는
+// 남으므로, 같은 key 로 다시 열어 사용자가 이어서 토글할 수 있게 한다.
+function distReopenMenu() {
+  if (!_distMenuKey) return;
+  const key = _distMenuKey;
+  _distMenuEl = null; _distMenuAnchor = null; _distMenuKey = null;
+  const btn = document.querySelector(`#panel-distribution [data-distmenu="${key}"]`);
+  if (btn) distOpenMenu(btn, key);
+}
+document.addEventListener("click", e => {
+  if (_distMenuEl && !e.target.closest(".dist-menu") && !e.target.closest("[data-distmenu]")) distCloseMenu();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") distCloseMenu(); });
 function distUpdateCount() {
   const el = document.querySelector("#panel-distribution .dist-count");
   if (el) el.textContent = `${distFiltered.length} 개`;

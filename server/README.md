@@ -352,6 +352,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/trim_chart_batch?source=&group=A&group=B…` | 공개 | Trim 그룹 차트 **배치** (1~6개=산포 한 페이지, `group` 반복 param **순서 유지**) → `{"charts":[...]}` gzip. 각 chart 는 단일 `/trim_chart` 결과와 값 동일. 콜드면 컴퓨트 워커로 오프로드. **Trim 탭은 「분석 시작」 버튼을 눌러야 호출된다**(탭 진입만으로는 요청 0건) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
+| `POST` | `/commonality/chips_lookup` | 공개 | 여러 chip 의 항목별 값·누적%를 **한 번에** (Item_detail 드래그 좌표 강조). `{"chips":[{source,serial,xpos,ypos}]}` → `{"item_lists":[[item…]], "chips":[{chip,items_ref,value[],cum_pct[]}\|null]}`. 값은 `/commonality/chip` 과 동일하고 못 찾은 chip 은 `null`(전체 실패 아님). 상한 300(초과 400) — 프런트 `map_select.js MAPSEL_MAX` 와 짝. 조회만 하므로 CSRF 없음(POST 인 것은 URL 길이 때문) |
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집. `/issue_table/etc` 는 body 의 `scope`("main" 기본 \| "compare")로 어느 표의 ETC 목록인지 고른다 — Issue Table Compare 탭(Compare 모드)은 저장 kind 가 분리돼 있다 |
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |

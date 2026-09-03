@@ -82,7 +82,10 @@ def run_probe(scripts, body_html, harness_js, name) -> str:
     return unescape(found[-1]).strip()
 
 
-DEPS = ["core.js", "distribution.js", "item_detail.js"]
+# map_select.js 는 mapSelChips/mapSelChipKey 를 제공한다 — distRenderSeq 가
+# idetSeqHighlightTrace 를 거치면서 그 전역을 무조건 읽으므로(선택이 없어도 length 확인)
+# 빼면 ReferenceError 로 하네스가 통째로 죽는다.
+DEPS = ["core.js", "map_select.js", "distribution.js", "item_detail.js"]
 # 합성 카드(Distribution composite · Gap Chart)까지 얹는 조합. map_select.js 는
 # chipMarkersForPairs/mapSelChips 를 제공한다(seq 는 마커를 안 쓰지만 로드는 필요).
 DEPS_ALL = ["core.js", "map_select.js", "distribution.js", "item_detail.js",
@@ -121,20 +124,27 @@ def _fn_body(src, name):
 # ── 정적 검사 (Edge 없이도 돈다) ─────────────────────────────────────────────
 
 def test_static_wiring():
-    """(a) classic script 유지 · 툴바 맨 앞 버튼 · Item_detail 버튼."""
+    """(a) classic script 유지 · Chart Option 메뉴 첫 항목 · Item_detail 버튼.
+
+    2026-09-03: 툴바 버튼 8개가 성격별 드롭다운 2개(Item Filter / Chart Option)로 접혔다.
+    Serial 순은 이제 `distChartMenuItems()` 의 **첫 튜플**이다 — `data-seg` 키는 그대로라
+    핸들러 분기는 무변경이고, 검사도 "seq 가 Chart Option 맨 앞" 이라는 같은 의도를 본다.
+    """
     dist = (_JS / "distribution.js").read_text(encoding="utf-8")
     idet = (_JS / "item_detail.js").read_text(encoding="utf-8")
     for name, src in (("distribution.js", dist), ("item_detail.js", idet)):
         assert not re.search(r"^\s*(import|export)\s", src, re.M), f"{name}: ES module 금지"
-    assert 'data-seg="seq"' in dist, "툴바 Serial 순 버튼이 없습니다"
-    # 그룹 안에서 **맨 앞**(좌상단) — 사용자가 위치를 지정했다.
-    m = re.search(r'<div class="distseg-group">\$\{(\w+)\}', dist)
-    assert m and m.group(1) == "seqBtn", f"버튼이 그룹 맨 앞이 아닙니다: {m and m.group(1)}"
+    menu = _fn_body(dist, "distChartMenuItems")
+    assert '"seq", "Serial 순"' in menu, "Chart Option 메뉴에 Serial 순 항목이 없습니다"
+    # 메뉴 안에서 **맨 앞**(첫 튜플) — 종전 툴바 맨 앞 버튼과 같은 의도.
+    first = re.search(r"\[\s*dist\w+,\s*\"(\w+)\"", menu)
+    assert first and first.group(1) == "seq", \
+        f"Serial 순이 Chart Option 첫 항목이 아닙니다: {first and first.group(1)}"
     assert 'data-idet-seg="seq"' in idet, "Item_detail Serial 순 버튼이 없습니다"
     assert re.search(r'idet-opts">\$\{seqBtn\}', idet), "Item_detail 버튼이 맨 앞이 아닙니다"
     assert 'seg.dataset.seg === "seq"' in idet, "갤러리 툴바 seq 토글 핸들러가 없습니다"
     assert 'kind === "seq"' in idet, "Item_detail seq 토글 핸들러가 없습니다"
-    print("[정적] classic script · 툴바 맨 앞 버튼 · 상세 버튼 · 토글 핸들러 OK")
+    print("[정적] classic script · Chart Option 첫 항목 · 상세 버튼 · 토글 핸들러 OK")
 
 
 def test_static_variant_split():
@@ -610,7 +620,13 @@ def test_composite_detail_notes():
 
 
 def test_dc_cache_and_url():
-    """(p) `_dcCache` 가 변형 6키 · composite 배치 URL 에 order=seq."""
+    """(p) `_dcCache` 가 **DIST_VARIANTS 를 그대로 따라간다** · 배치 URL 에 order=seq.
+
+    개수를 리터럴로 못 박지 않는 것이 핵심이다 — dist_composite.js 가 `DIST_VARIANTS.forEach`
+    로 캐시를 만드는 이유가 "변형이 늘어도 자동으로 따라오게" 하기 위함이고(그 파일 주석),
+    여기서 6 을 박아두면 축이 하나 늘 때마다 기능이 멀쩡한데 테스트만 깨진다.
+    (2026-09-03 DUT 축 추가로 6 → 12 가 됐다.)
+    """
     js = f"""<script>
       {SETUP}
       var calls = [];
@@ -618,14 +634,17 @@ def test_dc_cache_and_url():
       var keys = Object.keys(_dcCache).sort();
       var inflight = Object.keys(_dcInflight).sort();
       dcEnsureItems(['IT00'], 'seq');
-      _emit({{keys: keys, inflight: inflight, calls: calls}});
+      _emit({{keys: keys, inflight: inflight, calls: calls,
+              variants: DIST_VARIANTS.slice().sort()}});
     </script>"""
     got = json.loads(run_probe(DEPS_ALL, "", js, "dccache"))
-    want = sorted(["all", "bin1", "rtbin1", "seq", "seq-bin1", "seq-rtbin1"])
-    assert got["keys"] == want, f"_dcCache 키가 변형 6종이 아니다: {got['keys']}"
-    assert got["inflight"] == want, f"_dcInflight 키 불일치: {got['inflight']}"
+    assert got["keys"] == got["variants"], \
+        f"_dcCache 가 DIST_VARIANTS 를 따라가지 않는다: {got['keys']}"
+    assert got["inflight"] == got["variants"], f"_dcInflight 키 불일치: {got['inflight']}"
+    # seq 계열이 살아 있는지(정렬 축)는 계속 확인한다.
+    assert "seq" in got["keys"] and "seq-rtbin1" in got["keys"], got["keys"]
     assert len(got["calls"]) == 1 and "order=seq" in got["calls"][0], got["calls"]
-    print("  [browser] _dcCache 6키 + composite 배치 URL order=seq OK")
+    print(f"  [browser] _dcCache == DIST_VARIANTS({len(got['keys'])}키) + URL order=seq OK")
 
 
 def test_note_paste_fallback():

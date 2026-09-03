@@ -221,7 +221,7 @@ def main():
                   for f in au.build_file_manifest(cur_dir)))
         check("없는 폴더면 None", au.read_file_manifest(root / "versions" / "7.7.7") is None)
 
-        print("[8] 델타 — 변경분만 받고 나머지는 재사용")
+        print("[8] 델타 - 변경분만 받고 나머지는 재사용")
         newdir = work / "release_9.1.0"
         (newdir / "_internal").mkdir(parents=True)
         (newdir / "HoneyApp.exe").write_bytes(b"app-stub-9.1.0")          # 바뀜
@@ -256,7 +256,7 @@ def main():
             check("tmp 잔재 없음", not list((root / "versions").glob("*.tmp-*")))
 
             # adopt 판정은 설치 직후 서버 매니페스트와 함께 확인한다.
-            print("[8-1] adopt — 완성된 폴더는 다시 받지 않는다")
+            print("[8-1] adopt - 완성된 폴더는 다시 받지 않는다")
             check("델타로 설치된 폴더는 완성 상태", au.verify_version_dir(final))
             check("완성 폴더는 adopt",
                   au.prepare_target(root, "9.1.0", remote_files) == "adopted")
@@ -314,7 +314,7 @@ def main():
         au.clear_fail_count(root)
         check("리셋", au.read_fail_count(root, "9.1.0") == 0)
 
-        print("[11] 실패 카운터 v2 — 런처를 고쳐 배포하면 과거 기록이 풀린다")
+        print("[11] 실패 카운터 v2 - 런처를 고쳐 배포하면 과거 기록이 풀린다")
         (root / au.FAILCOUNT_FILENAME).write_text("9.1.0 3\n", encoding="utf-8")
         check("구 2토큰 포맷은 0 (stuck PC 자동 해제)",
               au.read_fail_count(root, "9.1.0", "2026.08.26") == 0)
@@ -324,7 +324,7 @@ def main():
         check("빌드가 다르면 0", au.read_fail_count(root, "9.1.0", "2026.09.01") == 0)
         au.clear_fail_count(root)
 
-        print("[12] prepare_target — 대상 폴더 준비 (다운로드 전에 끝낸다)")
+        print("[12] prepare_target - 대상 폴더 준비 (다운로드 전에 끝낸다)")
         check("없으면 absent", au.prepare_target(root, "7.0.0") == "absent")
 
         # 깨진 잔재 = 지우거나 rename 하지 않고 다음 설치에서 제자리 복구한다.
@@ -335,7 +335,7 @@ def main():
         check("복구 대상으로 그대로 유지", broken.exists())
         check("rename 잔재가 생기지 않는다", not list((root / "versions").glob("*.old-*")))
 
-        print("[13] 잠긴 폴더 — prepare 단계에서 rename 하지 않는다")
+        print("[13] 잠긴 폴더 - prepare 단계에서 rename 하지 않는다")
         locked = root / "versions" / "9.4.0"
         locked.mkdir()
         (locked / "HoneyApp.exe").write_bytes(b"x")
@@ -350,7 +350,7 @@ def main():
         check("prepare가 원본을 건드리지 않는다",
               (locked / "locked.dll").read_bytes() == b"in-use")
 
-        print("[14] 런처 자가교체 — 앱이 루트 Honey.exe 를 갱신한다")
+        print("[14] 런처 자가교체 - 앱이 루트 Honey.exe 를 갱신한다")
         from transport import launcher_selfupdate as ls   # noqa: E402
 
         (root / "Honey.exe").write_bytes(b"OLD-LAUNCHER")
@@ -367,6 +367,32 @@ def main():
         check("같은 해시면 두 번 하지 않는다",
               ls.maybe_replace_launcher(root) is False)
         check("스테이징 잔재 없음", not list(root.glob(".Honey.exe.new")))
+
+        print("[15] relaunch_via_launcher - 앱의 [지금 업데이트] 가 런처를 부른다")
+        # 런처를 거치지 않고 앱만 실행되는 PC(작업표시줄에 HoneyApp.exe 고정 등)의
+        # 유일한 복귀 경로다. 아직 아무것도 설치하지 않았으므로 current.txt 를
+        # 건드리면 안 된다 - 바꾸면 없는 버전을 가리키게 된다.
+        before = au.read_current(root)
+        spawned = []
+        real_popen = au.subprocess.Popen
+        au.subprocess.Popen = lambda cmd, **kw: spawned.append(cmd) or None
+        try:
+            au.relaunch_via_launcher(root)
+        finally:
+            au.subprocess.Popen = real_popen
+        check("루트 런처를 실행", spawned and spawned[0][0] == str(root / "Honey.exe"))
+        check("--force-update 를 넘긴다", "--force-update" in spawned[0])
+        check("--wait-pid 로 자기 종료를 기다리게 한다",
+              "--wait-pid" in spawned[0]
+              and spawned[0][spawned[0].index("--wait-pid") + 1] == str(os.getpid()))
+        check("current.txt 를 건드리지 않는다", au.read_current(root) == before)
+
+        (root / "Honey.exe").unlink()
+        try:
+            au.relaunch_via_launcher(root)
+            raise AssertionError("런처가 없는데 예외가 나지 않았다")
+        except RuntimeError:
+            check("런처가 없으면 예외 (앱이 사용자에게 안내한다)", True)
 
         print("\nALL OK")
     finally:

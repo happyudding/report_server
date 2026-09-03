@@ -1247,6 +1247,10 @@ class HoneyMainWindow(QMainWindow):
         m_help = mb.addMenu("도움말(&H)")
         m_help.addAction("HONEY 도움말", self.on_help_honey)
         m_help.addAction("VOC", self.on_voc)
+        m_help.addSeparator()
+        # 런처를 거치지 않고 앱만 실행되는 PC(작업표시줄에 HoneyApp.exe 고정 등)의
+        # 유일한 업데이트 경로다 — 상태바 버튼을 못 본 사용자를 위해 메뉴에도 둔다.
+        m_help.addAction("업데이트 확인 / 지금 업데이트...", self.on_manual_update)
 
     def _icon_sidebar(self, QAction, QToolBar):
         """왼쪽 아이콘 사이드바 — 자주 쓰는 액션(이모지 아이콘 + 밑 라벨 + tooltip)."""
@@ -4211,6 +4215,75 @@ class HoneyMainWindow(QMainWindow):
         threading.Thread(target=_fetch_bg, daemon=True,
                          name="honey-version-check").start()
 
+    # ── 수동 업데이트 (런처로 넘긴다) ──────────────────────────────────────
+    def _show_update_button(self, remote):
+        """상태바 오른쪽에 [🔄 지금 업데이트 <ver>] 버튼을 상주시킨다.
+
+        팝업이 아니라 버튼인 이유: 리포트 생성 중에 창을 띄워 작업을 끊지 않기 위해서다
+        (2026-08-12 "쓰고 있는 창을 끊지 않는다" 유지). 사용자가 편할 때 누르면 된다.
+        """
+        try:
+            btn = getattr(self, "_btn_update", None)
+            if btn is None:
+                btn = QPushButton(self)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setStyleSheet(
+                    "QPushButton { background:#B45309; color:white; border:none;"
+                    " border-radius:6px; padding:2px 10px; font-weight:bold; }"
+                    "QPushButton:hover { background:#92400E; }")
+                btn.clicked.connect(self.on_manual_update)
+                self.status.addPermanentWidget(btn)
+                self._btn_update = btn
+            btn.setText(f"🔄 지금 업데이트 ({remote})")
+            btn.setToolTip(f"신규 버전 {remote} 이(가) 있습니다. "
+                           f"Honey 를 종료하고 업데이트합니다.")
+            btn.show()
+        except Exception as exc:   # noqa: BLE001 - 버튼 실패가 앱을 막지 않는다
+            app_update.ulog(f"UPDATE BUTTON 생성 실패(무시): {type(exc).__name__}: {exc}")
+
+    def on_manual_update(self):
+        """[지금 업데이트] / 도움말 메뉴 — 런처에 업데이트를 맡기고 앱은 종료한다.
+
+        앱이 직접 설치하지 않는 이유는 _on_version_manifest 주석 참조. 여기서는
+        런처를 --force-update 로 띄우기만 하고, 실제 설치·검증·롤백은 종전과 똑같이
+        런처 한 곳에서 일어난다.
+        """
+        root = self._versioned_update_root()
+        if root is None:
+            # 구 레이아웃(Honey.exe 단독) — 종전 ZIP 다운로드 흐름을 그대로 태운다.
+            self.status.showMessage("업데이트 확인 중...")
+            self.check_for_update()
+            return
+
+        remote = getattr(self, "_pending_remote_version", "") or ""
+        if not remote:
+            # 아직 새 버전을 못 봤다 — 지금 한 번 더 확인해 준다 (결과는 상태바에).
+            self.status.showMessage("업데이트 확인 중...")
+            self.check_for_update()
+            return
+
+        answer = QMessageBox.question(
+            self, "업데이트",
+            f"신규 버전 {remote} 이(가) 있습니다.\n현재: {CURRENT_VERSION}\n\n"
+            "Honey 를 종료하고 업데이트합니다.\n"
+            "저장하지 않은 작업은 사라집니다. 계속할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            app_update.ulog("FORCE UPDATE 사용자 취소")
+            return
+
+        try:
+            app_update.relaunch_via_launcher(root)
+        except Exception as exc:   # noqa: BLE001 - 런처가 없거나 실행 실패
+            app_update.ulog(f"FORCE UPDATE 실패: {type(exc).__name__}: {exc}")
+            QMessageBox.warning(
+                self, "업데이트 실패",
+                f"업데이트를 시작하지 못했습니다.\n\n{exc}\n\n"
+                f"Honey 를 종료한 뒤 설치 폴더의 Honey.exe 를 직접 실행해 주세요:\n{root}")
+            return
+        self._exit_for_update()
+
     # ── 릴리스 공지 (버전당 1회) ──────────────────────────────────────────
     def _maybe_show_announcement(self):
         """이 버전의 공지를 아직 안 봤으면 서버에서 받아 팝업한다.
@@ -4492,18 +4565,38 @@ class HoneyMainWindow(QMainWindow):
     def _on_version_manifest(self, result):
         if isinstance(result, requests.exceptions.RequestException):
             # 연결 불가/타임아웃 = 서버 오프라인으로 간주, 상태바에 명확히 표시
+            app_update.ulog(f"VERSION CHECK FAILED {type(result).__name__}: {result} "
+                            f"url={SERVER_BASE_URL}")
             self.status.showMessage(
                 f"⚠ 서버 오프라인 — {SERVER_BASE_URL} 에 연결할 수 없습니다")
             return
         if isinstance(result, Exception):
+            app_update.ulog(f"VERSION CHECK FAILED {type(result).__name__}: {result} "
+                            f"url={SERVER_BASE_URL}")
             self.status.showMessage(f"버전 체크 실패: {result}")
             return
         manifest = result
 
         remote = manifest.get("version") or ""
-        if not version_check.is_newer(remote, CURRENT_VERSION):
+        app_update.ulog(f"VERSION CHECK server={remote or '없음'} "
+                        f"current={CURRENT_VERSION} url={SERVER_BASE_URL}")
+        if not remote:
+            # 서버가 200 을 줬지만 version 이 비었다. is_newer 가 False 를 돌려주므로
+            # 여기서 갈라 놓지 않으면 서버 이상이 "최신" 으로 위장된다.
             self.status.showMessage(
-                f"버전 체크 OK — 최신 ({CURRENT_VERSION}). Server: {SERVER_BASE_URL}")
+                f"버전 체크 실패: 서버 응답에 version 없음 ({SERVER_BASE_URL})")
+            return
+        if not version_check.is_newer(remote, CURRENT_VERSION):
+            if remote == CURRENT_VERSION:
+                self.status.showMessage(
+                    f"버전 체크 OK — 최신 ({CURRENT_VERSION}, 서버 {remote}). "
+                    f"Server: {SERVER_BASE_URL}")
+            else:
+                # 서버 배포본이 현재보다 낮다 = 정상 운영에서는 나올 수 없는 조합이다.
+                # 거의 항상 이 PC 가 다른 서버(옛 주소·테스트 서버)를 보고 있다는 뜻.
+                self.status.showMessage(
+                    f"⚠ 서버 배포본({remote})이 현재({CURRENT_VERSION})보다 낮음 "
+                    f"— 서버 주소 확인 필요. Server: {SERVER_BASE_URL}")
             # 최신을 실행 중일 때만 공지 확인 — 업데이트가 남아 있으면 구버전 사용자에게
             # 신버전 공지가 먼저 뜨게 되므로, 업데이트를 마친 뒤 첫 실행에서 뜬다.
             self._maybe_show_announcement()
@@ -4511,11 +4604,15 @@ class HoneyMainWindow(QMainWindow):
 
         versioned_root = self._versioned_update_root()
         if versioned_root is not None:
-            # 버전 폴더 방식은 **런처가 앱을 띄우기 전에** 업데이트한다. 실행 중에는
-            # 아무것도 하지 않는다 (2026-08-12 결정) — 사용자가 쓰고 있는 창을 끊지
-            # 않고, 업데이트 경로를 런처 한 곳으로 모으기 위해서다. 다음 실행 때
-            # Honey.exe(런처)가 처리한다.
-            app_update.ulog(f"[v2] remote={remote} 있음 — 런처가 다음 실행에 처리(앱 무동작)")
+            # 버전 폴더 방식의 설치 주체는 **런처**다 (2026-08-12 결정) — 쓰고 있는 창을
+            # 끊지 않으려고 앱은 스스로 설치하지 않는다. 다만 아무 것도 안 하면,
+            # 런처를 거치지 않고 앱만 실행되는 PC(작업표시줄에 HoneyApp.exe 가 고정된
+            # 경우 등)는 영영 업데이트되지 않는다(2026-09-03 현장). 그래서 팝업으로
+            # 작업을 끊지는 않되, 사용자가 원할 때 누를 수 있는 버튼을 남긴다.
+            app_update.ulog(f"[v2] remote={remote} 있음 — 런처가 다음 실행에 처리"
+                            f"(앱은 [지금 업데이트] 버튼만 제공)")
+            self._pending_remote_version = remote
+            self._show_update_button(remote)
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]

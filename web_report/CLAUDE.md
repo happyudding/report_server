@@ -29,6 +29,14 @@ web_report/
 │                        np.unique 로 동일값을 접어 순서를 버리므로 그 payload 로는 못 그린다.
 │                        pack 지름길 없음(pack 은 정렬 산출물). ⚠ **tabs/ 로 옮기지 말 것**
 │                        (perf_guard S01 → REPORT_SCHEMA_VERSION bump = 콜드 폭풍)
+├── dist_dut.py         **DUT 별 분리** — 각 source 를 DUT 값별 pseudo-source
+│                        (`"<src> · DUT <label>"`)로 쪼갠 배치 응답(`?dut=1`). 분할 규칙은
+│                        만들지 않고 honeyform.dut_labels/split_table_by_dut 을 재사용한다
+│                        (mode="DUT" 세션이 이미 쓰는 것과 같은 정본 — 규칙 #13). ECDF/seq
+│                        본체도 기존 빌더 그대로. pack 지름길 없음(pack 은 count 집약이라
+│                        DUT 축 소실). ⚠ `expand_bin1_sources` 를 빼면 Temperature
+│                        "Bin1(RT만)" 이 조용히 안 걸린다(분할 후 이름이 달라서).
+│                        ⚠ **tabs/ 로 옮기지 말 것** (perf_guard S01 → 콜드 폭풍)
 ├── gap_chart.py        **Gap Chart** — 사용자 수식(토큰 배열) 파서(재귀하강, eval 금지)
 │                        + numpy 평가 + 좌표 교집합. 응답은 scatter_item 과 같은 구조라
 │                        Item_detail 이 그대로 재사용한다. ⚠ **tabs/ 로 옮기지 말 것**
@@ -144,7 +152,9 @@ web_report/
     │                       source 테이블·RT 기준 yield_rows 만 넘긴다(CT/HT 는 temp_fail.py)
     ├── distribution.py    build_distribution_index / scatter_item / build_distribution_compact (lazy)
     ├── trim_analysis.py   build_trim_payload / build_trim_chart (lazy)
-    ├── commonality.py     search_chips / chip_percentiles (Commonality 모드)
+    ├── commonality.py     search_chips / chip_percentiles [+ chip_percentiles_many =
+    │                       배치, Item_detail 드래그 좌표 강조. 단건과 **값이 같아야 한다** —
+    │                       tests/test_commonality_batch.py 가 전 die 를 대조]
     ├── compare.py         build_compare_payload (Compare 모드 — Before/After 그룹 N source.
     │                       common_map/bin_delta/bin_matrix=전 source, goodlog=그룹 대표 2개,
     │                       dist_shift(산포 비교 — Before 분모 지표 6종 meanshift σ/Cpk%/

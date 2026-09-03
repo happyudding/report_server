@@ -22,15 +22,67 @@
 > `honey_main._on_version_manifest`). 새 버전을 감지해도 `[v2] … 런처가 다음 실행에
 > 처리(앱 무동작)` 로그만 남기고 아무 창도 띄우지 않는다 — 쓰고 있는 창을 끊지 않고,
 > 업데이트 경로를 런처 한 곳으로 모으기 위해서다.
+>
+> ⚠️ **그래서 런처를 거치지 않고 앱만 실행되는 PC 는 영영 업데이트되지 않는다**
+> (2026-09-03 현장). 가장 흔한 원인은 **실행 중인 앱을 작업표시줄에 고정**한 경우다 —
+> Windows 는 런처(`Honey.exe`)가 아니라 프로세스 exe(`versions\<ver>\HoneyApp.exe`)를
+> 고정하므로 그 아이콘으로는 런처가 한 번도 돌지 않는다. 증상은 `launcher.log` 가 마지막
+> 업데이트 시점에서 멈춰 있고(그 뒤 `launch` 줄이 없다) 앱 `update.log` 에는
+> `[v2] remote=<신버전> 있음` 이 계속 쌓이는 모습이다.
+>
+> 복귀 경로는 **앱 안의 수동 업데이트**다 (2026-09-03 신설): 상태바 오른쪽
+> `🔄 지금 업데이트 (<ver>)` 버튼과 `도움말 > 업데이트 확인 / 지금 업데이트...` 메뉴.
+> 앱이 직접 설치하지는 않는다 — `app_update.relaunch_via_launcher()` 가 루트 런처를
+> `--wait-pid <pid> --force-update` 로 띄우고 앱은 종료하며, 설치·검증·롤백은 종전대로
+> 런처 한 곳에서 일어난다. `--force-update` 는 "방금 업데이트를 마치고 재실행된 경우"
+> (`--wait-pid` 단독)와 구분하려고 둔 것이다. 이 함수는 **current.txt 를 건드리지 않는다**
+> (아직 아무것도 설치하지 않았으므로 — `switch_and_relaunch` 와 다른 점).
 
 런처는 `--wait-pid` 로 이전 프로세스를 기다린 뒤 `try_update()` → `current.txt` 후보 실행 →
 **15초 안에 죽으면 다음 후보로 폴백하고 current.txt 를 되돌린다**. 연속 실패
 `MAX_UPDATE_FAILS=3` 이면 업데이트를 포기한다. 탈출구는 `--skip-update` · 루트에
 `noupdate.txt` · `--no-ui` 세 가지다. 델타 업데이트(`plan_delta`/`install_delta`)는 바뀌지
 않은 파일을 hardlink 로 잇는다.
+
+> ⚠️ **업데이트 판정 기준은 `current.txt` 가 아니라 "실제로 뜰 버전"이다**
+> (`launcher.update_base_version`, 2026-09-03). current.txt 는 포인터일 뿐이고 실행 후보는
+> `runnable()` 이 정하는데, 둘이 어긋나면(파일이 없거나 가리키는 폴더가 깨졌거나) 종전 코드는
+> current.txt 의 **글자**로 비교해 "이미 최신"으로 조용히 빠졌다 — 그 PC 는 재실행해도 같은
+> 판정이라 회복 경로가 없었다. **판정 결과는 어느 갈래로 가든 `launcher.log` 에 한 줄 남는다**
+> (`version check: server=… current=… url=…` / `update 없음 (server=… <= local=…)`). 무로그
+> 분기를 다시 만들지 말 것 — 그게 이 장애를 "로그로 가릴 수 없는 문제"로 만들었다.
 런처는 `transport/config` 를 쓸 수 없다(frozen 기준 "exe 옆"이 런처에서는 설치 루트라
 어긋난다) — `app_update.read_server_url()` 이 `versions\<ver>\honey.env` → 루트
 `honey.env` 순으로 직접 읽는다.
+
+## "업데이트가 안 된다" 신고 진단 순서
+
+로그 두 파일이면 대부분 갈린다. 둘 다 `<설치루트>\log\` 에 있다.
+
+1. **`launcher.log`** — 런처가 돌기는 했나.
+   - 마지막 줄이 과거 시점에서 멈춰 있다(그 뒤 `launch` 줄 없음) → **런처가 실행되지 않는다.**
+     작업표시줄/바로가기가 `HoneyApp.exe` 를 직접 가리키는지 확인하고, 앱의
+     `🔄 지금 업데이트` 버튼이나 루트 `Honey.exe` 직접 실행으로 복귀시킨다.
+   - `version check: server=<X> current=<Y> url=<주소>` — 서버가 준 값과 이 PC 의 포인터,
+     그리고 **실제로 질의한 주소**가 그대로 찍힌다. 주소가 운영 주소가 아니면 3번으로.
+   - `update 없음 (server=… <= local=…)` — 정상 판정. 서버 배포본이 실제로 최신이 아니다.
+   - `version check skipped (…)` — 서버에 닿지 못했다(오프라인·방화벽·주소 오류).
+   - `연속 N회 실패 — 더 시도하지 않는다` — `.update_fail` 누적. 런처를 고쳐 배포하면
+     (`LAUNCHER_BUILD` 상승) 자동으로 풀린다.
+2. **`update.log`** — 앱이 본 서버 값.
+   - `VERSION CHECK server=<X> current=<Y> url=<주소>` 가 매 실행 1줄씩. 앱과 런처가 **서로
+     다른 주소**를 볼 수 있으므로(아래) 두 로그의 url 을 대조한다.
+   - `VERSION CHECK FAILED …` — 앱 쪽 질의 실패.
+3. **서버 주소 우선순위** — 앱: `HONEY_SERVER_URL` 환경변수 > `versions\<ver>\honey.env` >
+   코드 기본값. 런처: `HONEY_SERVER_URL` > `versions\<ver>\honey.env` > **루트 `honey.env`** >
+   기본값. 루트 폴백이 런처에만 있어 둘이 갈릴 수 있다.
+4. **`current.txt` 와 `versions\` 대조** — 포인터가 없거나 가리키는 폴더에 `_internal` 이
+   없으면 그 PC 는 종전 코드에서 멈춰 있던 상태다. 새 런처는 실행 후보 기준으로 판정해
+   자동 복구하지만, 새 런처를 아직 못 받은 PC 는 `current.txt` 에 **실제로 있는 버전** 한 줄을
+   써 넣고 루트 `Honey.exe` 를 실행하면 풀린다.
+
+머문 사람 목록은 관리자 사용자 탭의 버전 현황(`report_client_version` / `version_report`)에서
+version 이 구버전이고 last_at 이 최근인 행으로 뽑는다.
 
 ## 관련 파일
 

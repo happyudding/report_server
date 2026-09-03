@@ -956,11 +956,21 @@
               <thead><tr><th>버튼·필터</th><th>동작</th></tr></thead>
               <tbody>
                 <tr><td>Item 검색</td><td>Item명 일부를 입력해 그래프를 찾습니다.</td></tr>
-                <tr><td>CPK &lt; 1.33</td><td>CPK가 1.33 미만인 Item만 표시합니다.</td></tr>
-                <tr><td>Fail Only</td><td>Fail 데이터가 있는 Item만 표시합니다.</td></tr>
-                <tr><td>Limit 없는 Data만</td><td>Limit이 비어 있는 항목만 표시합니다.</td></tr>
-                <tr><td>Bin1 only</td><td>BIN=1 데이터만 분포에 사용합니다.</td></tr>
-                <tr><td>P/F 숨김</td><td>Pass·Fail 표식을 숨겨 분포 곡선만 표시합니다.</td></tr>
+                <tr><td>전체 보기</td><td>Item Filter를 모두 해제해 전 항목을 표시합니다. Chart Option은 그대로 둡니다.</td></tr>
+                <tr><td>Item Filter</td><td>표시할 Item을 고르는 메뉴입니다. 항목을 눌러 켜고 끄며, 켜진 개수가 버튼에 표시됩니다.
+                  <ul>
+                    <li><b>CPK &lt; 1.33</b> — CPK가 1.33 미만인 Item만 표시합니다.</li>
+                    <li><b>Fail Only</b> — Fail 데이터가 있는 Item만 표시합니다.</li>
+                    <li><b>P/F 없애기</b> — 단위가 Pass/Fail인 Item 카드를 숨깁니다(기본 켜짐).</li>
+                    <li><b>신규항목보기</b> — Compare 보고서에서 After에만 있는 Item만 표시합니다.</li>
+                  </ul></td></tr>
+                <tr><td>Chart Option</td><td>각 카드의 그래프를 그리는 방식입니다. Item 개수는 바뀌지 않습니다.
+                  <ul>
+                    <li><b>Serial 순</b> — 누적 분포 대신 측정 순서(x)별 측정값(y)으로 표시합니다.</li>
+                    <li><b>Limit 안 Data만</b> — x축을 Limit(LSL~USL) 범위로 고정합니다.</li>
+                    <li><b>Bin1 only</b> — BIN=1이면서 규격 이내인 데이터만 분포에 사용합니다.</li>
+                    <li><b>Bin1 (RT만)</b> — Temperature에서 RT만 양품으로 좁히고 CT·HT는 전체를 유지합니다.</li>
+                  </ul></td></tr>
                 <tr><td>Source·온도 선택</td><td>Source를 강조하거나 Temperature에서 All·RT·CT·HT·그룹을 선택합니다.</td></tr>
                 <tr><td>그래프 카드</td><td>TNO, Limit, CPK, Status와 Note 표시를 보고 Item Detail을 엽니다.</td></tr>
               </tbody>

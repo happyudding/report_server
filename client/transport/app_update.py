@@ -510,6 +510,29 @@ def switch_and_relaunch(root, new_version, old_version=None):
     )
 
 
+def relaunch_via_launcher(root):
+    """앱의 [지금 업데이트] — 런처를 업데이트 확인 모드로 띄운다 (호출부가 곧바로 종료).
+
+    **current.txt 를 건드리지 않는다** (switch_and_relaunch 와 다른 점). 아직 아무것도
+    설치하지 않았으므로 포인터를 바꿀 이유가 없고, 바꾸면 없는 버전을 가리키게 된다.
+
+    왜 필요한가: 버전 폴더 레이아웃에서 설치는 런처만 한다. 그런데 사용자가 실행 중인
+    앱을 작업표시줄에 고정하면 Windows 는 런처(Honey.exe)가 아니라 HoneyApp.exe 를
+    고정해, 그 뒤로 런처가 한 번도 안 돌아 업데이트가 영영 멈춘다(2026-09-03 현장).
+    이 함수가 그 PC 의 복귀 경로다.
+    """
+    root = Path(root)
+    launcher = root / LAUNCHER_EXE_NAME
+    if not launcher.exists():
+        raise RuntimeError(f"런처를 찾을 수 없습니다: {launcher}")
+    ulog(f"FORCE UPDATE -> relaunch {launcher}")
+    subprocess.Popen(
+        [str(launcher), "--wait-pid", str(os.getpid()), "--force-update"],
+        cwd=str(root),
+        close_fds=True,
+    )
+
+
 # ── 정리 ────────────────────────────────────────────────────────────────────
 def startup_cleanup(root, keep_versions=()):
     """앱이 정상 기동한 뒤 부르는 잔재 정리 (best-effort, 전부 무시 가능한 실패).
@@ -666,14 +689,19 @@ def _open(url, timeout, data=None, extra_headers=None):
         urllib.request.Request(url, data=data, headers=headers), timeout=timeout)
 
 
-def fetch_json(url, timeout=_NET_TIMEOUT):
-    with _open(url, timeout) as resp:
+def fetch_json(url, timeout=_NET_TIMEOUT, extra_headers=None):
+    with _open(url, timeout, extra_headers=extra_headers) as resp:
         return json.loads(resp.read().decode("utf-8-sig"))
 
 
 def fetch_manifest(base_url, timeout=_NET_TIMEOUT):
-    """/honey/version. probe=1 = 실행 집계 제외 — 집계(honey_run)는 앱이 계속 담당한다."""
-    return fetch_json(f"{base_url.rstrip('/')}/honey/version?probe=1", timeout)
+    """/honey/version. probe=1 = 실행 집계 제외 — 집계(honey_run)는 앱이 계속 담당한다.
+
+    no-cache 를 붙이는 이유: 사내 프록시가 낡은 응답을 돌려주면 그 PC 만 옛 버전을
+    보고 "이미 최신" 으로 판정한다 — 에러가 아니라 업데이트가 조용히 멈춘다.
+    """
+    return fetch_json(f"{base_url.rstrip('/')}/honey/version?probe=1", timeout,
+                      extra_headers={"Cache-Control": "no-cache", "Pragma": "no-cache"})
 
 
 def fetch_file_manifest(base_url, version, timeout=_NET_TIMEOUT):

@@ -71,6 +71,17 @@ DIST_VARIANTS.forEach(k => { _dcCache[k] = {}; _dcInflight[k] = new Set(); });
 
 function dcCacheFor(variant) { return _dcCache[distVariantKey(variant)] || _dcCache.all; }
 
+// ⚠️ 합성 카드는 **"DUT 별 분리" 대상이 아니다.** 이 카드의 색은 pairKey(source+U+001F+item)
+// 로 저장된 사용자 지정 색(comp.colors)인데, DUT 분리 응답의 source 는 "<src> · DUT n" 이라
+// 저장된 pairKey 와 하나도 안 맞아 **전 시리즈가 회색(#888)** 이 된다(에러 없이 "색이
+// 사라짐"으로만 보인다). 분리를 켜도 이 카드만 source 단위를 유지한다.
+// 매핑 표로 두는 이유: 문자열 치환은 "seq-dut-bin1" 같은 조합에서 실수하기 쉽다.
+const _DC_NO_DUT = {
+  "dut": "all", "dut-bin1": "bin1", "dut-rtbin1": "rtbin1",
+  "seq-dut": "seq", "seq-dut-bin1": "seq-bin1", "seq-dut-rtbin1": "seq-rtbin1",
+};
+function dcDropDut(v) { const k = distVariantKey(v); return _DC_NO_DUT[k] || k; }
+
 // 실패한 항목 — `${variantKey}\x1f${item}` → 사유. 기록해 두지 않으면 셀이 렌더 완료로
 // 표시되지 않아 IntersectionObserver 가 볼 때마다 같은 배치를 다시 요청하고, 서버가 계속
 // 실패하는 동안 토스트가 반복된다(gap 카드·일반 배치 배지와 같은 억제 장치).
@@ -128,7 +139,7 @@ function dcEnsureItems(items, variant) {
 function dcRetry(id) {
   const comp = dcGet(id);
   if (!comp) return;
-  const variant = distGalleryDataVariant();
+  const variant = dcDropDut(distGalleryDataVariant());
   dcItemsOf(comp).forEach(it => { delete _dcFailed[dcFailKey(variant, it)]; });
   dcRefresh();
 }
@@ -204,7 +215,7 @@ function dcRenderCompositeCell(cell) {
   const plot = cell.querySelector(".distg-plot");
   if (!comp || !plot || typeof Plotly === "undefined") return;
   // Serial 순 토글이 켜지면 seq 변형 캐시를 쓴다(distGalleryVariant 는 bin1 축만 준다).
-  const variant = distGalleryDataVariant();
+  const variant = dcDropDut(distGalleryDataVariant());
   const store = dcCacheFor(variant);
   const items = dcItemsOf(comp);
   const failed = items.filter(it => _dcFailed[dcFailKey(variant, it)]);
@@ -247,7 +258,7 @@ function dcRenderCompositeCell(cell) {
   });
   const sentinel = distSentinelTrace(pts);
   // Map Analysis 선택 좌표(mapSelChips) — 일반 카드와 같은 규칙으로 이 pair 들 위에 찍는다.
-  const cm = chipMarkersForPairs(pairs);
+  const cm = chipMarkersForPairs(pairs, false, { size: MAPSEL_CARD_MARKER_SIZE });
   const traces = sentinel ? [sentinel] : [];
   if (cm) traces.push(...cm.traces);
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: "#FFFFFF",
@@ -806,7 +817,7 @@ function dcRenderDetailCharts() {
   const items = dcItemsOf(comp);
   const missing = pairs.some(p => !store[p.item] && distHasData(p.item));
   if (missing) dcEnsureItems(items, distGalleryVariant());
-  const seqVariant = distGalleryDataVariant();
+  const seqVariant = dcDropDut(distGalleryDataVariant());
   const seqStore = distSeqOnly ? dcCacheFor(seqVariant) : null;
   const seqMissing = seqStore
     ? pairs.some(p => !seqStore[p.item] && distHasData(p.item)) : false;

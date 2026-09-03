@@ -1276,14 +1276,20 @@ function mapDetailTraces(m, opts) {
     { catOf: axis.catOf, order: axis.order, colorMap: axis.colorMap, grid: g }, opts || {}));
   if (!built) return null;
   const traces = [built.trace];
+  // 선택 좌표는 **trace 1개**에 모은다 — chip 당 trace 를 만들면 드래그로 수백 개를 고른
+  // 세션에서 상세 맵이 trace 수백 개가 되어 열리지 않는다(Distribution 마커와 같은 이유).
+  const sx = [], sy = [], scol = [], scd = [];
   mapSelChips.forEach(c => {
     if (c.source !== m.source || c.x == null || c.y == null) return;
     const cx = g.xIdx[c.x], cy = g.yIdx[c.y];   // heatmap 이 index 공간이므로 마커도 index 위치
     if (cx == null || cy == null) return;
-    traces.push({ type: "scatter", mode: "markers", x: [cx], y: [cy],
-      marker: { symbol: "circle-open", size: 22, color: c.color, line: { width: 3, color: c.color } },
-      hovertemplate: `X ${c.x} · Y ${c.y}<extra></extra>` });
+    sx.push(cx); sy.push(cy); scol.push(c.color); scd.push([c.x, c.y]);
   });
+  if (sx.length) {
+    traces.push({ type: "scatter", mode: "markers", x: sx, y: sy, customdata: scd,
+      marker: { symbol: "circle-open", size: 22, color: scol, line: { width: 3, color: scol } },
+      hovertemplate: "X %{customdata[0]} · Y %{customdata[1]}<extra></extra>" });
+  }
   return traces;
 }
 

@@ -823,6 +823,36 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     264px 이라 IntersectionObserver 가 차트를 purge 해도 문서 높이가 유지되는 것이 전제다
     — 카드를 가변 높이로 바꾸면 복원 위치가 어긋난다. 회귀 고정
     [tests/test_item_detail_scroll_js.py](../tests/test_item_detail_scroll_js.py).
+  - **좌표 강조 — 드래그 박스로 die 고르기 (2026-09-03)**: 분포 편집 바의 세 번째 모드
+    **`좌표 강조`**(`cdfEditMode="chipsel"`). 그 모드에서 CDF·Serial순 차트를 드래그하면
+    박스 안 die 가, 점을 클릭하면 그 die 하나가 **Map Analysis 좌표 선택과 같은 전역
+    `mapSelChips`** 에 더해진다(별도 상태를 만들지 않는다 — 그래야 Map·Distribution 카드·
+    Excel 다운로드가 전부 같은 die 를 가리킨다). 점마다 `customdata=[serial,xpos,ypos]` 가
+    이미 실려 있어 die 를 정확히 겨냥할 수 있다.
+    - **값·누적%는 서버가 준 것만 쓴다**(규칙 #13) — 새 배치 라우트
+      `POST .../commonality/chips_lookup` 이 `/commonality/chip` 과 **같은 인덱스**로 한 번에
+      계산한다(chip 마다 왕복하면 드래그가 못 쓸 만큼 느려진다). 서버 새 계산은 없다.
+    - **강조 색은 전 화면 단일 옥색**(`MAPSEL_HL_COLOR` `#2DD4BF`, 테두리 `#0F766E`) +
+      마커 확대(상세 10 / 카드 9, 종전 7). chip 마다 팔레트를 돌리던 종전 방식은 수십~수백
+      개를 고르면 의미가 없다. 색 결정은 `mapSelColorAt` 한 곳뿐이라 `MAPSEL_USE_PALETTE`
+      를 켜면 되돌아간다.
+    - ⚠️ **마커는 차트당 trace 1개**(점 N개 배열)다. hit 당 trace 로 되돌리면 카드 30장 ×
+      chip 300개 = 9,000 trace 로 갤러리가 멈춘다. 짝이 되는 `distDrawPoints` 의 extra
+      루프도 **trace 안 모든 점**을 도는 전제이므로 둘은 항상 함께 고친다(한쪽만 바꾸면
+      카드에 첫 점만 그려진다).
+    - 상한 300(`MAPSEL_MAX` ↔ 서버 `_COMMONALITY_LOOKUP_MAX` — 규칙 #15 짝). chip 하나가
+      전 항목의 값·누적%를 들고 있어 이 값이 곧 브라우저 힙의 상한이다.
+    - 항목을 옮겨도 강조는 남는다(`cdfResetEdits` 는 **제외 편집만** 초기화). 목록·개별 해제·
+      전체 해제는 상세 하단 `강조 좌표 N개` 표에서 한다.
+    - Map 패널은 **보일 때만** 즉시 다시 그린다(`mapSelRefreshMap` → 아니면
+      `tabDirty["map-analysis"]`) — 드래그마다 안 보이는 썸네일을 소스 수만큼 다시 그리지 않는다.
+    - Serial 순 상세는 (값, 누적%) 마커를 쓸 수 없어(x가 측정 순서) 곡선 trace 배열에서
+      같은 die 를 찾아 **그 자리에** 오버레이 trace 1개를 얹는다(`idetSeqHighlightTrace`,
+      값 재계산 없음). 갤러리 seq 카드는 응답에 좌표가 없어 대상 밖이다.
+    - **알려진 한계**: 누적%는 전체 die 기준이라 Bin1/RT Bin1 변형이나 제외 편집으로 분모가
+      줄어든 곡선 위에서는 마커가 곡선에서 조금 벗어난다(기존 Map 좌표 선택과 같은 성질).
+    - 회귀 고정 [tests/test_map_select_js.py](../tests/test_map_select_js.py) ·
+      배치 동치 [tests/test_commonality_batch.py](../tests/test_commonality_batch.py).
   - **Distribution composite (합성 산포 차트 — 2026-08-24)**: 툴바 우측 "분석하기 ▾"
     (편집모드 전용) → 모달에서 source 복수 + TestItem 검색·체크 복수 선택 → 고른
     **source × item 조합 각각이 legend 1개**(`<source>_<item>`)인 차트 1장을 갤러리 맨 앞에
@@ -967,7 +997,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
         남으므로 넣지 말 것. explicit 모드의 순서는 좌표 교집합이라 **base source 행 순서의
         부분수열**이고 x 는 1..m 으로 다시 매겨진다.
       - **Distribution composite**: 기존 `distribution_batch` 를 `order=seq` 로 한 번 더 받는다
-        (`_dcCache`/`_dcInflight` 를 `DIST_VARIANTS` 6키로 생성 — 리터럴로 적지 말 것).
+        (`_dcCache`/`_dcInflight` 를 `DIST_VARIANTS` **전 키**로 생성 — 리터럴로 적지 말 것.
+        2026-09-03 DUT 축이 늘어 12키가 됐고, forEach 생성이라 코드 변경은 없었다).
         배치 크기는 seq 만 따로다 → 아래 "seq 배치 크기" 항.
         **상세는 차트만 seq 이고 통계표(`dcPairStats`)는 항상 ECDF 기준**이다: 그 함수가
         ECDF 의 Δp 가중으로 모집단 통계를 복원하는 구조라 seq 배열로는 만들 수 없고, 원본값으로
@@ -983,7 +1014,70 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     - 회귀 고정: [tests/test_dist_seq.py](../tests/test_dist_seq.py)(서버 6항목 — 행 순서·
       ETag 분리·bin1·`/scatter` 값 일치) · [tests/test_dist_seq_js.py](../tests/test_dist_seq_js.py)
       (프런트 12항목 — 변형 분리·stride 캡·주석 미부착·**세 카드 공용 레이아웃 일치**·
-      **composite 상세 통계표 불변**·`_dcCache` 6키·Note 폴백).
+      **composite 상세 통계표 불변**·`_dcCache`==`DIST_VARIANTS`·Note 폴백).
+  - **DUT 별 분리 (2026-09-03)**: `Chart Option ▾` 메뉴의 `data-seg="dut"`
+    (Item_detail 표시옵션에도 같은 버튼 `data-idet-seg="dut"`)로 각 source 를 **DUT 값별
+    시리즈**로 가른다. 병렬 테스트의 site 편차(특정 DUT 만 분포가 밀림·꼬리가 뻗음)는
+    source 단위 그림으로는 보이지 않는다. 상태는 전역 하나(`distDutOnly`) — 갤러리·상세 공유.
+    - **계산은 이미 있던 것을 재사용한다** — [honeyform.py](../web_report/honeyform.py)
+      `dut_labels`(분할 규칙 정본) / `split_table_by_dut`. `mode="DUT"` 세션은 업로드 시점에
+      이미 이걸로 쪼개져 있고, 이 기능은 **일반 세션에서도 조회 시점에** 같은 분할을 켜는
+      것이다(규칙 #13 — 같은 값은 한 곳에서 계산).
+    - **source 명은 `"<source> · DUT <label>"`** — `split_table_by_dut` 의 `"DUT <label>"` 을
+      그대로 쓸 수 없다(일반 세션은 source 가 N개라 WF1·WF2 의 DUT1 이 충돌). 구분자는
+      [dist_dut.py](../web_report/dist_dut.py) `DUT_SOURCE_SEP` ↔ `distribution.js`
+      `DIST_DUT_SEP` **짝**이다(규칙 #15).
+    - **order 와 직교한 별도 파라미터 `?dut=1`** — `_DIST_BATCH_ORDERS` 는 *x축 의미*
+      화이트리스트인데 DUT 는 x축을 안 바꾸고 시리즈만 분해한다. seq×dut(= DUT별 측정순서
+      흐름 = 사이트 드리프트 진단)가 실제로 유용해 조합 가능해야 한다.
+    - **dist pack 지름길을 쓸 수 없다** — pack 은 업로드 시점에 `np.unique` 로 count 를
+      집약해 DUT 축이 소실된 산출물이다(seq 가 순서를 잃는 것과 같은 사정). 항상 tables
+      를 읽는다. pack 포맷을 올려 DUT count 벡터를 넣는 길은 **버렸다**(Honey 재배포 + 전
+      세션 pack 재생성 = 콜드 폭풍). 필요해지면 세션별 파생 pack 을 백그라운드 1회 생성하는
+      길이 남아 있다(`request_dist_pack` 인프라 재사용).
+    - 모듈 위치가 `web_report/tabs/` 밖인 이유는 seq 와 **같다**(perf_guard S01 → 전역 bump
+      → 콜드 폭풍). `scatter_item` 만 tabs 안이라 면제 주석 + 조건부 키로 처리한다.
+    - **변형 키가 12종이 된다** — bin1 3종 × 정렬 2종 × DUT 2종. `distGalleryVariant()` 는
+      **계속 bin1 3종만** 반환한다(합성/Gap 캐시 인덱스·`/scatter` 쿼리). 갤러리 키는
+      `distGalleryDataVariant()`.
+    - **Item_detail 은 source 를 쪼개 받지 않는다** — `/scatter?dut=1` 이 `sources[].dut`
+      (값과 같은 순서·길이의 die 별 라벨) **배열 하나만** 더 싣고 프런트가 가른다
+      (`distSplitSourcesByDut`). 이유는 제외 칩 키(`cdfChipKey`)가 source 명에 묶여 있어서다 —
+      서버가 이름을 바꾸면 토글할 때마다 **이미 제외한 die 가 되살아난다**(§5-12). 그래서
+      키 생성은 `cdfKeyOf` 한 곳으로 모아 항상 **base source** 로 정규화한다.
+    - ⚠️ **seq×dut 에서 x 는 원본 행 번호**(`s.idx`)다. DUT 는 interleave 로 측정되므로 DUT
+      안에서 1..m 으로 다시 매기면 "언제 측정됐는가"가 통째로 사라져 조용히 틀린 run chart 가
+      된다(비-DUT seq 는 종전대로 재번호).
+    - **색은 base source 색의 명도 변주**(±35%, `distDutColor`)다. 별도 팔레트를 쓰면 서로
+      다른 source 의 DUT 가 비슷해져 source 구분(1차 정보)이 무너진다. 갤러리 canvas 는
+      `plot._distColorFor` 훅(composite 가 이미 쓰던 것)에 항목별 클로저를 주입한다.
+      **강조(dim) 판정은 base source 기준** — 범례는 base 를 클릭하기 때문.
+    - **범례는 base source 목록 그대로** 두고 스와치만 DUT 색 그라데이션 바로 바꾼다.
+      DUT 를 항목으로 늘어놓으면 `source × DUT` 개가 되어 우측 세로 칸이 스크롤 지옥이 된다.
+      정확한 DUT 라벨은 Item_detail hover(`source : WF1 · DUT 3`)에서 읽는다.
+    - **표시 캡은 손대지 않는다** — `distCapFor` 가 칸 예산(8000)을 시리즈 수로 나누는 구조라
+      5 source(1500씩) → 40 시리즈(200씩)로 자동 조정된다. `distStepY` 의 `100/n` 도 서버가
+      DUT별 `n` 을 그대로 실어 주므로 **프런트 채움 로직 무변경**(R13 자동 준수).
+      `distPerFrame` 만 실제 시리즈 수를 보도록 고쳤다(안 그러면 스크롤이 끊긴다).
+    - **Gap Chart·Distribution composite 은 제외**된다. Gap 은 합성 파생값이라 DUT 축이 없고
+      (`_gcCache` 3종 리터럴 유지 = 자동 제외), composite 은 색이 pairKey(source+item) 라
+      분할 이름이 오면 **전 시리즈가 회색**이 된다 → `dcDropDut` 로 그 카드만 source 단위 유지.
+    - `mode="DUT"` 세션에서는 메뉴 항목 자체를 내리고 상태도 끈다(이미 분할돼 있다).
+      서버도 `compute_dut_compact` 이 이중 분할을 막는다. DUT 1종 세션은 이름·값이 분리 전과
+      완전히 동일하다(옵션을 켜도 아무 일이 없는 것이 정직한 동작).
+    - 배치 크기: 프런트 `DIST_BATCH.DUT_SIZE`(16) / 서버 `_DIST_DUT_BATCH_MAX`(20) **짝**.
+      seq 와 함께면 더 작은 쪽(10). 분할 비용은 요청당 고정비라 seq 만큼 낮출 이유가 없다.
+    - 시리즈가 48 이상이면 첫 배치 도착 후 **1회** 토스트로 "범례에서 source 를 골라 좁히라"고
+      안내한다(DUT 수는 payload 에 없어 응답을 받아야 알 수 있다 — 억지로 `/full` 에 필드를
+      더하면 전역 스키마 bump = 콜드 폭풍). Item_detail 은 `IDET_DUT_MAX_TRACES`(120) 초과 시
+      분할하지 않고 source 단위를 유지한다(점을 버리는 게 아니라 그룹핑만 되돌리는 것이라
+      규칙 #5 와 무관).
+    - 회귀 고정: [tests/test_dist_dut.py](../tests/test_dist_dut.py)(서버 12항목 — 분할 이름·
+      정렬·**합집합 보존**·**off 바이트 동일**·ETag 분리·bin1∩dut·seq×dut·`/scatter` 배열·
+      이중 분할 금지·DUT 1종·`(blank)`·상한·갤러리==상세) ·
+      [tests/test_dist_dut_js.py](../tests/test_dist_dut_js.py)(프런트 12항목 —
+      `distGalleryVariant` 무오염·12조합·Gap/composite 제외·`cdfKeyOf` 단일화·짝 상수·
+      R13·파싱 방어·idx 보존·색·trace 상한).
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
@@ -1500,7 +1594,7 @@ Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — E
 | 10 | `stdf_map.js` | STDF Map(값 기반 웨이퍼 맵 서브모드) |
 | 11 | `compare.js` | Compare 서브패널 빌더(map/log/equiv) + 서브탭 전환(`showCmpSub`) + 표 헬퍼·compare_note 바인딩 |
 | 12 | `compare_issue.js` | Issue Table Compare **탭 진입점** + ISSUE_TABLE 서브패널 — **11·7 재사용이라 그 뒤** |
-| 13 | `map_select.js` | Map 좌표 선택(chip)·`mapSelMarkerTraces`·Summary 카드 |
+| 13 | `map_select.js` | 좌표 강조(chip)·`mapSelMarkerTraces`·Summary 카드 — 입력 경로 2개(Map 검색 폼 / Item_detail 드래그) |
 | 14 | `cpk.js` | CPK 탭 |
 | 15 | `distribution.js` | Distribution 갤러리·툴바 (`DIST` 상수·`DIST_VARIANTS`) |
 | 16 | `item_detail.js` | Item_detail(CDF+히스토그램 상세) |

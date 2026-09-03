@@ -1007,6 +1007,11 @@ html[data-theme="dark"] .sheet-table th .th-note { color: #6b7280; }
   color: #344054; border-right: 1px solid #cbd2dc; }
 .distseg:last-child { border-right: none; }
 .distseg.active { background: #5E6AD2; color: #fff; }
+/* Item Filter / Chart Option 드롭다운 트리거 — 옛 개별 토글 버튼을 성격별로 접은 것.
+   메뉴 본문은 Issue Table 액션 메뉴(.issue-menu) 스타일을 그대로 재사용하고(체크 표시는
+   .issue-menu-item.checked + .issue-menu-mark), 여기서는 트리거만 손본다.
+   .active 는 "안에 켜진 항목이 있음" 신호다 — 접혀 있어 안이 안 보이기 때문. */
+.distseg.dist-menu-btn { white-space: nowrap; }
 /* Temperature 소스 그룹 필터(전체/RT/CT/HT + 그룹 선택) — Temperature 모드에서만 생성된다.
    item_detail 상단에도 같은 마크업이 들어가므로 툴바 밖에서도 자체 여백을 갖는다. */
 .dist-temp-filter { border-color: #ea7317; align-items: stretch; }
@@ -1721,7 +1726,9 @@ html[data-theme="dark"] .note-tag-add input { background: #14171d; border-color:
 .cdf-editbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 12px; }
 .cdf-editbar .cdf-eb-label { color: #6b7280; }
 .cdf-editbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
-.cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #EF553B; border-color: #EF553B; }
+/* 좌표 강조 모드 — 강조 마커(옥색 #2DD4BF, map_select.js MAPSEL_HL_COLOR)와 같은 계열로
+   버튼을 칠해 "이 버튼이 저 색을 만든다"가 바로 보이게 한다. */
+.cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #14B8A6; border-color: #14B8A6; }
 .cdf-editbar .cdf-eb-count { color: #555; margin-left: 4px; }
 .cdf-editbar .cdf-eb-hint { color: #9aa0aa; }
 .cdf-axisbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 8px; flex-wrap: wrap; font-size: 12px; }
@@ -1736,14 +1743,20 @@ html[data-theme="dark"] .note-tag-add input { background: #14171d; border-color:
 /* 차트 블록은 다크에서도 흰 카드를 유지하므로 라벨 색을 명시한다(상속하면 다크에서 흰 글자) */
 .idet-chart-block .cdf-axisbar .cdf-eb-label { color: #6b7280; }
 .idet-fail-chk-col { width: 34px; text-align: center; }
-/* item_detail 하단: Map Analysis 선택 좌표의 이 항목 값 표 */
-.idet-chipval-table { border-collapse: collapse; font-size: 12px; margin: 4px 0 14px; }
+/* item_detail 하단: 강조 좌표(Map Analysis 공유)의 이 항목 값 표.
+   드래그로 수백 개를 고를 수 있어 표가 페이지를 밀지 않게 자체 스크롤을 준다. */
+.idet-chipval-head { display: flex; align-items: center; gap: 10px; }
+.idet-chipval-wrap { max-height: 260px; overflow: auto; margin: 4px 0 14px; }
+.idet-chipval-table { border-collapse: collapse; font-size: 12px; margin: 0; }
 .idet-chipval-table th, .idet-chipval-table td { padding: 4px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
-.idet-chipval-table th { color: #6b7a90; font-weight: 600; background: #f6f9ff; }
+.idet-chipval-table th { color: #6b7a90; font-weight: 600; background: #f6f9ff; position: sticky; top: 0; }
 .idet-chipval-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .idet-chipval-table .mapsel-sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; }
+.idet-chipval-table .mapsel-del { border: none; background: transparent; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
+.idet-chipval-table .mapsel-del:hover { color: #e11d48; }
 html[data-theme="dark"] .idet-chipval-table th { background: #1e2430; color: #9aa3b0; }
 html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-chipval-table td { border-color: #2f3540; }
+html[data-theme="dark"] .idet-chipval-table .mapsel-del { color: #6b7280; }
 
 /* ── Raw Data (web_report lazy-load) ──────────────────────────────────────── */
 /* 그리드가 페이지 자체 스크롤을 쓰므로(내부 height 없음), 검색/필터 바와 그 아래 그리드
@@ -3152,6 +3165,7 @@ html[data-theme="dark"] .issue-item-link { color: #7fa8f5; }
 html[data-theme="dark"] .issue-item-link:hover { color: #a5c2f7; }
 html[data-theme="dark"] .cdf-editbar .cdf-eb-label { color: #8b94a3; }
 html[data-theme="dark"] .cdf-editbar .cdf-eb-count { color: #9aa3b0; }
+html[data-theme="dark"] .cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #0D9488; border-color: #0D9488; }
 html[data-theme="dark"] .cdf-axisbar .cdf-ax-grp { color: #8b94a3; }
 html[data-theme="dark"] .cdf-axisbar .cdf-ax-in { background: #1f232b; border-color: #3a3f4b; color: #d5dae2; }
 

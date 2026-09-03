@@ -52,7 +52,7 @@ ELEVATED_TIMEOUT_SEC = 900   # 승격 업데이트가 이 시간 안에 안 끝�
 # 런처 빌드 식별자 — .update_fail 기록에 함께 남는다. **런처를 고쳐 배포하면 이 값을
 # 올려라**: 과거의 "3회 실패로 포기" 기록이 자동으로 풀려, 그 버그로 멈춰 있던 PC 가
 # 새 런처를 받는 즉시 다시 시도한다 (transport/app_update.read_fail_count).
-LAUNCHER_BUILD = "2026.08.26-parent-pid-fix"
+LAUNCHER_BUILD = "2026.09.03-gate-on-runnable"
 
 # ── 대기 중 보여 줄 한 줄 문구 ──────────────────────────────────────────────
 # 진행창은 길면 수 분을 서 있는다. 그동안 화면이 고정돼 있어 지루하다는 피드백을
@@ -1303,11 +1303,50 @@ def _elevated_update(root, target, logf, show_ui=True) -> int:
     return 0
 
 
+def update_base_version(root, logf):
+    """업데이트 판정에 쓸 "지금 실제로 뜰 버전". current.txt 가 아니다.
+
+    current.txt 는 포인터일 뿐이고 실행 후보는 runnable() 이 정한다 — 둘이 어긋나면
+    (파일이 없거나, 가리키는 폴더가 깨졌거나) 종전 코드는 current.txt 의 글자로
+    비교해 "이미 최신" 으로 조용히 빠졌다. 그러면 그 PC 는 영영 업데이트되지 않는다
+    (재실행해도 같은 판정이라 회복 경로가 없었다).
+
+    반환 None = 실행 가능한 버전이 하나도 없다 (사실상 신규 설치 상황).
+    """
+    current, _prev = read_current(root)
+    if current and runnable(root / VERSIONS_DIRNAME / current):
+        return current
+    order = candidates(root)
+    local = order[0] if order else None
+    logf(f"current.txt={current or '없음'} 은 실행 불가 — "
+         f"실행 후보 {local or '없음'} 기준으로 비교")
+    return local
+
+
+def fetch_manifest_with_retry(base_url, logf, retries=1, delay_sec=1.0):
+    """/honey/version 질의. 일시적 네트워크 지연(부팅 직후)만 짧게 한 번 더 시도한다."""
+    last = None
+    for attempt in range(retries + 1):
+        try:
+            return app_update.fetch_manifest(base_url)
+        except Exception as exc:   # noqa: BLE001 - 오프라인은 흔한 정상 상황이다
+            last = exc
+            if attempt < retries:
+                logf(f"version check retry {attempt + 1}/{retries} "
+                     f"({type(exc).__name__}: {exc})")
+                time.sleep(delay_sec)
+    raise last
+
+
 def try_update(root, argv, show_ui=True):
     """앱을 띄우기 전에 업데이트한다. **어떤 실패도 밖으로 내보내지 않는다.**
 
     업데이트는 부가 기능이고 앱이 뜨는 것이 본 기능이다 — 여기서 예외가 새어나가면
     사용자는 일을 아예 못 하게 된다.
+
+    **판정 결과는 어느 갈래로 가든 로그 한 줄을 남긴다.** 종전에는 "업데이트 없음"
+    분기가 무로그라, 현장에서 "업데이트가 안 된다" 는 신고가 와도 서버를 못 본 것인지
+    보고도 최신이라고 판정한 것인지 로그로 가릴 수 없었다.
     """
     def logf(message):
         log(root, message)
@@ -1326,15 +1365,30 @@ def try_update(root, argv, show_ui=True):
         base_url = app_update.read_server_url(root, current)
 
         try:
-            manifest = app_update.fetch_manifest(base_url)
+            manifest = fetch_manifest_with_retry(base_url, logf)
         except Exception as exc:   # noqa: BLE001 - 오프라인은 흔한 정상 상황이다
             logf(f"version check skipped ({type(exc).__name__}: {exc})")
             return handle_running_without_update(root, logf, show_ui)
 
         remote = str(manifest.get("version") or "")
-        if not app_update.is_newer(remote, current):
+        logf(f"version check: server={remote or '없음'} "
+             f"current={current or '없음'} url={base_url}")
+        if not remote:
+            # 서버가 200 을 줬지만 version 이 비었다 — is_newer 는 이걸 "최신" 으로
+            # 돌려주므로(둘 중 하나라도 비면 False) 여기서 갈라 놓지 않으면 서버 이상이
+            # 정상으로 위장된다.
+            logf("version check: 서버 응답에 version 없음 — 건너뜀")
+            return handle_running_without_update(root, logf, show_ui)
+
+        local = update_base_version(root, logf)
+        if not app_update.is_newer(remote, local):
+            logf(f"update 없음 (server={remote} <= local={local or '없음'})")
             app_update.clear_fail_count(root)
             return handle_running_without_update(root, logf, show_ui)
+
+        # 이하 current 는 "실제로 뜰 버전" 이다 — 델타의 재사용 원본과 롤백용 prev 는
+        # 실재하는 폴더여야 한다 (current.txt 의 글자가 아니라).
+        current = local
 
         fails = app_update.read_fail_count(root, remote, LAUNCHER_BUILD)
         if fails >= MAX_UPDATE_FAILS:
@@ -1469,8 +1523,15 @@ def main(argv) -> int:
         if pid:
             log(root, f"wait for pid {pid}")
             wait_for_pid(pid, WAIT_PARENT_SEC)
+        # --wait-pid 만 오면 방금 업데이트를 마치고 재실행된 경우다 (다시 확인할 필요 없다).
+        # --force-update 가 함께 오면 앱의 [지금 업데이트] 가 우리를 부른 것이다 —
+        # 런처를 거치지 않고 앱만 실행되던 PC(작업표시줄 고정 등)의 유일한 복귀 경로라
+        # 여기서 반드시 업데이트를 확인해야 한다.
+        if "--force-update" in argv:
+            log(root, "forced update check (from app)")
+            if try_update(root, argv, show_ui) is False:
+                return 0
     else:
-        # --wait-pid 로 온 것은 방금 업데이트를 마치고 재실행된 경우다 (다시 확인할 필요 없다).
         if try_update(root, argv, show_ui) is False:
             return 0
 

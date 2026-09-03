@@ -230,7 +230,8 @@ def build_distribution_index(tables, cpk_rows, exclude=None, counts=None,
 
 
 def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
-                 bin1: bool = False, bin1_sources=None, temperature_groups=None) -> dict:
+                 bin1: bool = False, bin1_sources=None, temperature_groups=None,
+                 dut: bool = False) -> dict:
     """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
     이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
 
@@ -254,6 +255,11 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
     - ``stats``: 소스별 _stats (n/min/median/max/average/stdev/cp/cpl/cpu/cpk).
     - ``sources[].serial/xpos/ypos``: CDF hover 용으로 ``values`` 와 동일 순서·길이로 정렬된
       die 식별 metadata (Item_detail CDF 차트 전용, histogram 은 미사용).
+    - ``sources[].dut``: ``dut=True`` 일 때만 실리는 die 별 DUT 라벨(같은 순서·길이).
+      "DUT 별 분리 보기" 에서 **프런트가 이 배열로 시리즈를 가른다** — source 자체를
+      쪼개 보내지 않는 이유는 CDF 제외 칩(`cdfChipKey`)이 source 명에 묶여 있어, 이름이
+      바뀌면 토글할 때마다 이미 제외한 die 가 되살아나기 때문이다. 라벨 정규화는
+      `honeyform._fmt_dut`(분할 규칙과 같은 정본)를 쓴다.
     - ``fail_rows``: FAILTNO 가 이 항목의 TNO 와 일치하는 행(= 이 항목으로 fail 된 die).
       ``_META_COLUMNS`` + SOURCE + 측정값. ``fail_row_cap`` 상한 초과 시 잘리고
       ``fail_truncated=True`` (전체 개수는 ``fail_total``).
@@ -307,13 +313,21 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
             if ihi is not None:
                 disp_mask = disp_mask & (arr <= ihi)
         values = numeric.to_numpy()[disp_mask]
-        sources.append({
+        src = {
             "name": table.source,
             "values": values.round(6).tolist(),
             "serial": [fmt_type(v) for v in table.data["SERIAL"].to_numpy()[disp_mask]],
             "xpos": [fmt_type(v) for v in table.data["XPOS"].to_numpy()[disp_mask]],
             "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[disp_mask]],
-        })
+        }
+        if dut and "DUT" in table.data.columns:
+            # perf-guard: allow S01-report-schema (report payload 가 아니라 /scatter 응답
+            # 구조다 — 세대는 cache_policy._dut_suffix 가 담당해 dut=True 요청만 별도 키로
+            # 가른다. dut=False 면 이 키 자체가 붙지 않아 **응답 바이트가 종전과 동일**하다.
+            # 전역 bump 는 무관한 세션까지 콜드 재빌드시킨다 — 위 "n" 추가와 같은 규약)
+            from ..honeyform import _fmt_dut
+            src["dut"] = [_fmt_dut(v) for v in table.data["DUT"].to_numpy()[disp_mask]]
+        sources.append(src)
         st = _stats(stat_col, stat_lo, stat_hi)
         # report용 정규분포 곡선(프론트)의 축퇴 판정: n<2 또는 std<=0 이면 곡선을
         # 그리지 못하므로 서버가 degenerate 로 표시(프론트는 스파이크로 대체).

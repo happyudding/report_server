@@ -69,12 +69,19 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 > 기존 캐시가 그대로 유효하다. scope 는 실제로 적용되는 세션(Temperature + RT 존재)일
 > 때만 키에 들어간다(`service._bin1_source_filter` 가 판정).
 
+> **DUT 변형 키 꼬리표** (`cache_policy._dut_suffix`, 2026-09-03): `dut=True` 면
+> `("dut",)`, 아니면 **빈 튜플**이라 분리를 끄고 쓰는 세션의 키가 종전과 바이트까지
+> 같다(= 이 축을 도입해도 콜드 폭풍이 없다). bin1 축·정렬(seq) 축과 직교하므로 세
+> 꼬리표가 함께 붙을 수 있다. ⚠️ `/scatter` 만은 라우트가 ETag 를 **직접 조립**하므로
+> (`routes_webreport.web_report_scatter`) 키에 축을 더할 때 **그 문자열도 같이** 고쳐야
+> 한다 — 빠뜨리면 토글해도 304 로 옛 응답이 나가 화면이 안 바뀐다.
+
 | 캐시 | 키 구성 | 무효화 트리거 |
 |------|---------|---------------|
 | TABLES_CACHE | (akey, chash[, prep]) | raw_data 편집(chash) / 전처리 / 세션 삭제 |
 | DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
-| _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
-| _DIST_SEQ_CACHE | (akey, chash[, prep], mode, subjects_digest, "seq", ver[, "bin1"[, scope]]) | 〃 — 항목 배치 **Serial 순**(rawdata 누적 순) 값 배열 gzip (`?order=seq`). ECDF 와 별도 키 = 축이 다른 응답이 서로의 304 로 오염되지 않는다. pack 지름길 없음(순서 보존) |
+| _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]][, "dut"]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
+| _DIST_SEQ_CACHE | (akey, chash[, prep], mode, subjects_digest, "seq", ver[, "bin1"[, scope]][, "dut"]) | 〃 — 항목 배치 **Serial 순**(rawdata 누적 순) 값 배열 gzip (`?order=seq`). ECDF 와 별도 키 = 축이 다른 응답이 서로의 304 로 오염되지 않는다. pack 지름길 없음(순서 보존) |
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8). **report 콜드 빌드가 `service.seed_map` 으로 RAM+디스크를 함께 채운다** (아래 "Map dies 시딩" — Map 3초 SLA) |
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
@@ -83,7 +90,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |
 | TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
-| _SCATTER_CACHE | (akey, chash[, prep], mode, subject) | raw_data 편집 / 전처리 / 세션 삭제 |
+| _SCATTER_CACHE | (akey, chash[, prep], mode, subject[, "bin1"[, scope]][, "dut"]) | raw_data 편집 / 전처리 / 세션 삭제 — `dut` 는 die 별 DUT 라벨 배열을 함께 실은 응답("DUT 별 분리"). **ETag 는 라우트가 직접 조립**하므로 짝으로 고칠 것 |
 | _GAP_CACHE | (akey, chash[, prep], mode, chart_id, spec_digest, gver[, "bin1"]) | raw_data 편집 / 전처리 / **수식 수정(spec_digest)** / 세션 삭제 — **edits_rev·sid 무관**(남의 코멘트 저장으로 죽지 않게, ai_comment_key 와 같은 논리). 갤러리 카드와 Item_detail 이 이 한 엔트리를 공유한다 |
 | COMPARE_CACHE | (akey, chash[, prep], mode, opts, cmpver) | raw_data 편집 / 전처리 / 세션 삭제 — **sid·edits_rev 무관**(ai_comment_key 와 같은 논리: 코멘트 편집으로 재계산하지 않는다). 값에 common_map 이 있어 수 MB 라 개수(`WEB_REPORT_COMPARE_CACHE`)+바이트(`_MB`) **이중 상한** |
 

@@ -156,12 +156,12 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
 
 def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
                         report_db, upload_root: Path, bin1: bool = False,
-                        bin1_scope: str = "") -> tuple[str, bytes]:
+                        bin1_scope: str = "", dut: bool = False) -> tuple[str, bytes]:
     """/distribution_batch 응답의 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
 
     subjects 는 **정렬·중복제거된 리스트**여야 한다(라우트가 정규화) — 같은 항목 집합을
     다른 순서로 요청해도 같은 캐시 키가 되도록 하기 위함이다. etag 는 캐시 키에서 파생해
-    배치 구성·변형(bin1)이 다르면 서로의 304 로 오염되지 않는다.
+    배치 구성·변형(bin1/dut)이 다르면 서로의 304 로 오염되지 않는다.
     """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
@@ -171,7 +171,7 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
     # 종전 키와 완전히 동일해 기존 캐시가 유효하다(service._bin1_source_filter 와 같은 판정).
     scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
     cache_key = cache_policy.dist_batch_key(   # 키 규약: cache_policy
-        session, digest, bin1=bin1, bin1_scope=scope,
+        session, digest, bin1=bin1, bin1_scope=scope, dut=dut,
         prep_digest=preprocess.session_digest(report_db, session_id))
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
@@ -184,7 +184,7 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
             return etag, blob
         result = service.get_distribution_batch(
             session_id, subjects, report_db=report_db, upload_root=upload_root,
-            bin1=bin1, bin1_scope=scope)
+            bin1=bin1, bin1_scope=scope, dut=dut)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_DIST_BATCH_CACHE, cache_key, blob,
                                 _DIST_BATCH_CACHE_MAX, _DIST_BATCH_CACHE_MAX_BYTES)
@@ -193,7 +193,7 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
 
 def get_dist_seq_batch_gzip(session_id: str, subjects, *, session: dict,
                             report_db, upload_root: Path, bin1: bool = False,
-                            bin1_scope: str = "") -> tuple[str, bytes]:
+                            bin1_scope: str = "", dut: bool = False) -> tuple[str, bytes]:
     """/distribution_batch?order=seq 응답 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
 
     `get_dist_batch_gzip` 과 같은 골격이고 키 빌더(dist_seq_batch_key)와 계산 함수만 다르다.
@@ -205,7 +205,7 @@ def get_dist_seq_batch_gzip(session_id: str, subjects, *, session: dict,
     digest = hashlib.sha256("\n".join(subjects).encode("utf-8")).hexdigest()[:32]
     scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
     cache_key = cache_policy.dist_seq_batch_key(   # 키 규약: cache_policy
-        session, digest, bin1=bin1, bin1_scope=scope,
+        session, digest, bin1=bin1, bin1_scope=scope, dut=dut,
         prep_digest=preprocess.session_digest(report_db, session_id))
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
@@ -218,7 +218,7 @@ def get_dist_seq_batch_gzip(session_id: str, subjects, *, session: dict,
             return etag, blob
         result = service.get_distribution_seq_batch(
             session_id, subjects, report_db=report_db, upload_root=upload_root,
-            bin1=bin1, bin1_scope=scope)
+            bin1=bin1, bin1_scope=scope, dut=dut)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_DIST_SEQ_CACHE, cache_key, blob,
                                 _DIST_SEQ_CACHE_MAX, _DIST_SEQ_CACHE_MAX_BYTES)
@@ -227,17 +227,19 @@ def get_dist_seq_batch_gzip(session_id: str, subjects, *, session: dict,
 
 def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
                      report_db, upload_root: Path, bin1: bool = False,
-                     bin1_scope: str = "") -> bytes:
+                     bin1_scope: str = "", dut: bool = False) -> bytes:
     """/scatter 응답의 gzip bytes 를 캐시해 반환 (같은 항목 반복 클릭 시 재계산 제거).
 
     ``bin1`` 변형(양품만)은 별도 캐시 키(scatter_key(bin1=True))로 전체 기준과 분리한다.
+    ``dut`` 변형(die 별 DUT 라벨 동봉)도 마찬가지다. ⚠️ 이 함수는 ETag 를 만들지 않는다 —
+    라우트가 직접 조립하므로 **거기에도 dut 를 반영**해야 stale 304 가 안 난다.
     """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
     scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
     cache_key = cache_policy.scatter_key(   # 키 규약: cache_policy
-        session, subject, bin1=bin1, bin1_scope=scope,
+        session, subject, bin1=bin1, bin1_scope=scope, dut=dut,
         prep_digest=preprocess.session_digest(report_db, session_id))
 
     blob = cache.cache_get(_SCATTER_CACHE, cache_key)
@@ -249,7 +251,7 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
             return blob
         result = service.scatter_item(
             session_id, subject, report_db=report_db, upload_root=upload_root,
-            bin1=bin1, bin1_scope=scope, session=session)
+            bin1=bin1, bin1_scope=scope, session=session, dut=dut)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_SCATTER_CACHE, cache_key, blob,
                                 _SCATTER_CACHE_MAX, _SCATTER_CACHE_MAX_BYTES)

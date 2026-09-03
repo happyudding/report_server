@@ -80,6 +80,20 @@ def _bin1_suffix(bin1: bool, bin1_scope: str = "") -> tuple:
     return ("bin1",) + ((str(bin1_scope),) if bin1_scope else ())
 
 
+def _dut_suffix(dut: bool) -> tuple:
+    """"DUT 별 분리 보기" 변형 키 꼬리표. off 면 **빈 튜플**(기존 캐시 유효).
+
+    `_bin1_suffix` 와 같은 규약이다 — 이 축을 도입해도 분리를 끄고 쓰는 세션의 캐시는
+    **하나도 무효화되지 않는다**(키 튜플 바이트가 종전과 동일). bin1 축·정렬(seq) 축과
+    직교하므로 세 꼬리표가 함께 붙을 수 있다.
+
+    분리 응답은 source 를 ``"<source> · DUT <label>"`` 로 쪼개므로 같은 항목 집합이라도
+    내용이 전혀 다르다 — 반드시 별도 키여야 하고, ETag 도 이 키에서 파생돼 서로의 304 로
+    오염되지 않는다(`/scatter` 만 예외로 라우트가 ETag 를 직접 조립한다 → routes_webreport).
+    """
+    return ("dut",) if dut else ()
+
+
 def dist_key(session, *, bin1: bool = False, prep_digest: str = "",
              bin1_scope: str = "") -> tuple:
     # DUT 모드는 같은 akey 라도 분할된 ECDF 를 내므로 mode 포함.
@@ -99,7 +113,7 @@ DIST_BATCH_SCHEMA_VERSION = 1
 
 
 def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
-                   prep_digest: str = "", bin1_scope: str = "") -> tuple:
+                   prep_digest: str = "", bin1_scope: str = "", dut: bool = False) -> tuple:
     """항목 배치 ECDF(GET .../distribution_batch) 응답 gzip 캐시 키.
 
     dist_key 와 같은 (akey, chash, mode) 기반에 요청 항목 집합의 digest 를 더한다 —
@@ -108,7 +122,7 @@ def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
     """
     return (_base(session, prep_digest)
             + (_mode(session), str(subjects_digest), DIST_BATCH_SCHEMA_VERSION)
-            + _bin1_suffix(bin1, bin1_scope))
+            + _bin1_suffix(bin1, bin1_scope) + _dut_suffix(dut))
 
 
 # Serial 순(rawdata 누적 순) 배치 응답 스키마 세대. 응답 구조(items[].sources[].v)를 바꾸면
@@ -118,7 +132,8 @@ DIST_SEQ_SCHEMA_VERSION = 1
 
 
 def dist_seq_batch_key(session, subjects_digest: str, *, bin1: bool = False,
-                       prep_digest: str = "", bin1_scope: str = "") -> tuple:
+                       prep_digest: str = "", bin1_scope: str = "",
+                       dut: bool = False) -> tuple:
     """항목 배치 **Serial 순** 값 배열(GET .../distribution_batch?order=seq) gzip 캐시 키.
 
     dist_batch_key 와 같은 재료에 "seq" 표식과 전용 스키마 세대를 더한 별도 키다 —
@@ -127,7 +142,7 @@ def dist_seq_batch_key(session, subjects_digest: str, *, bin1: bool = False,
     """
     return (_base(session, prep_digest)
             + (_mode(session), str(subjects_digest), "seq", DIST_SEQ_SCHEMA_VERSION)
-            + _bin1_suffix(bin1, bin1_scope))
+            + _bin1_suffix(bin1, bin1_scope) + _dut_suffix(dut))
 
 
 def dist_chunk_key(analysis_key, content_hash, mode, chunk_id: int,
@@ -708,10 +723,13 @@ def full_key(session, session_id: str, edits_rev: int, extras_digest: str) -> tu
 
 
 def scatter_key(session, subject: str, *, bin1: bool = False, prep_digest: str = "",
-                bin1_scope: str = "") -> tuple:
+                bin1_scope: str = "", dut: bool = False) -> tuple:
     # bin1=True 는 양품(Bin1)만으로 낸 상세 — 전체 기준과 별도 캐시(키에만 추가).
+    # dut=True 는 sources[].dut 배열이 함께 실린 응답 — 구조가 다르므로 별도 캐시.
+    # ⚠️ 이 라우트만 ETag 를 **직접 조립**한다(routes_webreport.web_report_scatter) —
+    # 여기에 dut 를 넣고 그쪽 ETag 문자열을 빠뜨리면 토글해도 304 로 옛 응답이 나간다.
     return (_base(session, prep_digest) + (_mode(session), subject)
-            + _bin1_suffix(bin1, bin1_scope))
+            + _bin1_suffix(bin1, bin1_scope) + _dut_suffix(dut))
 
 
 # Gap Chart 응답 구조를 바꿀 때만 올린다 (build_gap_item 의 반환 키/형태).

@@ -63,11 +63,26 @@ _DIST_SEQ_BATCH_MAX = 10
 
 # /distribution_batch 의 order 파라미터 화이트리스트. ""/"ecdf" = 종전 누적분포(기본),
 # "seq" = Serial 순(rawdata 누적 순) 값 배열 (web_report/dist_seq.py).
+# **"dut"(DUT 별 분리)는 여기 없다** — 그건 x축 의미가 아니라 시리즈 분해 축이라 order 와
+# 직교한 별도 파라미터(dut=1)다. seq×dut 조합(DUT별 측정순서 흐름)이 실제로 유용하다.
 _DIST_BATCH_ORDERS = ("", "ecdf", "seq")
+
+# dut=1 은 source 를 DUT 값별로 쪼갠다 — 총 포인트 수는 그대로지만(같은 die 를 나눠 담는다)
+# sources 엔트리가 DUT 배로 늘어 JSON 구조 오버헤드와 프런트 시리즈 수가 함께 커진다.
+# 분할 비용은 **요청당 고정비**(프레임 마스킹 1회)라 배치를 잘게 쪼개면 총 CPU 가 오히려
+# 늘어난다 — seq(10)만큼 낮출 이유가 없어 20 으로 둔다. 프런트도 같은 값 이하로 자른다
+# (distribution.js DIST_BATCH.DUT_SIZE — 한쪽만 바꾸면 400 이 난다).
+_DIST_DUT_BATCH_MAX = 20
 
 # trim_chart_batch 한 요청의 그룹 수 상한 — 프런트 산포 한 페이지 크기(TRIM.PAGE_SIZE=6)와
 # 같은 값. 페이지를 키우면 두 곳을 함께 올려야 한다.
 _TRIM_BATCH_MAX = 6
+
+# commonality/chips_lookup 한 요청의 chip 수 상한 = 화면이 동시에 강조할 수 있는 좌표 수.
+# 프런트도 같은 값으로 자른다(map_select.js MAPSEL_MAX — 한쪽만 바꾸면 400 이 난다).
+# chip 하나가 전 항목의 값·누적% 를 들고 오므로(항목 수천 개) 이 상한이 곧 응답 크기·
+# 브라우저 힙의 상한이다.
+_COMMONALITY_LOOKUP_MAX = 300
 
 
 def _prep_tag(session_id):
@@ -265,6 +280,17 @@ def _bin1_args():
     return bin1, scope, ("bin1" + ("-" + scope if scope else "")) if bin1 else "all"
 
 
+def _dut_arg():
+    """"DUT 별 분리 보기" 파라미터. 반환: (dut, ETag 조각).
+
+    ETag 조각은 **직접 ETag 를 조립하는 라우트**(/scatter)가 쓴다 — 배치 쪽은
+    response_cache 가 캐시 키에서 ETag 를 파생하므로 필요 없다. off 면 빈 문자열이라
+    ETag 문자열이 종전과 완전히 같다(`_bin1_args` 의 "all" 과 같은 규약).
+    """
+    dut = (request.args.get("dut") or "") in ("1", "true", "True")
+    return dut, ("dut" if dut else "")
+
+
 @report_bp.get("/session/<session_id>/web_report/distribution")
 def web_report_distribution(session_id):
     """Distribution ECDF 전량(다운샘플 없음)을 컴팩트 columnar JSON 으로 지연 로드.
@@ -317,6 +343,10 @@ def web_report_distribution_batch(session_id):
     ``order=seq`` 면 ECDF 대신 **행 순서를 보존한 값 배열**을 준다(Distribution "Serial 순"
     토글 · 갤러리 미니셀 전용). 응답 포맷·캐시·ETag 가 모두 갈라져 서로의 304 로 오염되지
     않는다 — 자세한 이유는 web_report/dist_seq.py 모듈 docstring.
+
+    ``dut=1`` 이면 각 source 를 DUT 값별 pseudo-source(``"<source> · DUT <label>"``)로
+    쪼개 준다("DUT 별 분리 보기"). order 와 **직교**라 함께 쓸 수 있다(DUT별 측정순서
+    흐름 = 사이트 드리프트 진단) → web_report/dist_dut.py.
     """
     session = _require_web_report_session(session_id)
     raw = request.args.get("subjects") or ""
@@ -332,7 +362,12 @@ def web_report_distribution_batch(session_id):
     order = (request.args.get("order") or "").strip().lower()
     if order not in _DIST_BATCH_ORDERS:
         abort(400, "invalid order")
+    dut, _dut_tag = _dut_arg()
+    # 두 축이 함께 걸리면 **더 작은 상한**을 쓴다 — seq 는 동일값을 안 접어 payload 가 크고,
+    # dut 는 시리즈가 DUT 배로 늘어 둘의 제약이 곱해지기 때문.
     limit = _DIST_SEQ_BATCH_MAX if order == "seq" else _DIST_BATCH_MAX
+    if dut:
+        limit = min(limit, _DIST_DUT_BATCH_MAX)
     if len(subjects) > limit:
         abort(400, f"too many subjects (max {limit})")
     getter = (web_report_response_cache.get_dist_seq_batch_gzip if order == "seq"
@@ -340,7 +375,8 @@ def web_report_distribution_batch(session_id):
     try:
         etag, body = getter(
             session_id, subjects, session=session, report_db=report_db,
-            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope)
+            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope,
+            dut=dut)
     except FileNotFoundError as exc:
         return artifact_missing(session_id, str(exc))
     except KeyError:
@@ -447,10 +483,16 @@ def web_report_scatter(session_id, subject):
         abort(400, "invalid subject")
     # bin1=1 → 양품(Bin1)만으로 낸 분포/통계 상세 ("Bin1 only" 상세). ETag 에 포함.
     bin1, bin1_scope, variant = _bin1_args()
+    # dut=1 → sources[].dut(die 별 DUT 라벨) 동봉 ("DUT 별 분리 보기").
+    dut, dut_tag = _dut_arg()
     # subject 는 URL 에, mode 는 세션 불변이라 ETag 는 /distribution 과 동일하게
     # analysis_key+content_hash(+변형) 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
+    # ⚠️ **이 라우트만 ETag 를 직접 조립한다** — 새 변형 축을 캐시 키(cache_policy.scatter_key)
+    # 에만 넣고 여기를 빠뜨리면, 토글해도 브라우저가 304 로 옛 응답을 계속 써서 화면이
+    # 안 바뀐다(에러가 아니라 "아무 일도 안 일어남"으로 보인다). 두 곳을 항상 함께 고칠 것.
+    # off 면 조각이 빈 문자열이라 ETag 문자열이 종전과 완전히 동일하다.
     etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
-            f'-{variant}{_prep_tag(session_id)}"')
+            f'-{variant}{("-" + dut_tag) if dut_tag else ""}{_prep_tag(session_id)}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
@@ -458,7 +500,7 @@ def web_report_scatter(session_id, subject):
         body = web_report_response_cache.get_scatter_gzip(
             session_id, subject, session=session,
             report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            bin1=bin1, bin1_scope=bin1_scope)
+            bin1=bin1, bin1_scope=bin1_scope, dut=dut)
     except FileNotFoundError as exc:
         return artifact_missing(session_id, str(exc))
     except KeyError:
@@ -707,6 +749,35 @@ def web_report_commonality_chip(session_id):
     except Exception:
         _log.exception("web_report commonality chip failed for session %s", session_id)
         abort(500, "commonality chip failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/commonality/chips_lookup")
+def web_report_commonality_chips_lookup(session_id):
+    """여러 chip 의 항목별 값+누적%를 한 번에 (Item_detail 드래그 강조, 읽기 전용).
+
+    GET /commonality/chip 과 같은 가드 수준이다 — 조회만 하므로 CSRF·편집자 가드가 없다.
+    POST 인 이유는 chip 좌표 수백 개가 URL 길이를 넘기 때문이며, 상태를 바꾸지 않는다.
+    """
+    _require_web_report_session(session_id)
+    body = request.get_json(silent=True) or {}
+    chips = body.get("chips")
+    if not isinstance(chips, list):
+        return jsonify({"error": "chips 배열이 필요합니다"}), 400
+    if len(chips) > _COMMONALITY_LOOKUP_MAX:
+        return jsonify({"error": f"chip 은 한 번에 최대 {_COMMONALITY_LOOKUP_MAX}개입니다"}), 400
+    norm = [{k: str((c or {}).get(k) or "") for k in ("source", "serial", "xpos", "ypos")}
+            for c in chips]
+    try:
+        result = web_report_service.commonality_chips_lookup(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR), chips=norm)
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report commonality chips_lookup failed for session %s", session_id)
+        abort(500, "commonality chips_lookup failed")
     return jsonify(result)
 
 
