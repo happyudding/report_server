@@ -286,7 +286,11 @@ function idetLegendHtml(data) {
                    "\n  상세:", unknown, "\n  payload:", Object.keys(distColorMap));
     }
   }
-  return distLegendHtml(list, "idet-legend " + DIST_LEGEND_VERT_CLS);
+  // DUT 분리 시 범례는 DUT 항목이다(distLegendHtml 이 분기). 라벨 목록은 갤러리 캐시에서
+  // 뽑는데, 상세만 열어 둔 상태면 그 캐시가 비어 있을 수 있으므로 **이 화면의 데이터**로
+  // 라벨을 알려 준다(없으면 범례가 통째로 source 목록으로 되돌아가 색과 어긋난다).
+  const names = distDutOnly ? distDetailSources(data).map(s => s.name) : null;
+  return distLegendHtml(list, "idet-legend " + DIST_LEGEND_VERT_CLS, names);
 }
 
 // 갤러리 툴바의 표시 옵션을 상세 안에서도 제공 — "Limit 안 Data만"(축 클램프)과

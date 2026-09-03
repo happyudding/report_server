@@ -29,8 +29,9 @@
   (k) 브라우저: distDutBase/Label 오파싱 방어 3케이스
   (l) 브라우저: distDutSortCmp 가 서버 _dut_sort_key 와 같은 순서
   (m) 브라우저: distSplitSourcesByDut — 값·메타·idx 가 같은 순서로 갈린다
-  (n) 브라우저: distDutColor n=1/n=8 · distMakeDutColorFor 강조(dim)가 base 기준
+  (n) 브라우저: **DUT 가 색축** — 같은 DUT 는 source 가 달라도 같은 색 · 강조 DUT/source 양쪽
   (o) 브라우저: IDET_DUT_MAX_TRACES 초과 시 분할하지 않고 원본 반환
+  (q) 브라우저: **범례가 DUT 항목** — 클릭 대상이 DUT 라벨 · 스와치 색 == 차트 색
 
 Edge 가 없으면 정적 검사만 하고 나머지는 SKIP 한다(이 저장소에는 node 가 없다).
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
@@ -331,30 +332,71 @@ def test_split_sources():
 
 
 def test_colors():
-    """(n) DUT 색 변주 · 강조(dim) 판정이 base 기준."""
+    """(n) **DUT 라벨이 색축** — 같은 DUT 는 source 가 달라도 같은 색 · 강조 판정.
+
+    2026-09-03: 처음에는 base source 색의 명도 변주였는데, 산포에서 밝기 차이는 겹쳐 그리면
+    구분되지 않았다(사용자 신고). DUT 가 곧 비교 대상이므로 DUT 를 1차 색축으로 올렸다.
+    """
     js = """<script>
       %s
       var names = ['WF1 \\u00b7 DUT 1','WF1 \\u00b7 DUT 2','WF2 \\u00b7 DUT 1'];
       var f = distMakeDutColorFor(names);
       var noFilter = names.map(f);
-      distSourceFilter = new Set(['WF1']);          // base 를 고른다(범례 클릭과 같음)
+      distSourceFilter = new Set(['2']);            // 범례가 DUT 라벨을 고른다
       var g = distMakeDutColorFor(names);
-      var filtered = names.map(g);
+      var byLabel = names.map(g);
+      distSourceFilter = new Set(['WF1']);          // source 로도 고를 수 있어야 한다
+      var h = distMakeDutColorFor(names);
+      var byBase = names.map(h);
       distSourceFilter = new Set();
-      _emit({one: distDutColor('#112233', 0, 1),
-             eight: [0,1,2,3,4,5,6,7].map(function(i){return distDutColor('#808080', i, 8);}),
-             noFilter: noFilter, filtered: filtered, dim: DIST_DIM_COLOR});
+      _emit({noFilter: noFilter, byLabel: byLabel, byBase: byBase, dim: DIST_DIM_COLOR,
+             palette: [0,1,2,3,4,5,6,7].map(distDutPaletteColor),
+             labels: distDutLabelsOf(names)});
     </script>""" % SETUP
     got = json.loads(run_probe(DEPS, "", js, "colors"))
-    assert got["one"] == "#112233", f"n=1 이면 base 색 그대로여야 합니다: {got['one']}"
-    assert len(set(got["eight"])) == 8, f"8 DUT 색이 중복됩니다: {got['eight']}"
-    assert len(set(got["noFilter"][:2])) == 2, "같은 source 의 DUT 색이 같습니다"
-    # 강조: WF1 의 두 DUT 는 원색 유지, WF2 는 dim
-    assert got["filtered"][0] == got["noFilter"][0], "강조된 base 의 색이 바뀌었습니다"
-    assert got["filtered"][1] == got["noFilter"][1], "강조된 base 의 색이 바뀌었습니다"
-    assert got["filtered"][2] == got["dim"], \
-        f"비선택 source 가 dim 이 아닙니다: {got['filtered'][2]} (base 기준 판정 실패)"
-    print("  [browser] 명도 변주 8색 고유 · 강조 판정 base 기준 OK")
+    assert got["labels"] == ["1", "2"], got["labels"]
+    assert len(set(got["palette"])) == 8, f"팔레트 8색이 중복됩니다: {got['palette']}"
+    # 같은 DUT 1 은 source 가 달라도 같은 색 / 다른 DUT 는 다른 색
+    assert got["noFilter"][0] == got["noFilter"][2], \
+        f"같은 DUT 인데 색이 다릅니다: {got['noFilter']}"
+    assert got["noFilter"][0] != got["noFilter"][1], \
+        f"다른 DUT 인데 색이 같습니다: {got['noFilter']}"
+    # 범례(DUT 라벨) 강조: DUT 2 만 원색, 나머지는 dim
+    assert got["byLabel"][1] == got["noFilter"][1], "강조된 DUT 색이 바뀌었습니다"
+    assert got["byLabel"][0] == got["dim"] and got["byLabel"][2] == got["dim"], \
+        f"비선택 DUT 가 dim 이 아닙니다: {got['byLabel']}"
+    # source 이름으로 골라도(Temperature 그룹 필터 등) 동작해야 한다
+    assert got["byBase"][0] != got["dim"] and got["byBase"][1] != got["dim"], got["byBase"]
+    assert got["byBase"][2] == got["dim"], f"다른 source 가 dim 이 아닙니다: {got['byBase']}"
+    print("  [browser] DUT 가 색축(같은 DUT=같은 색) · 강조 DUT/source 양쪽 OK")
+
+
+def test_legend_dut():
+    """(q) 범례가 **DUT 항목**으로 바뀐다 — 스와치 색이 차트 색과 일치."""
+    js = """<script>
+      %s
+      var names = ['WF1 \\u00b7 DUT 1','WF1 \\u00b7 DUT 2','WF2 \\u00b7 DUT 1'];
+      var colorFor = distMakeDutColorFor(names);
+      distDutOnly = true;
+      var html = distLegendHtml(DATA.web_report.sources, DIST_LEGEND_VERT_CLS, names);
+      distDutOnly = false;
+      var plain = distLegendHtml(DATA.web_report.sources, DIST_LEGEND_VERT_CLS);
+      _emit({html: html, plain: plain,
+             c1: colorFor('WF1 \\u00b7 DUT 1'), c2: colorFor('WF1 \\u00b7 DUT 2')});
+    </script>""" % SETUP
+    got = json.loads(run_probe(DEPS, "", js, "legend"))
+    h = got["html"]
+    assert "DUT 1" in h and "DUT 2" in h, f"범례에 DUT 항목이 없습니다: {h[:300]}"
+    # 클릭 대상(data-dist-src)이 DUT 라벨이어야 강조가 DUT 단위로 걸린다
+    assert 'data-dist-src="1"' in h and 'data-dist-src="2"' in h, \
+        f"범례 클릭 대상이 DUT 라벨이 아닙니다: {h[:300]}"
+    # 스와치 색 == 차트 색 (범례가 거짓말하지 않는다)
+    assert got["c1"].lower() in h.lower(), f"DUT 1 스와치 색이 차트와 다릅니다: {got['c1']}"
+    assert got["c2"].lower() in h.lower(), f"DUT 2 스와치 색이 차트와 다릅니다: {got['c2']}"
+    # 분리 off 면 종전대로 source 목록
+    assert 'data-dist-src="WF1"' in got["plain"] and "DUT" not in got["plain"], \
+        f"분리 off 인데 범례가 바뀌었습니다: {got['plain'][:200]}"
+    print("  [browser] 범례 DUT 항목 · 스와치==차트 색 · off 면 종전 source 목록 OK")
 
 
 def test_trace_cap():
@@ -392,6 +434,7 @@ def main():
     test_base_label_parse()
     test_split_sources()
     test_colors()
+    test_legend_dut()
     test_trace_cap()
     print("[통과] DUT 별 분리 프런트 계약 정상")
 

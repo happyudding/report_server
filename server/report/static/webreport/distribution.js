@@ -637,34 +637,53 @@ function distScaleHex(hex, t) {
     .map(c => Math.max(0, Math.min(255, Math.round(c * t))));
   return "#" + ch.map(c => c.toString(16).padStart(2, "0")).join("");
 }
-// 같은 source 의 DUT 서브시리즈 색 — base 색의 **명도 변주**로 만든다.
-// 별도 팔레트는 쓰지 않는다: source 구분(1차 정보)이 DUT 구분(2차)보다 우선이고, 팔레트를
-// 섞으면 서로 다른 source 의 DUT 가 비슷한 색이 되어 범례가 거짓말을 한다.
-const DIST_DUT_LIGHT_MIN = 0.65, DIST_DUT_LIGHT_MAX = 1.35;
+// DUT 서브시리즈 색 — **DUT 라벨마다 색상(hue)이 다른** 팔레트다 (2026-09-03 사용자 요청).
+// 처음에는 base source 색의 명도 변주로 만들었는데, 산포에서 밝기 차이는 겹쳐 그리면
+// 사실상 구분되지 않았다("Legend 표기가 없어서 구분이 안 된다"). DUT 가 곧 비교 대상이므로
+// **DUT 를 1차 색축**으로 올린다 — 같은 DUT 는 어느 source 에서든 같은 색이라 범례 한 줄로
+// 읽을 수 있다. source 구분은 범례 그룹 제목·hover(`source : WF1 · DUT 3`)가 담당한다.
+// 색은 source 팔레트(DIST_PALETTE/distDefaultColor)와 **같은 생성기**를 써서 톤이 겉돌지
+// 않게 한다.
+function distDutPaletteColor(i) {
+  if (i < 0) return "#888";
+  return (i < DIST_PALETTE.length) ? DIST_PALETTE[i] : distDefaultColor(i);
+}
+// 라벨 → 색. 인덱스는 **그 항목의 DUT 라벨 목록(정렬 순)** 에서의 위치다.
 function distDutColor(base, i, n) {
-  if (n <= 1 || i < 0) return base;
-  const t = DIST_DUT_LIGHT_MIN + (DIST_DUT_LIGHT_MAX - DIST_DUT_LIGHT_MIN) * (i / (n - 1));
-  return distScaleHex(base, t);
+  if (i < 0) return base;
+  return distDutPaletteColor(i);
 }
 // 이 칸(항목)의 시리즈 이름 목록으로 색 해석기를 만든다 — 항목마다 DUT 구성이 다를 수
 // 있으므로 전역 lookup 대신 클로저로 고정한다. `plot._distColorFor` 에 주입하면
 // distDrawPoints 가 이걸 쓴다(composite 가 이미 쓰는 훅 재사용).
 // 강조 판정(dim)은 **base source** 기준이다 — 범례는 base 를 클릭하기 때문.
 function distMakeDutColorFor(names) {
-  const byBase = {};
-  (names || []).forEach(n => {
-    const b = distDutBase(n), l = distDutLabel(n);
-    if (!l) return;
-    (byBase[b] = byBase[b] || []).push(l);
-  });
-  Object.keys(byBase).forEach(b => byBase[b].sort(distDutSortCmp));
+  // 색 인덱스는 **DUT 라벨 전체 목록**(source 무관)에서의 위치다 — source 별로 따로 세면
+  // WF1 의 DUT2 와 WF2 의 DUT2 가 다른 색이 되어 "DUT 로 비교" 라는 목적이 깨진다.
+  const labels = distDutLabelsOf(names);
   return function (name) {
-    const b = distDutBase(name), l = distDutLabel(name);
+    const l = distDutLabel(name);
     if (!l) return distActiveColorFor(name);          // 분할 안 된 source
-    if (distSourceFilter.size && !distSourceFilter.has(b)) return DIST_DIM_COLOR;
-    const labels = byBase[b] || [];
-    return distDutColor(distColorFor(b), labels.indexOf(l), labels.length);
+    if (!distSeriesHighlighted(name)) return DIST_DIM_COLOR;
+    return distDutColor(null, labels.indexOf(l), labels.length);
   };
+}
+// 이 시리즈가 범례 강조에 걸렸는가 — **강조 판정의 단일 창구**.
+// 범례 항목은 모드에 따라 source 명이거나 DUT 라벨이라 둘 다 본다(분할 안 된 이름은
+// distDutBase 가 원본을, distDutLabel 이 "" 를 돌려줘 종전 동작이 그대로다).
+function distSeriesHighlighted(name) {
+  if (!distSourceFilter.size) return true;
+  const l = distDutLabel(name);
+  return distSourceFilter.has(distDutBase(name)) || (!!l && distSourceFilter.has(l));
+}
+// 시리즈 이름 목록 → **고유 DUT 라벨**(정렬 순). 색 인덱스·범례 항목의 공통 기준.
+function distDutLabelsOf(names) {
+  const seen = [];
+  (names || []).forEach(n => {
+    const l = distDutLabel(n);
+    if (l && seen.indexOf(l) < 0) seen.push(l);
+  });
+  return seen.sort(distDutSortCmp);
 }
 // 시리즈가 이만큼 넘으면 "범례에서 source 를 골라 좁히라"고 1회 안내한다. source 가 여럿인
 // 세션에서 분리를 켜면 (source × DUT) 시리즈가 한 칸에 겹쳐 색 구분이 사실상 무의미해지는데,
@@ -690,20 +709,13 @@ function distDutTagPlot(plot, srcNames) {
   _distLastSeriesCount = (srcNames || []).length;
   plot._distColorFor = distMakeDutColorFor(srcNames);
 }
-// 현재 DUT 변형 캐시에 들어온 아무 항목의 시리즈 이름 목록 — 범례 스와치가 "이 source 가
-// 몇 갈래인지" 를 알기 위해 쓴다. DUT 구성은 항목마다 다를 수 있지만 범례는 대표값 하나면
-// 충분하다(정확한 라벨은 상세 hover). 아직 배치가 안 왔으면 빈 배열 → 종전 단색 스와치.
+// 현재 DUT 변형 캐시에 들어온 아무 항목의 시리즈 이름 목록 — 범례가 DUT 라벨 목록을 뽑는
+// 재료다. DUT 구성은 항목마다 다를 수 있지만 범례는 대표값 하나면 충분하다.
+// 아직 배치가 안 왔으면 빈 배열 → 범례는 종전(source 목록)으로 그려진다.
 function distDutSeriesNames() {
   const c = distCacheFor(distGalleryDataVariant());
   const k = Object.keys(c || {})[0];
   return k ? Object.keys(c[k].bySource || {}) : [];
-}
-// 범례 스와치용 — 그 source 의 DUT 색 목록(정렬 순). 없으면 빈 배열.
-function distDutRamp(base, names) {
-  const labels = (names || []).filter(n => distDutBase(n) === base)
-    .map(distDutLabel).filter(Boolean).sort(distDutSortCmp);
-  const c = distColorFor(base);
-  return labels.map((_, i) => distDutColor(c, i, labels.length));
 }
 // 강조가 걸리면 dim 소스가 먼저(=아래에) 그려지도록 정렬한 사본 — 산포가 겹치면 색만
 // 바꿔서는 강조 소스가 뒤 trace 에 깔려 안 보인다(distDrawPoints 의 order 정렬과 같은
@@ -711,10 +723,8 @@ function distDutRamp(base, names) {
 function distOrderedSources(list) {
   list = list || [];
   if (!distSourceFilter.size) return list;
-  // DUT 분리 시 시리즈명은 "<src> · DUT n" 이라 그대로 비교하면 전부 dim 취급된다 —
-  // base source 로 판정한다(분할 안 된 이름은 distDutBase 가 원본을 돌려줘 동작 불변).
-  return list.slice().sort((a, b) => (distSourceFilter.has(distDutBase(a.name)) ? 1 : 0)
-                                   - (distSourceFilter.has(distDutBase(b.name)) ? 1 : 0));
+  return list.slice().sort((a, b) => (distSeriesHighlighted(a.name) ? 1 : 0)
+                                   - (distSeriesHighlighted(b.name) ? 1 : 0));
 }
 
 // ── source 색 범례 (갤러리 툴바 · item_detail 상단 공용) ──────────────────────
@@ -728,30 +738,39 @@ const DIST_LEGEND_COLLAPSE_MIN = 8;
 // item_detail 범례("idet-legend")도 2026-08-05 부터 같은 세로 규격으로 우측 칸에 붙는다.
 const DIST_LEGEND_VERT_CLS = "dist-legend-vert";
 let distLegendOpen = false;   // 펼침 상태 — 갤러리 재렌더(innerHTML 교체)에도 유지
-function distLegendHtml(sources, cls) {
+// seriesNames: DUT 분리 시 라벨을 뽑을 시리즈 이름 목록(생략하면 갤러리 캐시에서 뽑는다).
+// Item_detail 은 갤러리 캐시가 비어 있을 수 있어 자기 데이터의 이름을 넘긴다.
+function distLegendHtml(sources, cls, seriesNames) {
   const list = sources || [];
   if (!list.length) return "";
   const vert = String(cls || "").indexOf(DIST_LEGEND_VERT_CLS) >= 0;
-  const many = list.length >= DIST_LEGEND_COLLAPSE_MIN;
+  // DUT 분리가 켜져 있으면 범례를 **DUT 항목으로 바꾼다** (2026-09-03 사용자 요청).
+  // 종전에는 source 목록을 유지하고 스와치만 DUT 색 그라데이션으로 보여 줬는데, 그러면
+  // 어느 색이 어느 DUT 인지 알 수 없어 화면에서 구분이 안 됐다. DUT 가 곧 비교 대상이므로
+  // 범례도 DUT 단위여야 한다 — 클릭 대상(강조)도 DUT 라벨이 된다.
+  // 개수는 source×DUT 가 아니라 **DUT 종수**라(같은 DUT 는 어느 source 든 같은 색) 세로 칸이
+  // 넘치지 않는다. source 는 hover(`source : WF1 · DUT 3`)와 아래 주석 줄로 읽는다.
+  const dutLabels = distDutOnly
+    ? distDutLabelsOf(seriesNames || distDutSeriesNames()) : null;
+  const items = (dutLabels && dutLabels.length)
+    ? dutLabels.map((lbl, i) => {
+        const on = distSourceFilter.has(lbl);
+        return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(lbl)}" title="DUT ${esc(lbl)} (전 source 공통)">` +
+          `<span class="dist-leg-sw" style="background:${distDutPaletteColor(i)}"></span>` +
+          `<span class="dist-leg-nm">DUT ${esc(lbl)}</span></span>`;
+      }).join("")
+    : list.map(s => {
+        const on = distSourceFilter.has(s.name);
+        return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(s.name)}">` +
+          `<span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>` +
+          `<span class="dist-leg-nm">${esc(s.name)}</span></span>`;
+      }).join("");
+  // 접기 판정은 **실제 항목 수** 기준이다 — DUT 모드는 항목이 source 가 아니라 DUT 종수다.
+  const nItems = (dutLabels && dutLabels.length) ? dutLabels.length : list.length;
+  const many = nItems >= DIST_LEGEND_COLLAPSE_MIN;
   const open = vert || !many || distLegendOpen;
-  // DUT 분리 시에도 범례는 **base source 목록 그대로** 둔다(클릭 대상도 base). DUT 를
-  // 항목으로 늘어놓으면 source×DUT 개가 되어 세로 칸이 스크롤 지옥이 된다 — 대신 스와치를
-  // 그 source 의 DUT 색 그라데이션으로 바꿔 "몇 갈래로 갈렸는지"만 보여주고, 정확한 DUT
-  // 라벨은 Item_detail hover(`source : WF1 · DUT 3`)에서 읽는다.
-  const dutNames = distDutOnly ? distDutSeriesNames() : null;
-  const items = list.map(s => {
-    const on = distSourceFilter.has(s.name);
-    const ramp = dutNames ? distDutRamp(s.name, dutNames) : null;
-    const sw = (ramp && ramp.length > 1)
-      ? `background:linear-gradient(90deg,${ramp.join(",")})`
-      : `background:${distColorFor(s.name)}`;
-    const tip = (ramp && ramp.length > 1) ? `${s.name} · DUT ${ramp.length}종` : s.name;
-    return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(tip)}">` +
-      `<span class="dist-leg-sw" style="${sw}"></span>` +
-      `<span class="dist-leg-nm">${esc(s.name)}</span></span>`;
-  }).join("");
   const toggle = (many && !vert)
-    ? `<button type="button" class="btn-sm dist-leg-toggle" data-dist-leg="toggle">${open ? "▴" : "▾"} 범례 ${list.length}개</button>` : "";
+    ? `<button type="button" class="btn-sm dist-leg-toggle" data-dist-leg="toggle">${open ? "▴" : "▾"} 범례 ${nItems}개</button>` : "";
   // 세로 범례에서는 버튼이 없을 때도 자리를 비워두어(visibility) 아래 목록이 위아래로
   // 튀지 않게 한다 — 강조를 켜고 끌 때마다 범례가 밀려 보이던 문제(사용자 요청).
   const n = distSourceFilter.size;
@@ -1420,10 +1439,10 @@ function distDrawPoints(plot) {
   // Object.keys 순서 그대로다. 필터가 비면 정렬 자체를 건너뛰어 기존과 그리기 순서·
   // 출력이 바이트 단위로 같다.
   const srcs = Object.keys(pts);
-  // DUT 분리 시 키가 "<src> · DUT n" 이라 base 로 판정한다(분할 안 된 이름은 원본 반환).
+  // DUT 분리 시 키가 "<src> · DUT n" 이라 distSeriesHighlighted 가 base·라벨을 함께 본다.
   const order = distSourceFilter.size
-    ? srcs.slice().sort((a, b) => (distSourceFilter.has(distDutBase(a)) ? 1 : 0)
-                                - (distSourceFilter.has(distDutBase(b)) ? 1 : 0))
+    ? srcs.slice().sort((a, b) => (distSeriesHighlighted(a) ? 1 : 0)
+                                - (distSeriesHighlighted(b) ? 1 : 0))
     : srcs;
   // pts 의 키는 보통 source 명이지만 Distribution composite 는 pairKey(source+U+001F+item)
   // 라 색 해석기를 plot 에 주입한다(dist_composite.js). 미설정이면 종전과 완전히 동일.

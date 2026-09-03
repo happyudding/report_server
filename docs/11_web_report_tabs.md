@@ -1048,13 +1048,20 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     - ⚠️ **seq×dut 에서 x 는 원본 행 번호**(`s.idx`)다. DUT 는 interleave 로 측정되므로 DUT
       안에서 1..m 으로 다시 매기면 "언제 측정됐는가"가 통째로 사라져 조용히 틀린 run chart 가
       된다(비-DUT seq 는 종전대로 재번호).
-    - **색은 base source 색의 명도 변주**(±35%, `distDutColor`)다. 별도 팔레트를 쓰면 서로
-      다른 source 의 DUT 가 비슷해져 source 구분(1차 정보)이 무너진다. 갤러리 canvas 는
-      `plot._distColorFor` 훅(composite 가 이미 쓰던 것)에 항목별 클로저를 주입한다.
-      **강조(dim) 판정은 base source 기준** — 범례는 base 를 클릭하기 때문.
-    - **범례는 base source 목록 그대로** 두고 스와치만 DUT 색 그라데이션 바로 바꾼다.
-      DUT 를 항목으로 늘어놓으면 `source × DUT` 개가 되어 우측 세로 칸이 스크롤 지옥이 된다.
-      정확한 DUT 라벨은 Item_detail hover(`source : WF1 · DUT 3`)에서 읽는다.
+    - **DUT 가 1차 색축이다** (2026-09-03 사용자 요청으로 변경). 처음에는 base source 색의
+      **명도 변주**로 만들었는데, 산포에서 밝기 차이는 겹쳐 그리면 사실상 구분되지 않았다
+      ("Legend 표기가 없어서 구분이 안 된다"). DUT 가 곧 비교 대상이므로 **DUT 라벨마다
+      색상(hue)이 다른 팔레트**(`distDutPaletteColor` — source 팔레트와 같은 생성기)를 쓴다.
+      색 인덱스는 **DUT 라벨 전체 목록**(source 무관) 기준이라 **같은 DUT 는 어느 source 에서든
+      같은 색**이다 — source 별로 따로 세면 WF1 의 DUT2 와 WF2 의 DUT2 가 달라져 "DUT 로
+      비교" 라는 목적이 깨진다. 갤러리 canvas 는 `plot._distColorFor` 훅(composite 가 이미
+      쓰던 것)에 항목별 클로저를 주입한다. source 구분은 hover(`source : WF1 · DUT 3`)가 맡는다.
+    - **범례도 DUT 항목으로 바뀐다** (같은 요청). 클릭 대상(`data-dist-src`)이 DUT 라벨이라
+      강조(dim)도 DUT 단위로 걸린다. 항목 수는 `source × DUT` 가 아니라 **DUT 종수**라
+      (같은 DUT = 같은 색) 우측 세로 칸이 넘치지 않는다. 강조 판정은
+      `distSeriesHighlighted` 한 곳으로 모았고 **DUT 라벨·base source 둘 다** 본다 —
+      Temperature 그룹 필터처럼 source 이름을 채우는 기존 경로가 계속 동작해야 하기 때문.
+      분리를 끄면 범례는 종전 source 목록 그대로다.
     - **표시 캡은 손대지 않는다** — `distCapFor` 가 칸 예산(8000)을 시리즈 수로 나누는 구조라
       5 source(1500씩) → 40 시리즈(200씩)로 자동 조정된다. `distStepY` 의 `100/n` 도 서버가
       DUT별 `n` 을 그대로 실어 주므로 **프런트 채움 로직 무변경**(R13 자동 준수).
@@ -1077,7 +1084,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       이중 분할 금지·DUT 1종·`(blank)`·상한·갤러리==상세) ·
       [tests/test_dist_dut_js.py](../tests/test_dist_dut_js.py)(프런트 12항목 —
       `distGalleryVariant` 무오염·12조합·Gap/composite 제외·`cdfKeyOf` 단일화·짝 상수·
-      R13·파싱 방어·idx 보존·색·trace 상한).
+      R13·파싱 방어·idx 보존·**DUT 색축**·**범례 DUT 항목**·trace 상한).
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
   **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
