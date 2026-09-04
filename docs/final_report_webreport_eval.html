@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web Report &amp; 자동 판정 엔진 — 완료 보고</title>
+<!--
+  보고 대상: 반도체 엔지니어 리더 (프로그램 아키텍처 지식 전제하지 않음).
+  따라서 "어떻게 만들었나"가 아니라 "엔지니어 업무가 무엇이 달라지나"를 중심으로 쓴다.
+  의존성 없는 단일 파일 — 브라우저로 그냥 열면 된다. 라이트/다크 자동.
+  수치·판정 문구는 코드에서 직접 확인한 값이다(signatures.yaml 21룰의 phenomenon_ko/action_ko 등).
+-->
+<style>
+  :root {
+    --ground:#eef0f6; --surface:#fff; --surface-2:#f6f7fb;
+    --ink:#161a2b; --ink-2:#4a5169; --ink-3:#767d95;
+    --line:#d9dde9; --line-2:#c3c9db;
+    --accent:#3b4fd8; --accent-soft:#e7eafc;
+    --ok:#0f7a5a; --ok-soft:#e2f3ec;
+    --warn:#9a6200; --warn-soft:#fbf0da;
+    --hot:#b3341f; --hot-soft:#fbe8e4;
+    --shadow:0 1px 2px rgba(22,26,43,.06), 0 8px 24px -12px rgba(22,26,43,.18);
+    --sans: ui-sans-serif,"Segoe UI",system-ui,-apple-system,"Malgun Gothic",sans-serif;
+    --mono: ui-monospace,"Cascadia Mono",Consolas,"D2Coding",monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0e1017; --surface:#161a25; --surface-2:#1c212e;
+      --ink:#e4e8f2; --ink-2:#a8b0c6; --ink-3:#7b8299;
+      --line:#262c3b; --line-2:#333b4e;
+      --accent:#8e9dff; --accent-soft:#1e2440;
+      --ok:#4fc79c; --ok-soft:#122c24;
+      --warn:#e0a341; --warn-soft:#2e2415;
+      --hot:#f08268; --hot-soft:#331914;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0e1017; --surface:#161a25; --surface-2:#1c212e;
+    --ink:#e4e8f2; --ink-2:#a8b0c6; --ink-3:#7b8299;
+    --line:#262c3b; --line-2:#333b4e;
+    --accent:#8e9dff; --accent-soft:#1e2440;
+    --ok:#4fc79c; --ok-soft:#122c24;
+    --warn:#e0a341; --warn-soft:#2e2415;
+    --hot:#f08268; --hot-soft:#331914;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:15px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 24px 96px; }
+
+  header.top {
+    padding:56px 0 30px; border-bottom:1px solid var(--line);
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .eyebrow {
+    font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); font-weight:600;
+  }
+  h1 { margin:0; font-size:31px; line-height:1.25; letter-spacing:-.02em; font-weight:680; }
+  .sub { color:var(--ink-2); max-width:74ch; margin:0; font-size:16px; }
+  .meta-line {
+    font-family:var(--mono); font-size:12px; color:var(--ink-3);
+    display:flex; flex-wrap:wrap; gap:16px; margin-top:4px;
+  }
+
+  h2 {
+    margin:58px 0 6px; font-size:21px; letter-spacing:-.01em; font-weight:660;
+    display:flex; align-items:baseline; gap:10px;
+  }
+  h2 .num {
+    font-family:var(--mono); font-size:12px; color:var(--accent);
+    border:1px solid var(--line-2); border-radius:5px; padding:1px 6px;
+    background:var(--accent-soft); font-weight:600;
+  }
+  h3 { margin:30px 0 8px; font-size:16px; font-weight:650; }
+  .lede { color:var(--ink-2); margin:0 0 20px; max-width:80ch; }
+  p { margin:0 0 12px; }
+
+  code, .m { font-family:var(--mono); font-size:.88em; }
+  code {
+    background:var(--surface-2); border:1px solid var(--line);
+    border-radius:4px; padding:.5px 4.5px;
+  }
+
+  .card {
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:10px; padding:18px 20px; box-shadow:var(--shadow);
+  }
+  .grid { display:grid; gap:14px; }
+  .g2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .g3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  .g4 { grid-template-columns:repeat(4,minmax(0,1fr)); }
+  @media (max-width:880px) { .g2,.g3,.g4 { grid-template-columns:1fr; } }
+
+  .stat .v {
+    font-family:var(--mono); font-size:27px; font-weight:640;
+    letter-spacing:-.02em; line-height:1.15; display:block;
+  }
+  .stat .k { font-size:13px; color:var(--ink-3); margin-top:3px; }
+  .stat .n { font-size:12.8px; color:var(--ink-2); margin-top:8px; line-height:1.5; }
+
+  table { width:100%; border-collapse:collapse; font-size:13.8px; }
+  .tw { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--surface); box-shadow:var(--shadow); }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th {
+    background:var(--surface-2); font-size:11.5px; font-weight:640;
+    letter-spacing:.05em; text-transform:uppercase; color:var(--ink-3);
+    white-space:nowrap;
+  }
+  tbody tr:last-child td { border-bottom:none; }
+  td.m { font-family:var(--mono); font-size:12.5px; }
+  .sm { color:var(--ink-3); font-size:12.6px; display:block; margin-top:3px; }
+
+  .tag {
+    display:inline-block; font-family:var(--mono); font-size:11px; font-weight:600;
+    padding:1px 6px; border-radius:4px; border:1px solid currentColor; white-space:nowrap;
+  }
+  .t-ok { background:var(--ok-soft); color:var(--ok); }
+  .t-warn { background:var(--warn-soft); color:var(--warn); }
+  .t-hot { background:var(--hot-soft); color:var(--hot); }
+  .t-neu { background:var(--accent-soft); color:var(--accent); }
+
+  ul, ol { margin:0 0 12px; padding-left:20px; }
+  li { margin:4px 0; }
+  li::marker { color:var(--ink-3); }
+
+  .note {
+    border-left:3px solid var(--accent); background:var(--accent-soft);
+    padding:12px 16px; border-radius:0 8px 8px 0; margin:16px 0;
+    font-size:14.2px; color:var(--ink-2);
+  }
+  .note strong { color:var(--ink); }
+  .note.hot { border-left-color:var(--hot); background:var(--hot-soft); }
+  .note.ok { border-left-color:var(--ok); background:var(--ok-soft); }
+
+  /* Before / After */
+  .ba { display:grid; grid-template-columns:1fr auto 1fr; gap:0; align-items:stretch; margin:16px 0; }
+  @media (max-width:880px) { .ba { grid-template-columns:1fr; } }
+  .ba-col {
+    background:var(--surface); border:1px solid var(--line);
+    padding:16px 18px; box-shadow:var(--shadow);
+  }
+  .ba-col:first-child { border-radius:10px 0 0 10px; }
+  .ba-col:last-child { border-radius:0 10px 10px 0; border-left:none; }
+  @media (max-width:880px) {
+    .ba-col:first-child { border-radius:10px 10px 0 0; }
+    .ba-col:last-child { border-radius:0 0 10px 10px; border-left:1px solid var(--line); border-top:none; }
+  }
+  .ba-mid {
+    display:flex; align-items:center; justify-content:center;
+    padding:0 14px; background:var(--surface); border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line); color:var(--ink-3); font-size:20px;
+  }
+  @media (max-width:880px) { .ba-mid { padding:8px; border-left:1px solid var(--line); border-right:1px solid var(--line); } }
+  .ba-h { font-size:11.5px; font-family:var(--mono); letter-spacing:.08em; text-transform:uppercase; font-weight:600; margin-bottom:8px; }
+  .ba-col.before .ba-h { color:var(--hot); }
+  .ba-col.after .ba-h { color:var(--ok); }
+  .ba-col ul { padding-left:18px; margin:0; }
+  .ba-col li { font-size:13.8px; }
+
+  /* 룰 카드 */
+  .rules { display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; margin:16px 0; }
+  .rule {
+    background:var(--surface); border:1px solid var(--line); border-radius:9px;
+    padding:11px 13px; box-shadow:var(--shadow);
+  }
+  .rule .rn { font-family:var(--mono); font-size:11px; color:var(--accent); font-weight:600; }
+  .rule .rp { font-size:13.2px; font-weight:600; margin-top:3px; line-height:1.45; }
+  .rule .ra { font-size:12.4px; color:var(--ink-2); margin-top:5px; line-height:1.5; }
+
+  footer {
+    margin-top:66px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:12.8px; color:var(--ink-3);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="eyebrow">완료 보고 · COINAPI</div>
+  <h1>Web Report &amp; 자동 판정 엔진</h1>
+  <p class="sub">
+    테스트 결과 파일을 올리면 <strong>리포트가 자동으로 만들어지고</strong>,
+    Fail 항목은 <strong>엔진이 원인 유형까지 판정</strong>해 코멘트 초안을 붙여 준다.
+    엔지니어가 Excel 로 하던 반복 작업을 시스템으로 옮긴 결과를 정리한다.
+  </p>
+  <div class="meta-line">
+    <span>2026-09-04</span>
+    <span>대상 · Web Report + 판정 엔진</span>
+    <span>상태 · 운영 중</span>
+  </div>
+</header>
+
+<!-- ═══════════ 1. 결론 ═══════════ -->
+<h2><span class="num">1</span>결론 — 무엇이 달라졌나</h2>
+
+<div class="ba">
+  <div class="ba-col before">
+    <div class="ba-h">기존</div>
+    <ul>
+      <li>테스트 결과를 받아 <strong>Excel 로 직접</strong> 수율표·CPK표·산포 차트·웨이퍼맵을 만든다</li>
+      <li>Fail 항목을 하나씩 열어 보며 <strong>사람이 원인을 판단</strong>한다</li>
+      <li>비슷한 불량을 예전에 누가 어떻게 처리했는지 <strong>기억이나 개인 파일에</strong> 의존한다</li>
+      <li>리포트가 개인 PC 에 흩어져 있어 <strong>이력 조회가 어렵다</strong></li>
+      <li>같은 데이터인데 만든 사람마다 <strong>표 숫자가 다를 수 있다</strong></li>
+    </ul>
+  </div>
+  <div class="ba-mid">→</div>
+  <div class="ba-col after">
+    <div class="ba-h">현재</div>
+    <ul>
+      <li>파일을 올리면 <strong>수율·CPK·산포·웨이퍼맵·비교</strong> 가 자동 생성된다</li>
+      <li>Fail 항목마다 엔진이 <strong>21가지 불량 유형 중 무엇인지</strong> 판정하고 조치 방향을 제시한다</li>
+      <li>과거에 남긴 코멘트가 <strong>선례로 자동 검색</strong>되어 함께 표시된다</li>
+      <li>모든 리포트가 서버에 쌓여 <strong>제품·Lot 별로 검색</strong>된다</li>
+      <li>모든 표가 <strong>한 계산에서 파생</strong>되므로 숫자가 어긋날 수 없다</li>
+    </ul>
+  </div>
+</div>
+
+<div class="grid g4" style="margin-top:18px">
+  <div class="card stat">
+    <span class="v">21</span>
+    <div class="k">자동 판정 불량 유형</div>
+    <div class="n">Edge / Ring / Spot / 이봉 / Tail / DUT 편중 등</div>
+  </div>
+  <div class="card stat">
+    <span class="v">10</span>
+    <div class="k">리포트 화면</div>
+    <div class="n">Summary · Yield · CPK · Issue · 산포 · Map · 비교 · Note 등</div>
+  </div>
+  <div class="card stat">
+    <span class="v">3초</span>
+    <div class="k">웨이퍼맵 표시 목표</div>
+    <div class="n">die 1만 × 7 source 기준. 실측 0.08초</div>
+  </div>
+  <div class="card stat">
+    <span class="v">0</span>
+    <div class="k">데이터 손실</div>
+    <div class="n">차트는 측정점을 <strong>하나도 빼지 않고</strong> 표시</div>
+  </div>
+</div>
+
+<!-- ═══════════ 2. 엔지니어가 겪는 변화 ═══════════ -->
+<h2><span class="num">2</span>엔지니어 업무에서 달라지는 것</h2>
+<p class="lede">
+  실제 작업 순서대로, 각 단계에서 무엇이 줄었는지 정리한다.
+</p>
+
+<div class="tw">
+<table>
+<thead>
+<tr><th style="width:15%">작업 단계</th><th style="width:31%">기존 방식</th><th style="width:31%">현재</th><th>엔지니어 관점 이득</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>리포트 작성</strong></td>
+  <td>Excel 에서 수율·CPK 계산, 차트 삽입, 서식 정리</td>
+  <td>Honey 에서 파일 선택 → 업로드</td>
+  <td>반복 편집 작업이 사라짐. <strong>분석에 시간을 쓴다</strong></td>
+</tr>
+<tr>
+  <td><strong>Fail 원인 판단</strong></td>
+  <td>산포·맵을 하나씩 열어 육안 판단</td>
+  <td>엔진이 유형을 판정해 <strong>현상·조치 문장</strong>을 제시, 사람은 검토·수정</td>
+  <td>놓치는 항목이 줄고, <strong>판단 기준이 통일</strong>됨</td>
+</tr>
+<tr>
+  <td><strong>과거 사례 확인</strong></td>
+  <td>기억 / 개인 폴더 / 담당자에게 문의</td>
+  <td>같은 유형의 과거 코멘트가 <strong>자동으로 함께 표시</strong></td>
+  <td>신규·타 제품 담당자도 <strong>선배의 판단을 바로</strong> 참고</td>
+</tr>
+<tr>
+  <td><strong>이슈 관리</strong></td>
+  <td>Excel 파일을 메일로 주고받으며 코멘트 추가</td>
+  <td>웹에서 PTE / 개발 comment 를 각각 입력, Status 관리</td>
+  <td><strong>한 화면에서 협의</strong>, 버전 엇갈림 없음</td>
+</tr>
+<tr>
+  <td><strong>이력 조회</strong></td>
+  <td>과거 Excel 파일을 찾아 연다</td>
+  <td>제품·Lot·기간으로 검색, 즐겨찾기·중요표시</td>
+  <td>"예전 그 Lot 은 어땠지" 가 <strong>몇 초</strong></td>
+</tr>
+<tr>
+  <td><strong>조건 비교</strong></td>
+  <td>표 두 개를 나란히 놓고 눈으로 대조</td>
+  <td>Before/After 를 <strong>시스템이 대조</strong>해 바뀐 항목만 표로</td>
+  <td>변화 지점을 놓치지 않음</td>
+</tr>
+<tr>
+  <td><strong>데이터 정리</strong></td>
+  <td>이상치·불필요 항목을 지운 사본을 따로 만든다</td>
+  <td>원본은 그대로 두고 <strong>조회 조건만</strong> 조정(되돌리기 가능)</td>
+  <td>원본 훼손 걱정 없이 <strong>여러 관점</strong>으로 확인</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════════ 3. 판정 엔진 ═══════════ -->
+<h2><span class="num">3</span>자동 판정 엔진 — 무엇을 잡아내나</h2>
+<p class="lede">
+  Fail 항목의 측정값 분포와 웨이퍼상 위치를 함께 보고, 아래 유형 중 어디에 해당하는지 판정한다.
+  <strong>화면에 나오는 문장이 곧 아래 문장</strong>이다.
+</p>
+
+<h3>공간 패턴 — 웨이퍼 어디서 Fail 하는가</h3>
+<div class="rules">
+  <div class="rule"><div class="rn">EDGE_FAIL</div><div class="rp">EDGE 불량이 집중되어 있습니다</div><div class="ra">공정 및 Lot 성, Wafer 성 확인 필요</div></div>
+  <div class="rule"><div class="rn">E1_FAIL</div><div class="rp">E1(최외곽) Zone 불량 집중</div><div class="ra">공정 및 Lot 성 Wafer 성 확인 필요</div></div>
+  <div class="rule"><div class="rn">RING_FAIL</div><div class="rp">반경 방향으로 Ring 모양 Fail</div><div class="ra">공정 확인 및 Wafer 성 Lot 성 확인 필요</div></div>
+  <div class="rule"><div class="rn">CENTER_FAIL</div><div class="rp">Center Zone 에 불량 집중</div><div class="ra">공정 Uniformity 및 Wafer 성 Lot 성 확인</div></div>
+  <div class="rule"><div class="rn">SPOT_FAIL</div><div class="rp">특정 Area 에 모여 있음</div><div class="ra">scratch / particle 등 공정성 여부 확인</div></div>
+  <div class="rule"><div class="rn">GROSS_FAIL</div><div class="rp">불량률이 매우 높음</div><div class="ra">primary item 기준 공정 설계 test 조건 점검</div></div>
+</div>
+
+<h3>분포 형상 — 측정값이 어떻게 퍼져 있는가</h3>
+<div class="rules">
+  <div class="rule"><div class="rn">BIMODALITY</div><div class="rp">분포가 2가지 이상 분리됨</div><div class="ra">측정 조건 확인 및 Device Abnormal 동작 의심</div></div>
+  <div class="rule"><div class="rn">USL_TAIL / LSL_TAIL</div><div class="rp">한쪽 Tail 이 두껍게 나타남</div><div class="ra">환경성(Contact) 및 측정 Method 점검</div></div>
+  <div class="rule"><div class="rn">BIDIR_TAIL</div><div class="rp">양쪽 방향으로 늘어져 있음</div><div class="ra">측정 조건 안정화, Tail 시료 진성 유무 확인</div></div>
+  <div class="rule"><div class="rn">TAIL_RISK</div><div class="rp">꼬리가 spec 에 근접</div><div class="ra">centering / 방향성 trim 검토</div></div>
+  <div class="rule"><div class="rn">OUTLIER</div><div class="rp">정상 분포와 떨어진 곳에서 Fail</div><div class="ra">Retest 재현성 확인, Contact Check</div></div>
+  <div class="rule"><div class="rn">MEAN_SHIFT</div><div class="rp">Mean 이 한쪽 Spec 으로 치우침</div><div class="ra">Offset, Centering 및 조건별 shift 확인</div></div>
+</div>
+
+<h3>공정 능력 · 설비 · 데이터 결함</h3>
+<div class="rules">
+  <div class="rule"><div class="rn">LOW_CPK</div><div class="rp">CPK 1.33 이하로 Spec Margin 부족</div><div class="ra">산포 개선 및 개발팀 협의로 Margin 확보</div></div>
+  <div class="rule"><div class="rn">CODE_RAIL</div><div class="rp">CODE 값이 min/max 에 포화</div><div class="ra">Algorithm 및 Margin 점검, Charic 확인</div></div>
+  <div class="rule"><div class="rn">EQUIPMENT_SUSPECT</div><div class="rp">site 간 편차가 큼</div><div class="ra">golden unit 재측정 / handler·site correlation</div></div>
+  <div class="rule"><div class="rn">DUT_FAIL</div><div class="rp">특정 DUT(채널)에 Fail 집중</div><div class="ra">해당 소켓/채널 Contact 및 Hardware 점검</div></div>
+  <div class="rule"><div class="rn">FUNC_FAIL</div><div class="rp">Function TEST Item 에서 Fail</div><div class="ra">Pattern 확인 및 Margin Test 진행</div></div>
+  <div class="rule"><div class="rn">MISSING_LIMIT</div><div class="rp">LSL/USL 정보 일부 누락</div><div class="ra">limit 적용 여부와 item mapping 확인</div></div>
+  <div class="rule"><div class="rn">CONSTANT_VALUE</div><div class="rp">측정값이 단일 값에 고정</div><div class="ra">logging, clamp, item parsing 오류 확인</div></div>
+  <div class="rule"><div class="rn">UNKNOWN</div><div class="rp">Fail 했으나 기존 Rule 조건 Pass</div><div class="ra">새 불량 유형으로 검토 필요</div></div>
+</div>
+
+<div class="note ok">
+  <strong>UNKNOWN 이 있다는 것이 중요하다.</strong> 기존 룰로 설명되지 않는 Fail 을
+  "판정 못 함" 으로 덮지 않고 <strong>명시적으로 표시</strong>한다 —
+  이것이 곧 새 룰을 만들어야 할 후보 목록이 된다.
+</div>
+
+<h3>코멘트는 어떻게 만들어지나</h3>
+<div class="grid g3">
+  <div class="card">
+    <div class="rn m" style="color:var(--accent);font-size:11.5px;font-weight:600">[현상]</div>
+    <div style="font-weight:640;margin-top:3px">무엇이 관측되었나</div>
+    <div style="font-size:13.2px;color:var(--ink-2);margin-top:6px">판정된 불량 유형을 그대로 문장으로. <strong>시스템이 전량 작성</strong></div>
+  </div>
+  <div class="card">
+    <div class="rn m" style="color:var(--accent);font-size:11.5px;font-weight:600">[사례]</div>
+    <div style="font-weight:640;margin-top:3px">과거엔 어떻게 처리했나</div>
+    <div style="font-size:13.2px;color:var(--ink-2);margin-top:6px">엔지니어들이 남긴 코멘트에서 유사 사례 검색. <strong>시스템이 전량 작성</strong></div>
+  </div>
+  <div class="card">
+    <div class="rn m" style="color:var(--accent);font-size:11.5px;font-weight:600">[제안]</div>
+    <div style="font-weight:640;margin-top:3px">무엇을 확인할까</div>
+    <div style="font-size:13.2px;color:var(--ink-2);margin-top:6px">룰이 제시한 조치 방향 + AI 가 사례를 반영해 다듬음</div>
+  </div>
+</div>
+
+<div class="note">
+  <strong>AI 는 보조이지 판정자가 아니다.</strong> 불량 유형 판정과 사례 검색은
+  전부 룰과 데이터가 한다. AI 는 [제안] 문장을 읽기 좋게 다듬는 역할이며,
+  <strong>AI 가 동작하지 않아도 룰이 만든 문장이 그대로 표시</strong>된다.
+  판정 결과가 AI 때문에 달라지는 일은 없다.
+</div>
+
+<!-- ═══════════ 4. 신뢰성 ═══════════ -->
+<h2><span class="num">4</span>이 결과를 믿어도 되는가</h2>
+<p class="lede">
+  자동화 시스템은 "편한가" 보다 <strong>"틀리지 않는가"</strong> 가 먼저다.
+  그래서 아래 세 가지를 설계 원칙으로 고정했다.
+</p>
+
+<div class="grid g3">
+  <div class="card">
+    <div class="tag t-ok">원칙 1</div>
+    <h3 style="margin:8px 0 6px">측정 데이터를 줄이지 않는다</h3>
+    <p style="font-size:13.6px;margin:0">
+      산포 차트는 측정점을 <strong>하나도 빼지 않고</strong> 그린다.
+      화면을 빠르게 하려고 점을 솎아내는 방식은 금지돼 있고,
+      그런 코드는 자동 검사가 <strong>저장 자체를 막는다</strong>.
+      속도는 계산 순서를 바꿔서 확보했다.
+    </p>
+  </div>
+  <div class="card">
+    <div class="tag t-ok">원칙 2</div>
+    <h3 style="margin:8px 0 6px">같은 값은 한 번만 계산한다</h3>
+    <p style="font-size:13.6px;margin:0">
+      Issue Table 의 수율·CPK 는 Yield 탭·CPK 탭의 <strong>같은 계산 결과를 가져다 쓴다</strong>.
+      탭마다 따로 계산하지 않으므로 <strong>화면끼리 숫자가 다를 수 없다</strong>.
+      한 항목이 탭마다 다른 값으로 보이면 리포트 전체를 못 믿기 때문이다.
+    </p>
+  </div>
+  <div class="card">
+    <div class="tag t-ok">원칙 3</div>
+    <h3 style="margin:8px 0 6px">사람이 입력한 것은 잃지 않는다</h3>
+    <p style="font-size:13.6px;margin:0">
+      코멘트·Note·차트 주석 등 <strong>직접 입력한 내용은 다시 만들 방법이 없다</strong>.
+      그래서 저장 방식 변경은 별도 승인 대상이고, 과거 형식도 계속 읽도록 유지한다.
+      원본 데이터를 바꾸는 편집과 조회 조건만 바꾸는 편집도 분리돼 있다.
+    </p>
+  </div>
+</div>
+
+<h3 style="margin-top:32px">판정 품질을 관리하는 방법</h3>
+<p>
+  룰은 한 번 만들고 끝나는 것이 아니라 <strong>계속 조정해야 하는 대상</strong>이다.
+  그래서 조정 근거를 볼 수 있는 화면을 함께 만들었다.
+</p>
+<div class="tw">
+<table>
+<thead><tr><th style="width:30%">리더가 갖는 질문</th><th>답을 주는 화면</th></tr></thead>
+<tbody>
+<tr>
+  <td><strong>이 Fail 은 왜 판정이 안 됐나</strong></td>
+  <td>항목별로 21개 룰 각각의 <strong>실제값과 기준값을 나란히</strong> 보여준다. 어느 조건에서 걸렸는지 한 줄로 확인된다</td>
+</tr>
+<tr>
+  <td><strong>기준값을 바꾸면 어떻게 되나</strong></td>
+  <td>바꾸기 전후를 같은 데이터로 돌려 <strong>판정이 달라진 항목만</strong> 비교해 보여준다. 되돌리기도 가능하다</td>
+</tr>
+<tr>
+  <td><strong>제품마다 기준이 다른데</strong></td>
+  <td>제품군별로 기준값을 <strong>따로 지정</strong>할 수 있다. 지정 즉시 반영된다</td>
+</tr>
+<tr>
+  <td><strong>룰이 실제로 좋아지고 있나</strong></td>
+  <td>날짜별 <strong>정확도·판정 커버리지 추이</strong> 그래프. 룰을 고친 시점과 겹쳐 볼 수 있다</td>
+</tr>
+<tr>
+  <td><strong>전수 검토는 현실적으로 못 한다</strong></td>
+  <td>룰당 <strong>8건만 검수</strong>하면 시스템이 기준값 조정안을 제시하고, 승인만 하면 반영된다</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════════ 5. 운영 ═══════════ -->
+<h2><span class="num">5</span>운영 현황</h2>
+<div class="grid g2">
+  <div class="card">
+    <h3 style="margin-top:0">사용 방식</h3>
+    <ul style="margin-bottom:0">
+      <li>Honey(사내 PC 프로그램)로 업로드, 웹 브라우저로 조회</li>
+      <li>PC 계정으로 <strong>자동 로그인</strong> — 별도 ID/PW 없음</li>
+      <li>업로더가 편집 권한을 갖고, <strong>편집자 위임</strong> 가능</li>
+      <li>비공개 세션은 지정된 사람만 조회</li>
+      <li>Honey 는 실행 시 <strong>자동 업데이트</strong></li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">데이터 보관</h3>
+    <ul style="margin-bottom:0">
+      <li>세션 원본과 사용자 입력은 <strong>영구 보관</strong></li>
+      <li>운영 로그만 기간 제한(감사 1년 등)</li>
+      <li>삭제한 세션은 <strong>30일 휴지통</strong></li>
+      <li>DB 자동 백업 주기 운영</li>
+      <li>원본 Excel 은 서버에 저장하지 않음 — 추출값만 보관</li>
+    </ul>
+  </div>
+</div>
+
+<h3>남은 항목</h3>
+<div class="tw">
+<table>
+<thead><tr><th style="width:26%">항목</th><th style="width:16%">상태</th><th>내용</th></tr></thead>
+<tbody>
+<tr>
+  <td>AI 코멘트 다듬기 기능</td>
+  <td><span class="tag t-warn">현장 확인</span></td>
+  <td>개발·테스트 완료. 사내 계정 환경에서의 최종 동작 확인만 남음. <strong>동작하지 않아도 룰 문장은 정상 표시</strong></td>
+</tr>
+<tr>
+  <td>일부 구 분석 모듈</td>
+  <td><span class="tag t-hot">외부 담당</span></td>
+  <td>현행 데이터 형식을 아직 반영하지 않음. 해당 담당 영역이라 최신본 수령으로 해소 예정</td>
+</tr>
+<tr>
+  <td>Corner 조건 자동 판별</td>
+  <td><span class="tag t-warn">보류</span></td>
+  <td>현재 데이터만으로는 판별 불가. 향후 정보가 확보되면 반영할 수 있도록 자리만 예약</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<!-- ═══════════ 6. 의의 ═══════════ -->
+<h2><span class="num">6</span>의의</h2>
+<div class="grid g2">
+  <div class="card">
+    <h3 style="margin-top:0"><span class="tag t-neu">1</span> 판단 기준이 조직 자산이 된다</h3>
+    <p style="margin-bottom:0;font-size:14px">
+      "이 산포는 Contact 문제다" 같은 경험적 판단이 <strong>21개 룰과 기준값으로 명문화</strong>됐다.
+      담당자가 바뀌어도 판정 기준이 유지되고, 기준을 바꾸려면 근거를 화면에서 확인하고
+      바꾸게 되어 <strong>변경 이력이 남는다</strong>.
+    </p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0"><span class="tag t-neu">2</span> 쓸수록 좋아지는 구조</h3>
+    <p style="margin-bottom:0;font-size:14px">
+      엔지니어가 남긴 코멘트가 다음 판정의 <strong>선례로 되돌아온다</strong>.
+      리포트를 쓰는 행위 자체가 축적이 되고, UNKNOWN 항목은 새 룰의 후보가 된다.
+      쓰지 않으면 늘지 않고, 쓰면 계속 정교해진다.
+    </p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0"><span class="tag t-neu">3</span> 신규·타 제품 담당자의 진입장벽 완화</h3>
+    <p style="margin-bottom:0;font-size:14px">
+      경험이 적은 담당자도 <strong>불량 유형과 과거 대응</strong>을 함께 보게 된다.
+      "무엇을 봐야 하는지 모르는" 상태에서 시작하지 않으므로
+      숙련도에 따른 리포트 품질 편차가 줄어든다.
+    </p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0"><span class="tag t-neu">4</span> 리포트가 아니라 데이터가 남는다</h3>
+    <p style="margin-bottom:0;font-size:14px">
+      Excel 파일이 아니라 <strong>조회·검색·재분석 가능한 형태</strong>로 서버에 쌓인다.
+      제품·Lot·기간으로 되짚을 수 있고, 앞으로 다른 분석에 재사용할 수 있는 기반이 된다.
+    </p>
+  </div>
+</div>
+
+<footer>
+  이 문서의 판정 문구 21종은 실제 운영 중인 룰 정의에서 그대로 가져온 것이다.
+  기술 상세는 별도 개발 문서(<code>docs/</code>)에 있다.
+</footer>
+
+</div>
+</body>
+</html>

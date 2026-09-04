@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>PGM Debug Assistant Architecture</title>
+<style>
+  :root{
+    --bg:#0b1220;
+    --panel:#121c2d;
+    --panel2:#17233a;
+    --line:#2c3b57;
+    --text:#eaf0f8;
+    --muted:#9fb0c8;
+    --accent:#62a8ff;
+    --accent2:#7dd3fc;
+    --good:#7ee787;
+    --warn:#f6c85f;
+    --danger:#ff8f8f;
+    --white:#ffffff;
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:linear-gradient(180deg,#08111f 0%,#0b1220 35%,#0d1524 100%);
+    color:var(--text);
+    font-family:Inter,"Pretendard","Noto Sans KR","Segoe UI",Arial,sans-serif;
+    line-height:1.65;
+  }
+
+  .wrap{
+    width:min(1480px,94vw);
+    margin:0 auto;
+    padding:42px 0 70px;
+  }
+
+  .hero{
+    background:
+      radial-gradient(circle at 85% 10%,rgba(98,168,255,.16),transparent 28%),
+      linear-gradient(135deg,#111c30,#0f1929 60%,#101b31);
+    border:1px solid var(--line);
+    border-radius:24px;
+    padding:40px 42px 34px;
+    box-shadow:0 18px 50px rgba(0,0,0,.28);
+  }
+
+  .eyebrow{
+    font-size:13px;
+    letter-spacing:.15em;
+    text-transform:uppercase;
+    color:var(--accent2);
+    font-weight:800;
+    margin-bottom:8px;
+  }
+
+  h1{
+    margin:0;
+    font-size:clamp(32px,4.5vw,58px);
+    letter-spacing:-.04em;
+    line-height:1.08;
+  }
+
+  .subtitle{
+    margin-top:18px;
+    max-width:1080px;
+    color:#c8d4e4;
+    font-size:18px;
+  }
+
+  .core{
+    margin-top:28px;
+    padding:22px 24px;
+    border-left:5px solid var(--accent);
+    background:rgba(98,168,255,.08);
+    border-radius:14px;
+  }
+
+  .core strong{
+    display:block;
+    color:var(--white);
+    font-size:22px;
+    margin-bottom:6px;
+  }
+
+  .core span{
+    color:#c9d7e8;
+    font-size:16px;
+  }
+
+  .chips{
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-top:24px;
+  }
+
+  .chip{
+    padding:8px 12px;
+    border:1px solid #345179;
+    border-radius:999px;
+    background:#13243c;
+    color:#d8e8fb;
+    font-size:13px;
+    font-weight:700;
+  }
+
+  section{
+    margin-top:34px;
+    background:rgba(18,28,45,.94);
+    border:1px solid var(--line);
+    border-radius:22px;
+    padding:28px;
+    box-shadow:0 14px 36px rgba(0,0,0,.18);
+  }
+
+  h2{
+    margin:0 0 18px;
+    font-size:28px;
+    letter-spacing:-.02em;
+  }
+
+  h3{
+    margin:0 0 12px;
+    font-size:20px;
+  }
+
+  .lead{
+    color:#bdcadb;
+    margin-bottom:22px;
+  }
+
+  .grid2{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:18px;
+  }
+
+  .grid3{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:16px;
+  }
+
+  .card{
+    border:1px solid var(--line);
+    background:var(--panel2);
+    border-radius:16px;
+    padding:18px;
+  }
+
+  .card p{margin:0;color:#b9c6d8}
+  .card strong{color:#f6f9fc}
+
+  .highlight-card{
+    border:1px solid #315f8d;
+    background:linear-gradient(180deg,rgba(41,91,145,.24),rgba(18,34,58,.9));
+  }
+
+  .architecture{
+    overflow-x:auto;
+    padding-bottom:6px;
+  }
+
+  .arch-flow{
+    min-width:1180px;
+    display:grid;
+    grid-template-columns:1.05fr .13fr 1.45fr .13fr 1.2fr;
+    align-items:center;
+    gap:10px;
+  }
+
+  .arch-col{
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+  }
+
+  .arch-box{
+    background:#16243a;
+    border:1px solid #324766;
+    border-radius:16px;
+    padding:16px;
+    text-align:center;
+  }
+
+  .arch-box.primary{
+    border-color:#4d85c2;
+    box-shadow:inset 0 0 0 1px rgba(98,168,255,.15);
+  }
+
+  .arch-box.corebox{
+    background:linear-gradient(180deg,#173252,#162844);
+    border-color:#4c82b6;
+  }
+
+  .arch-box.edge{
+    background:linear-gradient(180deg,#253044,#1a2435);
+    border-color:#4b596f;
+  }
+
+  .arch-title{
+    font-weight:800;
+    color:#fff;
+    margin-bottom:4px;
+  }
+
+  .arch-sub{
+    font-size:13px;
+    color:#aebcd0;
+  }
+
+  .arrow{
+    text-align:center;
+    color:var(--accent);
+    font-size:34px;
+    font-weight:900;
+  }
+
+  .domain-stack{
+    display:grid;
+    grid-template-columns:repeat(5,1fr);
+    gap:12px;
+    margin-top:16px;
+  }
+
+  .domain-item{
+    padding:15px;
+    border-radius:14px;
+    background:#121f34;
+    border:1px solid #31415c;
+    min-height:120px;
+  }
+
+  .domain-item b{
+    display:block;
+    color:#fff;
+    margin-bottom:6px;
+  }
+
+  .domain-item span{
+    color:#aebbd0;
+    font-size:13px;
+  }
+
+  .logic{
+    display:grid;
+    grid-template-columns:repeat(7,1fr);
+    gap:10px;
+    align-items:stretch;
+  }
+
+  .logic-box{
+    background:#15243a;
+    border:1px solid #334866;
+    padding:14px 10px;
+    border-radius:14px;
+    text-align:center;
+    min-height:104px;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+  }
+
+  .logic-box b{display:block;color:#fff}
+  .logic-box span{font-size:12px;color:#9fb0c6;margin-top:4px}
+  .logic-arrow{
+    display:flex;align-items:center;justify-content:center;
+    color:var(--accent);font-size:28px;font-weight:900;
+  }
+
+  table{
+    width:100%;
+    border-collapse:separate;
+    border-spacing:0;
+    overflow:hidden;
+    border:1px solid var(--line);
+    border-radius:14px;
+    font-size:14px;
+  }
+
+  thead th{
+    background:#1d2d47;
+    color:#fff;
+    text-align:left;
+    padding:13px 14px;
+    border-bottom:1px solid var(--line);
+    position:sticky;
+    top:0;
+  }
+
+  tbody td{
+    padding:13px 14px;
+    border-bottom:1px solid #27364d;
+    vertical-align:top;
+    color:#c8d2df;
+    background:#131f32;
+  }
+
+  tbody tr:nth-child(even) td{background:#152237}
+  tbody tr:last-child td{border-bottom:none}
+
+  .month{
+    white-space:nowrap;
+    color:var(--accent2);
+    font-weight:800;
+  }
+
+  .phase{
+    color:#fff;
+    font-weight:700;
+  }
+
+  ul{
+    margin:7px 0 0 18px;
+    padding:0;
+  }
+
+  .note{
+    margin-top:18px;
+    background:#17263d;
+    border:1px solid #334b6d;
+    border-radius:14px;
+    padding:16px 18px;
+    color:#b8c7da;
+  }
+
+  .rule{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:18px;
+  }
+
+  .good{
+    border-left:4px solid var(--good);
+  }
+  .warn{
+    border-left:4px solid var(--warn);
+  }
+
+  .mini-code{
+    margin-top:12px;
+    background:#0b1421;
+    border:1px solid #2b3b54;
+    border-radius:12px;
+    padding:14px;
+    font-family:Consolas,Monaco,monospace;
+    font-size:13px;
+    color:#d4e3f7;
+    white-space:pre-wrap;
+  }
+
+  .footer{
+    margin-top:28px;
+    color:#7f90a8;
+    font-size:12px;
+    text-align:center;
+  }
+
+  @media (max-width:900px){
+    .grid2,.grid3,.rule{grid-template-columns:1fr}
+    .domain-stack{grid-template-columns:1fr 1fr}
+    .logic{grid-template-columns:1fr}
+    .logic-arrow{transform:rotate(90deg)}
+    section,.hero{padding:22px}
+  }
+
+  @media print{
+    body{background:#fff;color:#111}
+    .hero,section{box-shadow:none}
+    .wrap{width:100%;padding:0}
+  }
+
+
+  
+
+
+  .vflow{
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    gap:18px;
+    margin-top:22px;
+    padding-left:8px;
+  }
+
+  .vflow::before{
+    content:"";
+    position:absolute;
+    left:31px;
+    top:28px;
+    bottom:28px;
+    width:2px;
+    background:linear-gradient(180deg,#4a86c5,#2d4667);
+  }
+
+  .vstep{
+    position:relative;
+    display:grid;
+    grid-template-columns:62px minmax(0,1fr);
+    gap:16px;
+    align-items:start;
+  }
+
+  .vstep-num{
+    position:relative;
+    z-index:2;
+    width:48px;
+    height:48px;
+    border-radius:50%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:linear-gradient(180deg,#2d6db2,#214f84);
+    border:2px solid #72b4ff;
+    color:white;
+    font-size:13px;
+    font-weight:800;
+    box-shadow:0 0 0 5px #121c2d;
+  }
+
+  .vstep-card{
+    background:linear-gradient(180deg,#172740,#142238);
+    border:1px solid #354d6d;
+    border-radius:16px;
+    padding:17px 20px;
+    min-height:74px;
+  }
+
+  .vstep-title{
+    color:#fff;
+    font-size:18px;
+    font-weight:800;
+    margin-bottom:5px;
+    letter-spacing:-.01em;
+  }
+
+  .vstep-body{
+    color:#c6d3e3;
+    font-size:14px;
+    line-height:1.7;
+  }
+
+  .flow-example{
+    margin-top:16px;
+    background:#17263d;
+    border:1px solid #334b6d;
+    border-radius:14px;
+    padding:15px 18px;
+    color:#b8c7da;
+  }
+
+  .flow-example b{color:#fff}
+
+  @media (max-width:700px){
+    .vstep{
+      grid-template-columns:52px minmax(0,1fr);
+      gap:10px;
+    }
+    .vflow::before{
+      left:27px;
+    }
+    .vstep-num{
+      width:40px;
+      height:40px;
+      font-size:11px;
+    }
+    .vstep-card{
+      padding:14px 15px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="hero">
+<div class="eyebrow">LSI PMIC PE/TEST AI TF</div>
+<h1>PGM Debug Assistant Architecture</h1>
+<div class="subtitle">
+      ADVANTEST T2000 기반 Test PGM 개발·디버깅 업무를 AI Agent로 확장하기 위한 1인 개발 로드맵.
+      일반 프로그래밍 문법 자체가 아니라, <b>T2000 고유 API/Syntax와 반도체 평가 Domain Knowledge를 실행 가능한 형태로 구조화</b>하는 것이 프로젝트의 본질이다.
+    </div>
+<div class="core">
+<strong>핵심 자산은 LLM이 아니라 “Domain 및 경험의 코드화”이다.</strong>
+<span>
+        기존 엔지니어가 머릿속으로 판단하던 Test Sequence, 측정 목적, Resource 선택, T2000 API 사용법,
+        Debug Rule, 실패 패턴, 과거 해결 경험을 Rule / Skill / API Catalog / Golden Code / Debug History로 구조화해야 한다.
+        이 Knowledge Layer가 안정적이면 Claude·Codex 등 모델이 바뀌어도 시스템의 핵심 경쟁력은 유지된다.
+      </span>
+</div>
+</div>
+<section>
+<h2>1. Project Overview</h2>
+<div class="grid2">
+<div class="card highlight-card">
+<h3>Phase 1 · Debug Assistant</h3>
+<p>
+          사용자의 자연어 요청을 반도체 Domain Intent로 해석하고, 사내 Rule 및 T2000 API/기존 PGM/디버깅 이력을 참고해
+          실제 T2000 Code를 생성·수정·추천하고 Git Diff까지 보여주는 Assistant.
+        </p>
+</div>
+<div class="card highlight-card">
+<h3>Phase 2 · Auto Debug Agent</h3>
+<p>
+          사무실의 사용자 UI → 중앙 Orchestrator → OSAT Client → 실제 T2000 설비를 연결해,
+          코드 수정·빌드·실행·결과 수집·분석·재수정까지 단계적으로 자동화하는 Agent.
+        </p>
+</div>
+</div>
+<div class="note">
+<b>Debug Assistant: 9개월</b> / <b>Auto Debug Agent: 추가 15개월</b> → 전체 약 24개월 로드맵.
+    </div>
+</section>
+<section>
+<h2>2. Core Knowledge Architecture</h2>
+<p class="lead">
+      가장 중요한 부분은 “문서를 많이 넣는 것”이 아니라, 엔지니어의 판단 과정을 AI가 호출할 수 있는 구조로 바꾸는 것이다.
+    </p>
+<div class="domain-stack">
+<div class="domain-item">
+<b>① Domain Rule</b>
+<span>LDO, PLL, ADC, DAC, Leakage, IDDQ, Line/Load Regulation 등 측정 목적과 판단 규칙.</span>
+</div>
+<div class="domain-item">
+<b>② T2000 API Catalog</b>
+<span>Class, Method, Parameter, Resource, 제약조건, 사용 예제, Project별 Convention.</span>
+</div>
+<div class="domain-item">
+<b>③ Skill Layer</b>
+<span>예: LDO_LOAD_SWEEP, PLL_LOCK_CHECK처럼 Intent → Required Context → Procedure → API로 연결.</span>
+</div>
+<div class="domain-item">
+<b>④ Golden Code</b>
+<span>실제 현업에서 검증된 Test Class, PGM Pattern, Resource 제어, Logging 및 Error Handling 코드.</span>
+</div>
+<div class="domain-item">
+<b>⑤ Debug History</b>
+<span>증상 → 가설 → Action → Result → Root Cause → Fix 형태로 과거 엔지니어 경험을 구조화.</span>
+</div>
+</div>
+<div class="mini-code">사용자 요청
+"LDO Item load sweep 코드 짜줘"
+
+→ Intent 분류: LDO_LOAD_SWEEP
+→ Product / Pin / Resource Context 확인
+→ Domain Rule 조회
+→ Skill 호출
+→ T2000 API Catalog 조회
+→ 유사 Golden Code 검색
+→ Project 현재 Source 분석
+→ Code 생성
+→ Git Diff 생성
+→ 사용자 승인 / 수정</div>
+</section>
+<section>
+<h2>3. Debug Assistant Architecture</h2>
+<div class="architecture">
+<div class="arch-flow">
+<div class="arch-col">
+<div class="arch-box primary">
+<div class="arch-title">Engineer</div>
+<div class="arch-sub">자연어 요청 / PGM Debug 질문</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Web UI / IDE / Claude Interface</div>
+<div class="arch-sub">Chat · Source · Diff · Result Display</div>
+</div>
+</div>
+<div class="arrow">→</div>
+<div class="arch-col">
+<div class="arch-box corebox">
+<div class="arch-title">Debug Assistant Orchestrator</div>
+<div class="arch-sub">Intent · Planning · Tool Routing · Session State</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Code Agent</div>
+<div class="arch-sub">Source 분석 · Code Generation · Refactor · Diff</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Knowledge Tools</div>
+<div class="arch-sub">Domain Rule · Skill · API Catalog · Golden Code · Debug History</div>
+</div>
+</div>
+<div class="arrow">→</div>
+<div class="arch-col">
+<div class="arch-box">
+<div class="arch-title">Source / Git Repository</div>
+<div class="arch-sub">PGM · Test Class · History · Branch</div>
+</div>
+<div class="arch-box edge">
+<div class="arch-title">Build / Validation Environment</div>
+<div class="arch-sub">실제 사용 가능한 사내 빌드 환경 기반 검증</div>
+</div>
+<div class="arch-box edge">
+<div class="arch-title">Engineer Approval</div>
+<div class="arch-sub">Apply Patch · Commit · Reject · Modify</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section>
+<h2>4. Debug Assistant 동작 예시</h2>
+<p class="lead">
+    예시 입력: <b>“LDO Item load sweep 하는 코드 짜줘. 현재 PGM 기준으로 넣어줘.”</b><br/>
+    Debug Assistant는 자연어 요청을 바로 코드로 바꾸는 것이 아니라,
+    현재 PGM 구조와 Domain 지식, 과거 경험을 순서대로 엮어서 T2000 코드 변경안으로 변환한다.
+  </p>
+<div class="flow-example"><b>입력 예시</b> → LDO Item load sweep 하는 코드 짜줘. 현재 PGM 기준으로 넣어줘.</div>
+<div class="vflow"><div class="vstep"><div class="vstep-num">STEP 1</div><div class="vstep-card"><div class="vstep-title">의도 해석</div><div class="vstep-body">요청을 <b>LDO_LOAD_SWEEP</b> Intent로 해석하고, 단순 Sweep인지 Regulation 확인용인지 등 실제 측정 목적을 분류한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 2</div><div class="vstep-card"><div class="vstep-title">현재 PGM + Domain Context 수집</div><div class="vstep-body">현재 Test Class, Pin/Resource, Power Sequence, Logging 방식, Product 조건을 읽고 필요한 Domain Rule과 함께 현재 상황을 구성한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 3</div><div class="vstep-card"><div class="vstep-title">경험 기반 설계</div><div class="vstep-body">Golden Code, 과거 Debug History, T2000 API Catalog, 사내 Rule/Skill을 참고해 적절한 Test Sequence와 API 조합을 결정한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 4</div><div class="vstep-card"><div class="vstep-title">T2000 코드 생성 + Diff</div><div class="vstep-body">현재 PGM Coding Convention에 맞춰 코드를 생성하고, 원본 대비 변경 Line과 변경 이유를 Git Diff 형태로 보여준다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 5</div><div class="vstep-card"><div class="vstep-title">Engineer Review + Build Feedback</div><div class="vstep-body">Engineer가 Apply / Modify / Reject하고, 실제 Build Error가 발생하면 Log를 다시 분석해 수정안을 반복 제안한다.</div></div></div></div>
+<div class="note">
+<b>핵심 포인트:</b> 이 흐름의 본질은 코드 생성 자체가 아니라,
+    <b>엔지니어가 머릿속으로 하던 판단 순서를 Rule / Skill / Debug History 형태로 코드화</b>하고
+    그것을 현재 PGM과 연결하는 것이다.
+  </div>
+</section>
+<section>
+<h2>5. Debug Assistant · 9개월 To-do</h2>
+<table>
+<thead>
+<tr>
+<th>기간</th>
+<th>단계</th>
+<th>주요 To-do</th>
+<th>완료 기준</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="month">1개월차</td>
+<td class="phase">Domain Mapping</td>
+<td>
+            대표 Test 업무 20~30개 정의, LDO/PLL/ADC/DAC/Leakage 등 업무 분류,
+            엔지니어 판단 Sequence와 Required Context 정리.
+          </td>
+<td>자주 사용하는 업무가 Intent/Rule 단위로 목록화됨.</td>
+</tr>
+<tr>
+<td class="month">2개월차</td>
+<td class="phase">Knowledge Schema</td>
+<td>
+            Domain Rule, T2000 API Catalog, Skill, Golden Code, Debug History DB Schema 설계.
+            문서형 지식과 구조형 지식 분리.
+          </td>
+<td>Knowledge 저장 포맷과 CRUD/Search 구조 확정.</td>
+</tr>
+<tr>
+<td class="month">3개월차</td>
+<td class="phase">T2000 API / Source Search</td>
+<td>
+            Class/Method/API 검색, 기존 PGM 검색, Test Class 검색, Project Context 읽기,
+            Tool 함수 설계.
+          </td>
+<td>Claude가 Tool 호출로 관련 API와 기존 코드를 찾을 수 있음.</td>
+</tr>
+<tr>
+<td class="month">4개월차</td>
+<td class="phase">Skill Engine</td>
+<td>
+            LDO_LOAD_SWEEP 등 핵심 Skill 10~20개 작성.
+            Intent → Context → Procedure → T2000 API 흐름 구현.
+          </td>
+<td>자연어 요청이 Skill로 안정적으로 매핑됨.</td>
+</tr>
+<tr>
+<td class="month">5개월차</td>
+<td class="phase">Code Generation MVP</td>
+<td>
+            현재 Source 분석, T2000 형식 Code 생성, 기존 함수 수정,
+            프로젝트 Coding Convention 반영.
+          </td>
+<td>대표 Test 업무에서 사람이 참고 가능한 코드 생성.</td>
+</tr>
+<tr>
+<td class="month">6개월차</td>
+<td class="phase">Git / Diff Workflow</td>
+<td>
+            변경 파일 추적, Git Diff 표시, Apply/Reject, Commit message 생성,
+            변경 이유 설명.
+          </td>
+<td>“대화 → 코드 수정 → Diff 확인” Workflow 완성.</td>
+</tr>
+<tr>
+<td class="month">7개월차</td>
+<td class="phase">Build Feedback</td>
+<td>
+            사내에서 실제 가능한 Build/Compile 환경 연동,
+            Compiler Error 분석 및 자동 수정 Loop 구현.
+          </td>
+<td>주요 Syntax/API 오류를 Agent가 반복 수정 가능.</td>
+</tr>
+<tr>
+<td class="month">8개월차</td>
+<td class="phase">Debug Intelligence</td>
+<td>
+            측정 이상 증상 입력 → 유사 Debug History 검색 → 원인 후보 →
+            확인 Action → 코드 변경안 추천.
+          </td>
+<td>단순 코드 생성이 아니라 실제 Debug 조언 가능.</td>
+</tr>
+<tr>
+<td class="month">9개월차</td>
+<td class="phase">Pilot / Evaluation</td>
+<td>
+            30~50개 실제 Scenario Evaluation.
+            Intent 정확도, API 선택, Build 성공률, Engineer 수정량,
+            잘못된 HW Operation 제안율 측정.
+          </td>
+<td>현업 Pilot 가능한 Debug Assistant v1.</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section>
+<h2>6. Auto Debug Agent Architecture</h2>
+<p class="lead">
+      Auto Debug 단계에서는 LLM이 실제 OSAT/T2000 환경에 직접 자유 명령을 내리는 구조를 피하고,
+      중앙 Orchestrator가 제한된 Typed Command를 OSAT Edge Client에 전달하는 구조가 안전하다.
+    </p>
+<div class="architecture">
+<div class="arch-flow">
+<div class="arch-col">
+<div class="arch-box primary">
+<div class="arch-title">Office User</div>
+<div class="arch-sub">Chat / Web UI / IDE</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Thin Client UI</div>
+<div class="arch-sub">Source · Diff · Status · Result</div>
+</div>
+</div>
+<div class="arrow">→</div>
+<div class="arch-col">
+<div class="arch-box corebox">
+<div class="arch-title">Central Orchestrator</div>
+<div class="arch-sub">Claude · Planner · Debug Agent · State Machine</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Knowledge / Git / Result DB</div>
+<div class="arch-sub">Domain · API · Skill · Source · Debug History</div>
+</div>
+<div class="arch-box">
+<div class="arch-title">Policy &amp; Safety Layer</div>
+<div class="arch-sub">Approval · Allowed Command · Limit · Rollback</div>
+</div>
+</div>
+<div class="arrow">→</div>
+<div class="arch-col">
+<div class="arch-box edge">
+<div class="arch-title">OSAT Edge Client</div>
+<div class="arch-sub">Dumb Executor · Heartbeat · Command Queue · Logging</div>
+</div>
+<div class="arch-box edge">
+<div class="arch-title">T2000 Adapter</div>
+<div class="arch-sub">Build · Load · Run · Stop · Result Collect</div>
+</div>
+<div class="arch-box edge">
+<div class="arch-title">ADVANTEST T2000</div>
+<div class="arch-sub">Actual Tester / Actual Test Execution</div>
+</div>
+</div>
+</div>
+</div>
+<div class="rule" style="margin-top:18px">
+<div class="card good">
+<h3>권장</h3>
+<div class="mini-code">checkout_revision(commit)
+apply_patch(patch)
+build_program()
+load_program()
+run_test(item, site, repeat)
+get_result(run_id)
+stop_test()
+rollback(snapshot)</div>
+</div>
+<div class="card warn">
+<h3>피해야 할 구조</h3>
+<div class="mini-code">LLM → Remote Shell
+LLM → 임의 파일 명령
+LLM → 임의 Tester 명령
+LLM → OSAT Client에서 자유로운 판단/분기</div>
+</div>
+</div>
+</section>
+<section>
+<h2>7. Auto Debug Agent 동작 예시</h2>
+<p class="lead">
+    예시 입력: <b>“이 LDO Item이 100mA 이상에서 Vout Drop이 커져. 원인 찾아줘.”</b><br/>
+    Auto Debug Agent는 Debug Assistant의 판단 능력 위에 실제 OSAT/T2000 실행 루프를 얹어서
+    가설 수립부터 결과 해석까지 반복 수행한다.
+  </p>
+<div class="flow-example"><b>입력 예시</b> → 이 LDO Item이 100mA 이상에서 Vout Drop이 커져. 원인 찾아줘.</div>
+<div class="vflow"><div class="vstep"><div class="vstep-num">STEP 1</div><div class="vstep-card"><div class="vstep-title">문제 상황 분석</div><div class="vstep-body">현재 Fail Item, PGM Revision, Site/Condition, 최근 Result와 유사 Debug History를 모아 증상을 구조화한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 2</div><div class="vstep-card"><div class="vstep-title">가설 + Debug Plan 생성</div><div class="vstep-body">Current Limit, Settling, Contact, Resource Range 등 원인 후보를 우선순위화하고 이를 구분할 최소 Debug Step을 설계한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 3</div><div class="vstep-card"><div class="vstep-title">Code Patch + Safety Check</div><div class="vstep-body">필요한 Debug Patch와 Diff를 만들고, Policy / State Machine으로 승인 필요 여부와 실행 가능 범위를 확인한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 4</div><div class="vstep-card"><div class="vstep-title">OSAT Client → T2000 실행</div><div class="vstep-body">검증된 Typed Command로 checkout → patch → build → load → run → result collect를 수행하고 실행 상태와 Log를 회수한다.</div></div></div><div class="vstep"><div class="vstep-num">STEP 5</div><div class="vstep-card"><div class="vstep-title">결과 해석 + 다음 Loop</div><div class="vstep-body">측정 결과를 가설과 비교해 원인을 좁히고, 필요하면 다음 Patch를 생성한다. 해결되면 Root Cause와 Fix를 Debug History에 축적한다.</div></div></div></div>
+<div class="note">
+<b>핵심 포인트:</b> Auto Debug Agent는 AI가 설비를 마음대로 제어하는 구조가 아니라,
+    <b>가설·판단은 AI가 하고 실제 설비 제어는 Typed Command + Policy + State Machine으로 제한</b>하는 구조여야 한다.
+  </div>
+</section>
+<section>
+<h2>8. Auto Debug Agent · 15개월 To-do</h2>
+<table>
+<thead>
+<tr>
+<th>기간</th>
+<th>단계</th>
+<th>주요 To-do</th>
+<th>완료 기준</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="month">1개월차</td>
+<td class="phase">Protocol Design</td>
+<td>Office ↔ Server ↔ OSAT Client 통신 규격, Request/Response Schema, Command ID, Run ID, Error Code 정의.</td>
+<td>통신 규격 문서 및 Mock API 확정.</td>
+</tr>
+<tr>
+<td class="month">2개월차</td>
+<td class="phase">OSAT Client Skeleton</td>
+<td>Heartbeat, 인증, Command Queue, Result Upload, Logging, 재접속 처리.</td>
+<td>Tester 없이 Mock Command 수행 가능.</td>
+</tr>
+<tr>
+<td class="month">3개월차</td>
+<td class="phase">Git / Source Control</td>
+<td>Revision checkout, patch apply, working copy isolation, conflict 처리, rollback snapshot.</td>
+<td>원격 코드 변경과 복구가 안정적으로 가능.</td>
+</tr>
+<tr>
+<td class="month">4개월차</td>
+<td class="phase">T2000 Adapter 1</td>
+<td>실제 환경에서 가능한 Build/Compile Interface 연결, 상태/로그 수집.</td>
+<td>OSAT Client가 Build 결과를 서버로 전달.</td>
+</tr>
+<tr>
+<td class="month">5개월차</td>
+<td class="phase">T2000 Adapter 2</td>
+<td>Program Load, 특정 Item 실행, Stop, Result/Log 수집 Interface 구현.</td>
+<td>제한된 Item에 대해 Remote Run 가능.</td>
+</tr>
+<tr>
+<td class="month">6개월차</td>
+<td class="phase">Orchestrator State Machine</td>
+<td>IDLE → PATCHED → BUILT → LOADED → RUNNING → RESULT → ANALYZING 상태 정의 및 Timeout/Failure 전이 구현.</td>
+<td>Tester 상태가 LLM 판단과 분리되어 관리됨.</td>
+</tr>
+<tr>
+<td class="month">7개월차</td>
+<td class="phase">Remote Debug MVP</td>
+<td>Office UI에서 코드 변경 → Build → Load → Run → Result 확인 End-to-End 구현.</td>
+<td>AI 자동 판단 없이 원격 Debug Pipeline 완성.</td>
+</tr>
+<tr>
+<td class="month">8개월차</td>
+<td class="phase">Result Normalization</td>
+<td>Test Result, Log, Fail 정보, Site, Measurement를 Agent가 해석할 공통 Schema로 변환.</td>
+<td>제품/PGM별 결과 차이를 공통 포맷으로 취급 가능.</td>
+</tr>
+<tr>
+<td class="month">9개월차</td>
+<td class="phase">Closed Loop 1</td>
+<td>Fail → Agent 분석 → 변경안 → 사용자 승인 → Patch → Build → Run → Result 분석.</td>
+<td>Human-in-the-loop 자동 Debug Loop 1회 이상 안정 수행.</td>
+</tr>
+<tr>
+<td class="month">10개월차</td>
+<td class="phase">Hypothesis Engine</td>
+<td>증상 기반 원인 후보 순위화, 과거 Debug History 검색, 다음 확인 Action 추천.</td>
+<td>Agent가 Debug 순서를 스스로 계획.</td>
+</tr>
+<tr>
+<td class="month">11개월차</td>
+<td class="phase">Safety Policy</td>
+<td>Voltage/Current/Relay/Power Sequence 등 위험 변경 별 Approval 등급, Limit Rule, Forbidden Action 정의.</td>
+<td>위험도 기반 실행 통제.</td>
+</tr>
+<tr>
+<td class="month">12개월차</td>
+<td class="phase">Semi Auto Debug</td>
+<td>Logging, repeat, settling time 등 저위험 변경은 자동 실행. 고위험 변경은 승인 요구.</td>
+<td>저위험 Debug Loop 자동화.</td>
+</tr>
+<tr>
+<td class="month">13개월차</td>
+<td class="phase">Recovery / Reliability</td>
+<td>Network timeout, Client restart, 중복 명령, Build fail, Tester hang, Rollback, Resume 처리.</td>
+<td>장시간 운영에서 상태 꼬임 최소화.</td>
+</tr>
+<tr>
+<td class="month">14개월차</td>
+<td class="phase">Auto Debug Pilot</td>
+<td>PMIC/LDO 등 좁은 범위에서 목표 기반 자동 가설 → 수정 → 실행 → 분석 Loop Pilot.</td>
+<td>대표 Scenario에서 Root Cause 탐색 자동화.</td>
+</tr>
+<tr>
+<td class="month">15개월차</td>
+<td class="phase">Production Hardening</td>
+<td>Audit Log, Role/Permission, Dashboard, KPI, Action Trace, Fail-safe, 운영 매뉴얼, Versioning.</td>
+<td>사내 Pilot/배포 가능한 Auto Debug Agent v1.</td>
+</tr>
+</tbody>
+</table>
+</section>
+<section>
+<h2>9. Final Design Principles</h2>
+<div class="grid3">
+<div class="card">
+<h3>1. Domain First</h3>
+<p>AI 모델보다 Domain Rule, Skill, Golden Code, Debug History가 먼저다.</p>
+</div>
+<div class="card">
+<h3>2. Thin Office Client</h3>
+<p>사무실 PC는 UI 중심. 판단과 Knowledge 접근은 중앙 Orchestrator가 담당한다.</p>
+</div>
+<div class="card">
+<h3>3. Dumb OSAT Client</h3>
+<p>OSAT Client는 판단하지 않고 허용된 명령만 정확하게 실행하고 결과를 반환한다.</p>
+</div>
+<div class="card">
+<h3>4. Typed Command</h3>
+<p>LLM이 Shell처럼 자유롭게 명령하지 않고 미리 정의된 Tool/API만 사용한다.</p>
+</div>
+<div class="card">
+<h3>5. State Machine</h3>
+<p>T2000 실제 상태와 Agent 판단을 분리하고 명시적인 실행 상태를 유지한다.</p>
+</div>
+<div class="card">
+<h3>6. Human → Semi → Auto</h3>
+<p>처음부터 완전자동화하지 않고 승인형 Debug → 저위험 자동화 → 제한적 완전자동화 순으로 확장한다.</p>
+</div>
+</div>
+</section>
+<div class="footer">
+    PGM Debug Assistant Architecture · ADVANTEST T2000 · Debug Assistant 9M + Auto Debug Agent 15M
+  </div>
+</div>
+</body>
+</html>

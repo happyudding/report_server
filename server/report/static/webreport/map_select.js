@@ -114,7 +114,14 @@ function chipMarkersForPairs(pairs, useGl, opts) {
 function applyChipToDistribution() {
   document.querySelectorAll('#panel-distribution .distg-card').forEach(c => { c.dataset.rendered = ""; });
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]').forEach(distQueueRender);
-  if (_itemDetailData) { distRenderCdf(_itemDetailData); renderIdetChipVals(); }
+  // Item_detail 은 **칩 마커만 갈아끼운다** — 사용자가 맞춰 둔 zoom 을 보존하기 위함
+  // (2026-09-04 요청: 확대해 놓고 그 안의 점을 강조하면 매번 zoom 이 풀렸다).
+  // 전제가 안 맞으면(축 옵션 변경 등으로 차트 구조가 다르면) false 를 돌려주므로 종전대로
+  // 전체 재렌더한다 — 강조가 화면에 반영되지 않는 것보다 zoom 이 풀리는 편이 낫다.
+  if (_itemDetailData) {
+    if (!idetUpdateChipMarkers()) distRenderCdf(_itemDetailData);
+    renderIdetChipVals();
+  }
   // 편집바의 '강조 N' 카운트도 같이 맞춘다(Item_detail 이 열려 있을 때만 요소가 있다).
   if (typeof renderCdfEditBar === "function") renderCdfEditBar();
   // composite 상세는 별도 패널이라 갤러리 재렌더에 걸리지 않는다.

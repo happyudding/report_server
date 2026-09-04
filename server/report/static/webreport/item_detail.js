@@ -1303,6 +1303,105 @@ function distRenderNormal(data) {
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
 }
+// ── 좌표 강조 변경을 **재렌더 없이** 상세 CDF/Serial순 차트에 반영 ────────────────
+// 종전에는 chip 을 하나 고를 때마다 distRenderCdf 가 purge→newPlot 을 돌아, 사용자가 맞춰
+// 둔 zoom 이 통째로 풀렸다("확대해 놓고 그 안의 점을 고르는" 사용 자체가 불가능). 강조가
+// 바뀔 때 실제로 달라지는 것은 **맨 뒤에 붙는 칩 마커 trace 1개**와 (chip 이 정확히 1개일
+// 때만 생기는) 크로스헤어 shape 2개뿐이므로, 그 둘만 갈아끼우면 축·주석·선택이 그대로 남는다.
+//
+// ⚠️ 세 가지 전제에 기대며, 셋 다 이 파일 안에서 지켜진다:
+//  ① 칩 마커 trace 는 **항상 마지막**이다 — distRenderCdf/distRenderSeq 가 마지막에 push 하고,
+//    idetReorderSourceTraces 는 이름 있는 source trace 끼리만 자리를 바꾼다.
+//  ② 칩 마커 trace 는 이름이 없다(`name` 미설정) — 그래서 개수를 세어 되짚을 수 있다.
+//  ③ 크로스헤어 shape 는 **base shape 의 꼬리**다. chart_notes 는 렌더 시점 base 개수 뒤를
+//    사용자 주석으로 보므로(chartNotesApply), shape 를 갈아끼운 뒤 base 를 다시 등록하지
+//    않으면 사용자가 그린 주석이 base 로 오인돼 저장에서 사라진다(§5-12). 그래서 이 함수는
+//    base shape 를 통째로 다시 만들고 **chartNotesApply 를 다시 호출**한다.
+// 위 전제가 하나라도 깨지면 조용히 어긋나는 대신 false 를 돌려주고, 호출부가 종전의 전체
+// 재렌더로 되돌아간다.
+function idetChipTraceCount(div) {
+  // 뒤에서부터 이름 없는 trace 개수 — 칩 마커는 name 을 두지 않는다(mapSelMarkerTraces).
+  let n = 0;
+  for (let i = div.data.length - 1; i >= 0; i--) {
+    if (div.data[i].name) break;
+    n++;
+  }
+  return n;
+}
+// 이미 그려진 source trace 배열에서 강조 die 의 좌표를 되읽는다. 값을 다시 계산하지 않으므로
+// 곡선과 100% 같은 자리에 찍힌다(규칙 13). gap 상세는 chip.items 에 값이 없어 원래
+// distRenderCdf 가 곡선을 만들며 모으던 것을, 여기서는 **그 곡선 자체**에서 읽는다.
+// perSource=false(gap 의 암묵 모드)면 source 명을 맞추지 않고 좌표만으로 맞춘다.
+function idetChipHitsFromTraces(div, opts) {
+  const perSource = !(opts && opts.anySource);
+  const byKey = new Map(), byPos = new Map();
+  mapSelChips.forEach(c => {
+    byKey.set(mapSelChipKey(c), c);
+    byPos.set(String(c.xpos) + "\x1f" + String(c.ypos), c);
+  });
+  const hits = [];
+  div.data.forEach(t => {
+    if (!t.name || !t.customdata) return;
+    for (let i = 0; i < t.customdata.length; i++) {
+      const cd = t.customdata[i];
+      const chip = perSource
+        ? byKey.get(mapSelChipKey({ source: t.name, serial: cd[0], xpos: cd[1], ypos: cd[2] }))
+        : byPos.get(String(cd[1]) + "\x1f" + String(cd[2]));
+      if (chip) hits.push({ color: chip.color, value: t.x[i], cum: t.y[i], chip });
+    }
+  });
+  return hits;
+}
+// 상세 CDF(또는 Serial 순) 차트의 칩 마커만 교체. 성공하면 true.
+function idetUpdateChipMarkers() {
+  const div = document.getElementById("distCdf");
+  const data = _itemDetailData;
+  if (!div || !div.data || !div.layout || !data || !window.Plotly) return false;
+  const oldChipN = idetChipTraceCount(div);
+  const srcN = div.data.length - oldChipN;
+  if (srcN <= 0) return false;   // source trace 를 못 찾음 — 안전하게 전체 재렌더로
+  const useGl = !!DIST.CDF_GL && webglOk();
+  // 현재 차트가 gl 인지 확인 — 칩 마커는 곡선과 같은 레이어여야 보인다(mapSelMarkerTraces).
+  const curGl = (div.data[0].type === "scattergl");
+  if (curGl !== useGl) return false;
+
+  let cm = null;   // {traces, shapes}
+  if (distSeqOnly) {
+    // Serial 순: x 가 측정 순서라 서버가 준 (값, 누적%) 을 쓸 수 없다 — 이미 그려진 곡선에서
+    // 그 die 의 점을 그대로 읽는다(idetSeqHighlightTrace 와 같은 규칙). 크로스헤어 없음.
+    const t = idetSeqHighlightTrace(div.data.slice(0, srcN), useGl);
+    cm = t ? { traces: [t], shapes: [] } : null;
+  } else if (data.is_gap) {
+    const hits = idetChipHitsFromTraces(div, { anySource: data.gap_mode === "explicit" });
+    _idetGapChipHits = hits;   // 아래 chip 값 표가 차트와 같은 값을 쓴다
+    cm = mapSelMarkerTraces(hits, useGl);
+  } else {
+    cm = chipMarkersFor(data.subject, useGl);
+  }
+
+  // ① trace 교체 — layout 을 건드리지 않아 zoom/dragmode/선택이 남는다.
+  try {
+    if (oldChipN) {
+      const del = [];
+      for (let i = srcN; i < div.data.length; i++) del.push(i);
+      Plotly.deleteTraces(div, del);
+    }
+    if (cm && cm.traces.length) Plotly.addTraces(div, cm.traces);
+  } catch (e) { return false; }
+
+  // ② base shape 재구성 + chart_notes 재등록 (위 ③ 주석 — base 개수가 바뀌므로 필수).
+  //    Serial 순은 주석 대상이 아니라 등록도 하지 않는다(distRenderCdf 의 cnDetach 규약).
+  const lo = data.lower_limit, hi = data.upper_limit;
+  const base = distSeqOnly
+    ? distSeqSpecShapes(lo, hi)
+    : distSpecShapes(lo, hi, true).concat(beforeLimitShapes(data.subject))
+        .concat((cm && cm.shapes) || []);
+  try { Plotly.relayout(div, { shapes: base }); } catch (e) { return false; }
+  if (!distSeqOnly && window.chartNotesApply) {
+    chartNotesApply("cdf", window.cnSubjectOf ? cnSubjectOf(data) : data.subject, div);
+  }
+  return true;
+}
 // 강조 변경 시 상세 차트의 색만 갈아끼운다 — 재렌더 없이 zoom/선택/주석을 보존.
 // source trace 만 골라야 한다: chipMarkersFor(map_select.js) 가 붙이는 칩 trace 는
 // name 자체가 없고, distNormal 은 degenerate source 를 곡선 대신 shape 로 빼서
