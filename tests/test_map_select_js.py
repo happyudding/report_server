@@ -17,7 +17,9 @@ r"""Item_detail 드래그 → 좌표 강조(chipsel) 회귀 — headless Edge (2
   (c) 항목 이동(openItemDetail) 후에도 강조 유지
   (d) 점 클릭 토글(추가 → 제거)
   (e) 상한 초과분은 잘라내고 cut 으로 알린다
-  (f) 정적 배선 — canvas 다점 루프 / Seq 오버레이 / seq 카드에는 마커 없음
+  (f) 정적 배선 — canvas 다점 루프 / Seq 오버레이 / seq 카드에는 마커 없음 /
+      강조 색 세그먼트가 Map·Item_detail 양쪽에 있음
+  (g) 단색 ↔ 색 구분 전환 — 기존 chip 재배색 · 테두리 동반 · 10색 순환 · 같은 모드 no-op
 
 Edge 가 없으면 SKIP 한다(이 저장소에는 node 가 없다).
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
@@ -75,6 +77,8 @@ window.Plotly = {
 };
 webglOk = function(){ return false; };          // SVG 분기로 고정(useGl 판정 단순화)
 renderMapAnalysis = function(){ window.__mapRendered = (window.__mapRendered || 0) + 1; };
+// edit_mode.js(DEPS 밖)의 탭 dirty 맵 — mapSelRefreshMap 이 "안 보이면 예약" 경로에서 쓴다.
+var tabDirty = {};
 distQueueRender = function(){};
 ensureDistData = function(){};
 beforeLimitShapes = function(){ return []; };
@@ -259,6 +263,83 @@ def test_click_toggle_and_cap():
     print(f"  [OK] 클릭 토글 · 미발견 missing · 상한 {res['max']}에서 cut 5 · 초과 시 무요청")
 
 
+def test_color_mode_toggle():
+    """(g) 단색 ↔ 색 구분 전환 (2026-09-04).
+
+    깨지는 방식이 조용하다 — 색 배정은 mapSelColorAt 한 곳이지만 **이미 배정된 chip**
+    을 다시 칠하지 않으면(mapSelReassignColors 누락) 버튼만 눌리고 화면은 그대로다.
+    테두리를 MAPSEL_HL_LINE 고정으로 되돌리면 색 구분 모드에서 마커 윤곽이 전부 같은
+    진한 청록이 되어 애써 나눈 색이 도로 비슷해 보인다.
+    """
+    res = probe("""
+      try {
+        var out = {};
+        mapSelChips = [
+          { key: "a", source: "WF1", xpos: "1", ypos: "1",
+            items: { ITEM_A: { value: 1, cum_pct: 10 } } },
+          { key: "b", source: "WF1", xpos: "2", ypos: "1",
+            items: { ITEM_A: { value: 2, cum_pct: 20 } } }];
+        mapSelReassignColors();
+        out.monoColors = mapSelChips.map(function(c){ return c.color; });
+        out.monoLine = chipMarkersFor("ITEM_A", false).traces[0].marker.line.color;
+
+        // 색 구분으로 전환 — 이미 있던 chip 이 **다시 칠해져야** 한다.
+        // Map 패널은 지금 숨어 있으므로(Item_detail 에서 누른 상황) 즉시 재렌더가 아니라
+        // dirty 예약으로 가야 한다 — 안 보이는 canvas 를 소스 수만큼 다시 그리지 않는다.
+        delete tabDirty["map-analysis"];
+        mapSelSetPalette(true);
+        out.mode = mapSelPaletteMode;
+        out.paletteColors = mapSelChips.map(function(c){ return c.color; });
+        out.paletteLine = chipMarkersFor("ITEM_A", false).traces[0].marker.line.color;
+        out.hiddenDirty = tabDirty["map-analysis"] === true;
+        out.hiddenNoRedraw = !window.__mapRendered;
+        // Map 탭이 보일 때는 그 자리에서 다시 그린다
+        document.getElementById("panel-map-analysis").classList.add("active");
+        mapSelSetPalette(false);
+        out.visibleRedrawn = window.__mapRendered > 0;
+        mapSelSetPalette(true);
+
+        // 11번째는 순환(사용자 확정: 10색 순환 유지)
+        out.cycle = mapSelColorAt(0) === mapSelColorAt(MAPSEL_PALETTE.length);
+
+        // 단색으로 되돌리면 원래 옥색·고정 테두리
+        mapSelSetPalette(false);
+        out.backColors = mapSelChips.map(function(c){ return c.color; });
+        out.backLine = chipMarkersFor("ITEM_A", false).traces[0].marker.line.color;
+
+        // 같은 모드로 다시 부르면 no-op (불필요한 전체 재렌더 방지)
+        var before = window.__mapRendered;
+        mapSelSetPalette(false);
+        out.noop = (window.__mapRendered === before);
+
+        // 세그먼트 HTML 은 두 화면 공용 — 현재 모드가 active 로 표시된다
+        var box = document.createElement("div");
+        box.innerHTML = mapSelColorSegHtml();
+        out.segCount = box.querySelectorAll("[data-mapsel-palette]").length;
+        out.activeIsMono = box.querySelector(".active").dataset.mapselPalette === "0";
+        _emit(out);
+      } catch (e) { _emit({ error: String((e && e.stack) || e) }); }
+    """, "mapsel_colormode")
+    assert "error" not in res, res
+    assert res["monoColors"] == ["#2DD4BF", "#2DD4BF"], f"(g) 기본은 전 chip 단색: {res}"
+    assert res["monoLine"] == ["#0F766E", "#0F766E"], f"(g) 단색 테두리는 고정 청록: {res}"
+    assert res["mode"] is True, f"(g) 모드가 바뀌지 않았다: {res}"
+    assert len(set(res["paletteColors"])) == 2, \
+        f"(g) 색 구분인데 기존 chip 이 다시 칠해지지 않았다: {res}"
+    assert res["paletteColors"][0] == "#e11d48", f"(g) 팔레트 첫 색: {res}"
+    assert len(set(res["paletteLine"])) == 2 and "#0F766E" not in res["paletteLine"], \
+        f"(g) 색 구분 테두리는 chip 색을 어둡게 한 것이어야 한다: {res}"
+    assert res["hiddenDirty"] is True and res["hiddenNoRedraw"] is True, \
+        f"(g) Map 이 숨어 있으면 dirty 예약만 해야 한다(안 보이는 canvas 재렌더 금지): {res}"
+    assert res["visibleRedrawn"] is True, f"(g) Map 이 보이면 즉시 다시 그려야 한다: {res}"
+    assert res["cycle"] is True, f"(g) 11번째는 첫 색으로 순환해야 한다: {res}"
+    assert res["backColors"] == ["#2DD4BF", "#2DD4BF"], f"(g) 단색 복귀 실패: {res}"
+    assert res["backLine"] == ["#0F766E", "#0F766E"], f"(g) 단색 복귀 시 테두리: {res}"
+    assert res["noop"] is True, f"(g) 같은 모드 재클릭은 재렌더하지 않아야 한다: {res}"
+    assert res["segCount"] == 2 and res["activeIsMono"] is True, f"(g) 세그먼트 마크업: {res}"
+    print("  [OK] 단색↔색 구분 전환 · 기존 chip 재배색 · 테두리 동반 · 순환 · no-op")
+
+
 def test_static_wiring():
     """(f) 되돌리면 조용히 깨지는 배선을 소스에서 직접 확인."""
     dist = (_JS / "distribution.js").read_text(encoding="utf-8")
@@ -297,7 +378,22 @@ def test_static_wiring():
     # Map 재렌더는 보일 때만
     assert "function mapSelRefreshMap" in msel and 'tabDirty["map-analysis"]' in msel, \
         "Map 지연 재렌더(mapSelRefreshMap)가 없습니다"
-    print(f"  [OK] canvas 다점 · seq 오버레이 · seq 카드 제외 · 상한 짝({srv}) · Map trace 1개")
+
+    # 강조 색 모드 세그먼트는 **두 화면 모두**에 있어야 한다 — 한쪽이 빠지면 그 탭에서
+    # 좌표를 고르는 사용자는 색을 바꿀 방법이 없다(에러 없이 "버튼이 없다").
+    assert "mapSelColorSegHtml()" in wafer, \
+        "Map Analysis 툴바에 강조 색 세그먼트가 없습니다"
+    assert "mapSelColorSegHtml()" in idet, \
+        "Item_detail 편집바에 강조 색 세그먼트가 없습니다"
+    assert "bindMapSelColorSeg(panel)" in wafer, \
+        "Map Analysis 세그먼트 클릭 바인딩이 없습니다"
+    assert "data-mapsel-palette" in idet, \
+        "Item_detail 위임 핸들러가 세그먼트를 받지 않습니다"
+    # 테두리는 두 마커 생성부 모두 헬퍼를 거친다(고정 상수로 되돌리면 색 구분이 흐려진다)
+    assert "mapSelLineColorFor" in msel and "mapSelLineColorFor" in idet, \
+        "마커 테두리가 mapSelLineColorFor 를 거치지 않습니다"
+    print(f"  [OK] canvas 다점 · seq 오버레이 · seq 카드 제외 · 상한 짝({srv}) · Map trace 1개"
+          " · 색 세그먼트 양쪽")
 
 
 def main():
@@ -310,7 +406,8 @@ def main():
     if not edge_path():
         print("SKIP: Edge 를 찾지 못했습니다 (동작 검증 불가 — 정적 검사만 수행)")
         return 1 if fails else 0
-    for fn in (test_marker_traces_single, test_chipsel_drag, test_click_toggle_and_cap):
+    for fn in (test_marker_traces_single, test_chipsel_drag, test_click_toggle_and_cap,
+               test_color_mode_toggle):
         try:
             fn()
         except AssertionError as e:

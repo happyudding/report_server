@@ -898,6 +898,7 @@ function renderMapAnalysis() {
     `</span>` +
     `<span class="mapsel-sep"></span>` +
     `<button type="button" id="mapSelBtn" class="btn-sm">좌표 선택</button>` +
+    mapSelColorSegHtml() +
     `<span id="mapRenderProg" class="muted map-render-prog"></span>` +
     `</div>` +
     `<div id="mapSelSearchBox" class="mapsel-search" style="display:none" data-no-dirty>` +
@@ -951,8 +952,9 @@ function renderMapAnalysis() {
     renderMapAnalysis();   // 칸수 변경 → 그리드·플롯 높이 다시 그림(범례 선택은 초기화됨)
   });
 
-  // 좌표 선택 툴바 — 검색 패널 토글 + 검색 + 해제.
+  // 좌표 선택 툴바 — 검색 패널 토글 + 강조 색 모드 + 검색 + 해제.
   panel.querySelector("#mapSelBtn").addEventListener("click", mapSelToggleSearch);
+  bindMapSelColorSeg(panel);
   const _mapSelClearBtn = panel.querySelector("#mapSelClearBtn");
   if (_mapSelClearBtn) _mapSelClearBtn.addEventListener("click", mapSelClear);
   const _doMapSelSearch = () => mapSelSearch();

@@ -24,7 +24,8 @@ let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` �
 // "none" | "exclude" | "chipsel"
 //   exclude — 선택한 die 를 cdfExcluded 에 넣어 이 항목 곡선에서 뺀다(항목 이동 시 초기화).
 //   chipsel — 선택한 die 를 **Map Analysis 좌표 선택(mapSelChips)** 에 더한다. 그쪽은 전역이라
-//             항목을 옮겨도, Distribution 카드·Map 탭에서도 같은 die 가 옥색으로 강조된다.
+//             항목을 옮겨도, Distribution 카드·Map 탭에서도 같은 die 가 강조된다.
+//             강조 색(단색/색 구분)도 같은 전역 상태(mapSelPaletteMode)를 쓴다.
 let cdfEditMode = "none";
 // CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
 // 적용 시 {min, max, major|null, minorDiv|null} — minorDiv 는 "기본 단위를 몇 등분할지"의
@@ -688,6 +689,10 @@ function bindItemDetailPanel() {
     if (hm) { setIdetHistMode(hm.dataset.histMode); return; }
     const mb = e.target.closest("[data-cdf-mode]");
     if (mb) { cdfEditMode = mb.dataset.cdfMode; cdfAfterEdit(); return; }
+    // 강조 색 모드(단색/색 구분) — Map Analysis 툴바와 같은 전역 상태. 전환 함수가
+    // applyChipToDistribution 을 타면서 이 편집바까지 다시 그려 버튼 상태가 맞춰진다.
+    const cs = e.target.closest("[data-mapsel-palette]");
+    if (cs) { mapSelSetPalette(cs.dataset.mapselPalette === "1"); return; }
     if (e.target.closest(".cdf-reset")) { cdfResetEdits(); cdfAfterEdit(); return; }
     // 강조 좌표 표의 개별 해제/전체 해제 — mapSelRemove/Clear 가 Map·카드·상세·편집바까지
     // 되그린다(applyChipToDistribution). 초기화 버튼은 '제외' 전용이라 여기와 별개다.
@@ -815,13 +820,16 @@ function renderCdfEditBar() {
     `<button type="button" class="btn-sm cdf-mode ${cls}${cdfEditMode === m ? " active" : ""}" data-cdf-mode="${m}">${label}</button>`;
   const hint = {
     exclude: "CDF: 점 클릭·드래그 박스 · 히스토그램: 드래그로 x구간 제외 · 하단 Fail 표 체크박스",
-    chipsel: "CDF·Serial순 차트에서 점 클릭(토글)·드래그 박스 → 그 die 를 전 항목·Distribution 카드·Map 에 옥색 강조",
+    chipsel: "CDF·Serial순 차트에서 점 클릭(토글)·드래그 박스 → 그 die 를 전 항목·Distribution 카드·Map 에 강조",
   }[cdfEditMode] || "";
   bar.innerHTML =
     `<span class="cdf-eb-label">분포 편집</span>` +
     modeBtn("none", "선택 없음", "cdf-mode-none") +
     modeBtn("exclude", "제외", "cdf-mode-exclude") +
     modeBtn("chipsel", "좌표 강조", "cdf-mode-highlight") +
+    // 강조 색 모드는 Map Analysis 툴바와 **같은 전역 상태**다(mapSelPaletteMode) —
+    // 좌표를 고르는 두 화면 어디서든 바꿀 수 있게 양쪽에 둔다.
+    mapSelColorSegHtml() +
     `<button type="button" class="btn-sm cdf-reset">초기화</button>` +
     `<span class="cdf-eb-count">제외 ${cdfExcluded.size} · 강조 ${mapSelChips.length}</span>` +
     (hint ? `<span class="cdf-eb-hint">${hint}</span>` : "");
@@ -1068,7 +1076,7 @@ function distRenderCdf(data) {
 // (§5-12 "사용자 입력은 잃지 않는다"). 저장값은 그대로 두고 표시만 생략한다 — CDF 로
 // 돌아가면 그대로 다시 보인다. Map Analysis 선택 좌표 마커·Compare before-limit 선도
 // 같은 이유로 제외(누적% 축 전용).
-// 선택 좌표(mapSelChips)에 해당하는 점을 이 차트 좌표계에 옥색 큰 마커로 얹는다.
+// 선택 좌표(mapSelChips)에 해당하는 점을 이 차트 좌표계에 큰 마커로 얹는다(색은 chip 의 c.color).
 // 서버가 준 (값, 누적%) 마커는 이 축에서 못 쓰지만(x 가 측정 순서다), 곡선 trace 가
 // 이미 die 를 식별하고 있으므로 **그 배열에서 그대로 읽어** 같은 자리에 찍는다 —
 // 값을 다시 계산하지 않으므로 다른 화면과 어긋날 여지가 없다(규칙 13).
@@ -1087,7 +1095,8 @@ function idetSeqHighlightTrace(srcTraces, useGl) {
   });
   if (!xs.length) return null;
   const t = { type: useGl ? "scattergl" : "scatter", mode: "markers", x: xs, y: ys,
-    marker: { color: cols, size: MAPSEL_MARKER_SIZE, line: { width: 1.5, color: MAPSEL_HL_LINE } },
+    marker: { color: cols, size: MAPSEL_MARKER_SIZE,
+      line: { width: 1.5, color: cols.map(mapSelLineColorFor) } },
     hoverinfo: "skip", showlegend: false };
   if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
   return t;

@@ -832,10 +832,22 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     - **값·누적%는 서버가 준 것만 쓴다**(규칙 #13) — 새 배치 라우트
       `POST .../commonality/chips_lookup` 이 `/commonality/chip` 과 **같은 인덱스**로 한 번에
       계산한다(chip 마다 왕복하면 드래그가 못 쓸 만큼 느려진다). 서버 새 계산은 없다.
-    - **강조 색은 전 화면 단일 옥색**(`MAPSEL_HL_COLOR` `#2DD4BF`, 테두리 `#0F766E`) +
-      마커 확대(상세 10 / 카드 9, 종전 7). chip 마다 팔레트를 돌리던 종전 방식은 수십~수백
-      개를 고르면 의미가 없다. 색 결정은 `mapSelColorAt` 한 곳뿐이라 `MAPSEL_USE_PALETTE`
-      를 켜면 되돌아간다.
+    - **강조 색은 사용자가 고르는 두 모드다** (2026-09-04 — 종전 단색 고정에서 확장).
+      **단색**(기본, `MAPSEL_HL_COLOR` `#2DD4BF` / 테두리 `#0F766E`)은 드래그로 수십~수백
+      die 를 잡을 때 — 개수가 많으면 색을 나눠 봐야 의미가 없고 강조 여부만 보이면 된다.
+      **색 구분**은 `MAPSEL_PALETTE` 10색 순환 — 좌표 몇 개를 서로 비교할 때 쓴다(11번째부터
+      순환하며, Map Legend·Item_detail 값 표의 색 스와치로 대조한다). 마커 확대(상세 10 /
+      카드 9, 종전 7)는 두 모드 공통.
+      - 전환 버튼은 **두 화면 모두**에 있다 — Map Analysis 툴바(`좌표 선택` 옆)와
+        Item_detail 분포 편집 바(`좌표 강조` 옆). 마크업은 `mapSelColorSegHtml()` 하나를
+        공유하고 상태(`mapSelPaletteMode`)도 전역이라 어느 쪽에서 바꿔도 같이 움직인다.
+      - 상태는 `mapSelChips` 와 같이 **페이지 메모리에만** 산다(서버·URL 미저장). 새로고침하면
+        좌표 선택 자체가 사라지므로 색 모드만 남길 이유가 없다.
+      - 색 결정은 `mapSelColorAt`, **테두리는 `mapSelLineColorFor`** 두 함수뿐이다. 색 구분
+        모드의 테두리는 그 chip 색을 어둡게(×0.55) 한 것을 쓴다 — 전 chip 에 같은 진한 청록을
+        두르면 작은 마커에서 테두리가 채움색을 덮어 애써 나눈 색이 도로 비슷해 보인다.
+        소비처(Map 썸네일/상세/레전드·Distribution 카드·Item_detail·Honey Excel)는 전부
+        `c.color` 만 읽으므로, 모드 전환은 `mapSelReassignColors()` 재배정 한 번으로 끝난다.
     - ⚠️ **마커는 차트당 trace 1개**(점 N개 배열)다. hit 당 trace 로 되돌리면 카드 30장 ×
       chip 300개 = 9,000 trace 로 갤러리가 멈춘다. 짝이 되는 `distDrawPoints` 의 extra
       루프도 **trace 안 모든 점**을 도는 전제이므로 둘은 항상 함께 고친다(한쪽만 바꾸면

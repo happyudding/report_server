@@ -2,13 +2,19 @@
 //    Distribution 전 항목 CDF 에 반영). 선택 상태는 전역 — Map redraw 와 Distribution 이 함께 참조. ──
 const MAPSEL_PALETTE = ["#e11d48", "#2563eb", "#059669", "#d97706", "#7c3aed",
   "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5"];
-// 강조 색·크기 (2026-09-03) — Item_detail 드래그로 수십~수백 die 를 한 번에 잡게 되면서
-// chip 마다 다른 색(팔레트 순환)은 의미가 없어졌다. 전 화면(Item_detail·Distribution 카드·
-// Map 썸네일/상세/레전드·Honey Excel)이 **같은 옥색**을 쓴다. 색 결정은 mapSelColorAt 한 곳뿐이라
-// 팔레트로 되돌리려면 MAPSEL_USE_PALETTE 만 true 로 바꾸면 된다.
-const MAPSEL_HL_COLOR = "#2DD4BF";   // 밝은 청록(옥색) — 채움
+// 강조 색·크기 — 두 모드를 사용자가 버튼으로 고른다 (2026-09-04 요청).
+//   단색(기본)   : 전 chip 이 같은 옥색. 드래그로 수십~수백 die 를 한 번에 잡는 용도 —
+//                  개수가 많으면 색을 나눠 봐야 의미가 없고, 강조 여부만 보이면 된다.
+//   색 구분      : chip 마다 팔레트 순환색. 좌표 몇 개를 서로 비교할 때(어느 점이 어느
+//                  좌표인지) 쓴다. 10색이라 11번째부터 순환한다 — 좌표 목록(Map Legend·
+//                  Item_detail 값 표)에 같은 색 스와치가 있어 대조로 식별한다.
+// 색 결정은 mapSelColorAt / 테두리는 mapSelLineColorFor 두 함수뿐이라, 소비처
+// (Item_detail·Distribution 카드·Map 썸네일/상세/레전드·Honey Excel)는 c.color 만 읽으면 된다.
+const MAPSEL_HL_COLOR = "#2DD4BF";   // 밝은 청록(옥색) — 단색 모드 채움
 const MAPSEL_HL_LINE = "#0F766E";    // 진한 청록 — 테두리(밝은 배경·점 무리 위에서도 윤곽 유지)
-const MAPSEL_USE_PALETTE = false;
+// 색 구분 모드 여부. chip 선택(mapSelChips)과 같이 **페이지 메모리에만** 산다 —
+// 새로고침하면 좌표 선택 자체가 사라지므로 색 모드만 남길 이유가 없다(서버 미저장).
+let mapSelPaletteMode = false;
 const MAPSEL_MARKER_SIZE = 10;       // 상세 차트(Item_detail·composite 상세) — 종전 7
 const MAPSEL_CARD_MARKER_SIZE = 9;   // 갤러리 미니셀(canvas) — 종전 7
 // 동시에 강조할 수 있는 좌표 수. chip 하나가 전 항목의 값·누적%를 들고 있어(항목 수천 개)
@@ -20,11 +26,52 @@ let _mapSelLastQ = { serial: "", xpos: "", ypos: "" };  // 직전 검색 필드�
 let _mapSelResults = []; // 직전 검색 결과 chip 배열 — 체크박스 index → chip 매핑용.
 
 function mapSelChipKey(c) { return `${c.source || ""}|${c.serial || ""}|${c.xpos || ""}|${c.ypos || ""}`; }
-// 색 결정 단일 지점 — 기본은 전 chip 단일 옥색. 팔레트 순환으로 되돌리려면 여기만 보면 된다.
+// 색 결정 단일 지점 — 단색(옥색) ↔ 팔레트 순환.
 function mapSelColorAt(i) {
-  return MAPSEL_USE_PALETTE ? MAPSEL_PALETTE[i % MAPSEL_PALETTE.length] : MAPSEL_HL_COLOR;
+  return mapSelPaletteMode ? MAPSEL_PALETTE[i % MAPSEL_PALETTE.length] : MAPSEL_HL_COLOR;
+}
+// 마커 테두리 색. 단색 모드는 옥색 짝인 진한 청록 고정, 색 구분 모드는 **그 chip 색을 어둡게**
+// 한 것을 쓴다 — 전 chip 에 같은 진한 청록을 두르면 작은 마커에서 테두리가 채움색을 덮어
+// 애써 나눈 색이 도로 비슷해 보인다. 테두리 목적(밝은 배경·점 무리 위 윤곽 유지)은 유지된다.
+function mapSelLineColorFor(fill) {
+  if (!mapSelPaletteMode) return MAPSEL_HL_LINE;
+  const m = /^#([0-9a-f]{6})$/i.exec(String(fill || ""));
+  if (!m) return MAPSEL_HL_LINE;
+  const n = parseInt(m[1], 16);
+  const dark = v => Math.round(v * 0.55);
+  return "#" + [dark((n >> 16) & 255), dark((n >> 8) & 255), dark(n & 255)]
+    .map(v => v.toString(16).padStart(2, "0")).join("");
 }
 function mapSelReassignColors() { mapSelChips.forEach((c, i) => { c.color = mapSelColorAt(i); }); }
+
+// 단색 ↔ 색 구분 전환 (Map Analysis 툴바 / Item_detail 편집바 공용).
+// 색만 갈아끼우는 것이므로 서버 조회·재계산이 없다 — chip 배열은 그대로 두고 색만 재배정한 뒤
+// 좌표 추가·해제와 똑같은 재렌더 경로를 탄다.
+function mapSelSetPalette(on) {
+  const next = !!on;
+  if (next === mapSelPaletteMode) return;
+  mapSelPaletteMode = next;
+  mapSelReassignColors();
+  mapSelRefreshMap();
+  applyChipToDistribution();
+}
+// 두 화면이 같은 마크업을 쓰도록 세그먼트 HTML 을 한 곳에서 낸다.
+function mapSelColorSegHtml() {
+  const seg = (on, label, title) =>
+    `<button type="button" class="distseg${mapSelPaletteMode === on ? " active" : ""}" ` +
+    `data-mapsel-palette="${on ? "1" : "0"}" title="${title}">${label}</button>`;
+  return `<span class="mapsel-color-seg distseg-group" title="강조 좌표 색">` +
+    seg(false, "단색", "선택한 좌표를 모두 같은 옥색으로 강조") +
+    seg(true, "색 구분", `좌표마다 다른 색으로 강조 (${MAPSEL_PALETTE.length}색 순환 — 좌표 목록의 색 스와치로 대조)`) +
+    `</span>`;
+}
+// 세그먼트 클릭 바인딩 — 위임이 아니라 그때그때 그려진 버튼에 직접 건다(두 화면 모두
+// innerHTML 로 다시 그려지므로 렌더 직후 호출한다).
+function bindMapSelColorSeg(root) {
+  if (!root) return;
+  root.querySelectorAll("[data-mapsel-palette]").forEach(b =>
+    b.addEventListener("click", () => mapSelSetPalette(b.dataset.mapselPalette === "1")));
+}
 
 // Honey 클라이언트 Excel Download 가 runJavaScript 로 읽어가는 선택 좌표 스냅샷.
 // 선택 상태는 이 페이지 메모리에만 있어(서버·URL 미저장) 클라가 알 수 없으므로, 화면과
@@ -63,7 +110,7 @@ function mapSelMarkerTraces(hits, useGl, opts) {
     type: useGl ? "scattergl" : "scatter", mode: "markers",
     x: hits.map(h => h.value), y: hits.map(h => h.cum),
     marker: { color: hits.map(h => h.color), size,
-      line: { width: 1.5, color: MAPSEL_HL_LINE } },
+      line: { width: 1.5, color: hits.map(h => mapSelLineColorFor(h.color)) } },
     hoverinfo: "skip", showlegend: false };
   if (!useGl) t.cliponaxis = false;   // scattergl 미지원 속성
   const traces = [t];

@@ -326,6 +326,14 @@ body {
   font-size: 14px; line-height: 1; padding: 0 2px; }
 .mapsel-del:hover { color: #e11d48; }
 .mapsel-clear { padding: 3px 10px; }
+/* 강조 색 모드(단색/색 구분) 세그먼트 — Map Analysis 툴바와 Item_detail 편집바 양쪽에
+   같은 마크업으로 들어간다(map_select.js mapSelColorSegHtml). 기본 .distseg 는 탭용이라
+   커서, 툴바 줄 안에 얹히도록 압축한다. 색 구분 모드일 때 팔레트임을 알 수 있게
+   활성 배경을 옥색(단색) / 무지개 그라데이션(색 구분)으로 갈라 준다. */
+.mapsel-color-seg .distseg { padding: 4px 10px; font-size: 12px; }
+.mapsel-color-seg .distseg[data-mapsel-palette="0"].active { background: #14B8A6; }
+.mapsel-color-seg .distseg[data-mapsel-palette="1"].active {
+  background: linear-gradient(90deg, #e11d48, #d97706, #059669, #2563eb, #7c3aed); }
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
   display: flex; gap: 6px; flex-wrap: wrap; background: #fff;
@@ -1726,10 +1734,13 @@ html[data-theme="dark"] .note-tag-add input { background: #14171d; border-color:
 .cdf-editbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 12px; }
 .cdf-editbar .cdf-eb-label { color: #6b7280; }
 .cdf-editbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
-/* 좌표 강조 모드 — 강조 마커(옥색 #2DD4BF, map_select.js MAPSEL_HL_COLOR)와 같은 계열로
-   버튼을 칠해 "이 버튼이 저 색을 만든다"가 바로 보이게 한다. */
+/* 좌표 강조 모드 — 강조 마커(단색 모드의 옥색 #2DD4BF, map_select.js MAPSEL_HL_COLOR)와
+   같은 계열로 버튼을 칠해 "이 버튼이 저 색을 만든다"가 바로 보이게 한다. 실제 색은 바로 옆
+   .mapsel-color-seg(단색/색 구분)이 정한다. */
 .cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #14B8A6; border-color: #14B8A6; }
 .cdf-editbar .cdf-eb-count { color: #555; margin-left: 4px; }
+/* 편집바는 flex+gap 8px 이라 세그먼트가 그 리듬에 맞게 들어간다(자체 여백 불필요) */
+.cdf-editbar .mapsel-color-seg { flex: 0 0 auto; }
 .cdf-editbar .cdf-eb-hint { color: #9aa0aa; }
 .cdf-axisbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 8px; flex-wrap: wrap; font-size: 12px; }
 .cdf-axisbar .cdf-ax-grp { display: inline-flex; align-items: center; gap: 4px; color: #6b7280; }
